@@ -1,0 +1,35 @@
+# Local design source (must never be pushed)
+AutoScholar_总体设计文档_V1.0.md
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.python-version.local
+
+# Tests and tooling
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Runtime data
+*.log
+logs/
+artifacts/
+outputs/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

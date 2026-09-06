@@ -1,0 +1,1 @@
+"""AutoScholar test suite."""
