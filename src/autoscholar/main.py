@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from autoscholar import __version__
+from autoscholar.api.routes.chat import router as chat_router
 from autoscholar.api.routes.health import router as health_router
 from autoscholar.core.config import Settings, get_settings
 from autoscholar.core.errors import register_exception_handlers
@@ -50,6 +51,7 @@ def create_app(
     application.middleware("http")(request_context_middleware)
     register_exception_handlers(application)
     application.include_router(health_router)
+    application.include_router(chat_router)
     return application
 
 
