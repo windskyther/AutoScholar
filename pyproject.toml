@@ -33,9 +33,12 @@ dev = [
 packages = ["src/autoscholar"]
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers -ra"
+addopts = "--strict-config --strict-markers -ra -p no:cacheprovider"
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: tests that require the running Docker Compose stack",
+]
 
 [tool.ruff]
 line-length = 100
@@ -48,4 +51,3 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 python_version = "3.12"
 strict = true
 files = ["src", "tests"]
-

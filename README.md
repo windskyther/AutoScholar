@@ -4,7 +4,7 @@
 > Autonomous AI/ML Research & Experiment Agent Platform
 
 > [!IMPORTANT]
-> AutoScholar 目前处于规划与工程初始化阶段。本文描述的是项目目标与演进路线，相关能力将按里程碑逐步实现。
+> AutoScholar 目前已完成 Phase 0 工程骨架，正在进入最小 Agent 阶段。本文后续能力为项目目标，将按里程碑逐步实现。
 
 ## 项目简介
 
@@ -91,14 +91,103 @@ Planner
 先跑通 → 再自动化 → 再智能化 → 再平台化 → 最后评测
 ```
 
-### 当前近期目标：Phase 0
+### 当前状态：Phase 0 已完成
 
-- 建立 Python 项目与基础目录结构。
-- 提供 FastAPI 基础服务和 `POST /chat` 接口。
-- 接入 PostgreSQL、Redis 与 Docker Compose。
-- 实现配置管理、结构化日志和统一 LLM Provider。
-- 建立 pytest 测试基础设施。
-- 确保服务、数据库、缓存与模型调用链路能够稳定运行。
+- [x] Python 3.12 + `uv` 工程和质量门禁
+- [x] FastAPI、配置管理、结构化日志与请求追踪
+- [x] PostgreSQL、Redis 和 Docker Compose
+- [x] 统一 LLM Provider 与 OpenAI-compatible 实现
+- [x] `POST /chat`、健康检查和自动化测试
+
+真实模型调用需要开发者提供自己的兼容服务地址、API Key 和模型名。凭据仅保存在本地 `.env`，不会进入 Git。
+
+## 快速开始
+
+### 环境要求
+
+- Python 3.12
+- [`uv`](https://docs.astral.sh/uv/)
+- Docker Desktop（包含 Docker Compose）
+
+本项目当前 Windows 开发环境将 Docker Desktop 安装在 `D:\Applications\Docker`，运行数据存放在 `D:\DockerData\wsl`，避免镜像与卷占用系统盘。其他环境可以使用自己的安装位置。
+
+### 配置
+
+```powershell
+Copy-Item .env.example .env
+```
+
+如需调用真实模型，在 `.env` 中填写：
+
+```dotenv
+LLM_BASE_URL=https://your-provider.example/v1
+LLM_API_KEY=your-api-key
+LLM_MODEL=your-model
+```
+
+不要提交 `.env` 或在日志、Issue 中粘贴密钥。
+
+### 使用 Docker 启动
+
+```powershell
+docker compose up -d --build
+docker compose ps
+```
+
+API 默认监听 `http://localhost:8000`，交互式文档位于 `http://localhost:8000/docs`。
+
+停止服务：
+
+```powershell
+docker compose down
+```
+
+命名卷会保留 PostgreSQL 和 Redis 数据；如无明确需要，不要使用 `docker compose down -v`。
+
+### 本地开发
+
+```powershell
+uv sync --all-groups
+uv run uvicorn autoscholar.main:app --reload
+```
+
+### 接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/health/live` | API 进程存活检查 |
+| `GET` | `/health/ready` | PostgreSQL、Redis 与 LLM 配置状态 |
+| `POST` | `/chat` | 无状态单轮模型调用 |
+
+`POST /chat` 请求示例：
+
+```json
+{
+  "message": "分析 y=x² 在 0~10 区间的变化趋势"
+}
+```
+
+### 测试
+
+```powershell
+uv run ruff check .
+uv run mypy src tests
+uv run pytest
+```
+
+Compose 服务启动后，可以运行真实基础设施测试：
+
+```powershell
+$env:AUTOSCHOLAR_RUN_INTEGRATION="1"
+uv run pytest tests/integration -m integration
+```
+
+## 分支与提交约定
+
+- 日常开发与阶段性同步使用 `dev` 分支。
+- 每个关键模块通过测试后独立提交并推送到 `origin/dev`。
+- `main` 是受审核分支；所有合并都必须由项目所有者单独检查并明确批准。
+- 本地设计文档、`.env` 和运行产物不得提交。
 
 ## 最终演示目标
 
@@ -106,10 +195,6 @@ Planner
 
 这个任务用于同时验证 Planning、Research、RAG、Tool Calling、Coding、PyTorch、Sandbox、Replanning、Memory、Human-in-the-loop 与 Evaluation，而非仅展示一次性问答。
 
-## 项目文档
-
-- [总体设计文档 V1.0](./AutoScholar_%E6%80%BB%E4%BD%93%E8%AE%BE%E8%AE%A1%E6%96%87%E6%A1%A3_V1.0.md)：完整的系统设计、数据模型、API 草案、分阶段开发计划与验收标准。
-
 ## 参与项目
 
-项目尚处于早期阶段，欢迎通过 GitHub Issue 或 Discussion 交流使用场景、架构建议和评测思路。安装方式、运行命令、贡献规范与许可证将在工程骨架确定后补充。
+项目尚处于早期阶段，欢迎通过 GitHub Issue 或 Discussion 交流使用场景、架构建议和评测思路。贡献规范与许可证将在后续阶段补充。
