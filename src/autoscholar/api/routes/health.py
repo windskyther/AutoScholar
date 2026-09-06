@@ -18,12 +18,13 @@ class LiveResponse(BaseModel):
 
 
 class DependencyStatus(BaseModel):
-    status: Literal["ok", "error"]
+    status: Literal["ok", "error", "not_configured"]
 
 
 class ReadyResponse(BaseModel):
     status: Literal["ready", "not_ready"]
     dependencies: dict[str, DependencyStatus]
+    capabilities: dict[str, DependencyStatus]
 
 
 async def _check_dependency(dependency: ManagedDependency) -> DependencyStatus:
@@ -55,10 +56,15 @@ async def ready(request: Request) -> ReadyResponse | JSONResponse:
         "postgres": database_status,
         "redis": redis_status,
     }
+    llm_status: Literal["ok", "not_configured"] = (
+        "ok" if request.app.state.llm_provider.configured else "not_configured"
+    )
+    capabilities = {"llm": DependencyStatus(status=llm_status)}
     is_ready = all(dependency.status == "ok" for dependency in dependencies.values())
     response = ReadyResponse(
         status="ready" if is_ready else "not_ready",
         dependencies=dependencies,
+        capabilities=capabilities,
     )
     if is_ready:
         return response

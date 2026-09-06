@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from autoscholar.core.config import Settings
+from autoscholar.llm.models import ChatMessage, LLMResult
 from autoscholar.main import create_app
 
 
@@ -18,12 +19,24 @@ class FakeDependency:
         self.closed = True
 
 
+class FakeLLMProvider:
+    configured = True
+
+    async def generate(self, messages: list[ChatMessage]) -> LLMResult:
+        del messages
+        return LLMResult(text="ok", model="test-model")
+
+    async def close(self) -> None:
+        return None
+
+
 def create_test_client(*, database_healthy: bool = True, redis_healthy: bool = True) -> TestClient:
     return TestClient(
         create_app(
             Settings(),
             database=FakeDependency(healthy=database_healthy),
             redis=FakeDependency(healthy=redis_healthy),
+            llm_provider=FakeLLMProvider(),
         )
     )
 
@@ -59,6 +72,7 @@ def test_readiness_when_dependencies_are_healthy() -> None:
     assert response.json() == {
         "status": "ready",
         "dependencies": {"postgres": {"status": "ok"}, "redis": {"status": "ok"}},
+        "capabilities": {"llm": {"status": "ok"}},
     }
 
 
@@ -70,4 +84,19 @@ def test_readiness_when_a_dependency_is_unavailable() -> None:
     assert response.json() == {
         "status": "not_ready",
         "dependencies": {"postgres": {"status": "ok"}, "redis": {"status": "error"}},
+        "capabilities": {"llm": {"status": "ok"}},
     }
+
+
+def test_readiness_reports_unconfigured_llm_without_failing_infrastructure() -> None:
+    app = create_app(
+        Settings(),
+        database=FakeDependency(),
+        redis=FakeDependency(),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json()["capabilities"]["llm"] == {"status": "not_configured"}

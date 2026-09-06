@@ -11,6 +11,7 @@ from autoscholar.core.logging import configure_logging
 from autoscholar.core.middleware import request_context_middleware
 from autoscholar.infrastructure import Database, RedisClient
 from autoscholar.infrastructure.base import ManagedDependency
+from autoscholar.llm import LLMProvider, create_llm_provider
 
 
 def create_app(
@@ -18,17 +19,21 @@ def create_app(
     *,
     database: ManagedDependency | None = None,
     redis: ManagedDependency | None = None,
+    llm_provider: LLMProvider | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings.log_level)
     resolved_database = database or Database(resolved_settings.database_url)
     resolved_redis = redis or RedisClient(resolved_settings.redis_url)
+    resolved_llm_provider = llm_provider or create_llm_provider(resolved_settings)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.database = resolved_database
         application.state.redis = resolved_redis
+        application.state.llm_provider = resolved_llm_provider
         yield
+        await resolved_llm_provider.close()
         await resolved_redis.close()
         await resolved_database.close()
 
@@ -41,6 +46,7 @@ def create_app(
     application.state.settings = resolved_settings
     application.state.database = resolved_database
     application.state.redis = resolved_redis
+    application.state.llm_provider = resolved_llm_provider
     application.middleware("http")(request_context_middleware)
     register_exception_handlers(application)
     application.include_router(health_router)
