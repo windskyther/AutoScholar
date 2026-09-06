@@ -22,8 +22,16 @@ def _request_id(request: Request) -> str:
     return str(getattr(request.state, "request_id", "unknown"))
 
 
-def _payload(request: Request, code: str, message: str, details: Any = None) -> dict[str, Any]:
+def _payload(
+    request: Request,
+    code: str,
+    message: str,
+    details: Any = None,
+    task_id: str | None = None,
+) -> dict[str, Any]:
     error: dict[str, Any] = {"code": code, "message": message}
+    if task_id is not None:
+        error["task_id"] = task_id
     if details is not None:
         error["details"] = details
     return {"error": error, "request_id": _request_id(request)}
@@ -34,7 +42,12 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
-            content=_payload(request, exc.code, exc.message),
+            content=_payload(
+                request,
+                exc.code,
+                exc.message,
+                task_id=getattr(exc, "task_id", None),
+            ),
         )
 
     @app.exception_handler(RequestValidationError)

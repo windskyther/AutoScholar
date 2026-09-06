@@ -25,3 +25,9 @@ def test_compose_stack_is_ready() -> None:
         "postgres": {"status": "ok"},
         "redis": {"status": "ok"},
     }
+
+    missing_task_response = httpx.get(
+        "http://localhost:8000/agent/tasks/integration-missing", timeout=5
+    )
+    assert missing_task_response.status_code == 404
+    assert missing_task_response.json()["error"]["code"] == "agent_task_not_found"

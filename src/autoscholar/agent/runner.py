@@ -64,6 +64,10 @@ class AgentRunResult:
     model: str
 
 
+class AgentService(Protocol):
+    async def run(self, objective: str, *, task_id: str | None = None) -> AgentRunResult: ...
+
+
 class AgentRunError(AppError):
     def __init__(
         self,
