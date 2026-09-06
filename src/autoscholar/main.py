@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from autoscholar import __version__
@@ -6,18 +9,38 @@ from autoscholar.core.config import Settings, get_settings
 from autoscholar.core.errors import register_exception_handlers
 from autoscholar.core.logging import configure_logging
 from autoscholar.core.middleware import request_context_middleware
+from autoscholar.infrastructure import Database, RedisClient
+from autoscholar.infrastructure.base import ManagedDependency
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    database: ManagedDependency | None = None,
+    redis: ManagedDependency | None = None,
+) -> FastAPI:
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings.log_level)
+    resolved_database = database or Database(resolved_settings.database_url)
+    resolved_redis = redis or RedisClient(resolved_settings.redis_url)
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        application.state.database = resolved_database
+        application.state.redis = resolved_redis
+        yield
+        await resolved_redis.close()
+        await resolved_database.close()
 
     application = FastAPI(
         title="AutoScholar API",
         description="Autonomous AI/ML research and experiment agent platform",
         version=__version__,
+        lifespan=lifespan,
     )
     application.state.settings = resolved_settings
+    application.state.database = resolved_database
+    application.state.redis = resolved_redis
     application.middleware("http")(request_context_middleware)
     register_exception_handlers(application)
     application.include_router(health_router)
@@ -25,4 +48,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
-
