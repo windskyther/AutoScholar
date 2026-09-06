@@ -4,7 +4,14 @@ from fastapi.testclient import TestClient
 from autoscholar.core.config import Settings
 from autoscholar.llm.errors import LLMUnavailableError
 from autoscholar.llm.factory import UnconfiguredLLMProvider
-from autoscholar.llm.models import ChatMessage, LLMResult, TokenUsage
+from autoscholar.llm.models import (
+    ChatMessage,
+    ConversationMessage,
+    LLMResult,
+    TokenUsage,
+    ToolChoice,
+    ToolDefinition,
+)
 from autoscholar.main import create_app
 from tests.test_health import FakeDependency
 
@@ -13,9 +20,16 @@ class SuccessfulProvider:
     configured = True
 
     def __init__(self) -> None:
-        self.messages: list[ChatMessage] = []
+        self.messages: list[ConversationMessage] = []
 
-    async def generate(self, messages: list[ChatMessage]) -> LLMResult:
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        del tools, tool_choice
         self.messages = messages
         return LLMResult(
             text="The answer",
@@ -30,8 +44,14 @@ class SuccessfulProvider:
 class FailingProvider:
     configured = True
 
-    async def generate(self, messages: list[ChatMessage]) -> LLMResult:
-        del messages
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        del messages, tools, tool_choice
         raise LLMUnavailableError(code="llm_timeout", message="Provider timed out")
 
     async def close(self) -> None:

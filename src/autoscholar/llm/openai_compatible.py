@@ -1,4 +1,5 @@
-from typing import cast
+import json
+from typing import Any, cast
 
 import httpx
 from openai import (
@@ -9,11 +10,20 @@ from openai import (
     AuthenticationError,
     RateLimitError,
 )
-from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
 from autoscholar.core.config import Settings
 from autoscholar.llm.errors import LLMUnavailableError, LLMUpstreamError
-from autoscholar.llm.models import ChatMessage, LLMResult, TokenUsage
+from autoscholar.llm.models import (
+    ChatMessage,
+    ConversationMessage,
+    LLMResult,
+    TokenUsage,
+    ToolCall,
+    ToolChoice,
+    ToolDefinition,
+    ToolResultMessage,
+)
 
 
 class OpenAICompatibleProvider:
@@ -36,16 +46,27 @@ class OpenAICompatibleProvider:
     def configured(self) -> bool:
         return True
 
-    async def generate(self, messages: list[ChatMessage]) -> LLMResult:
-        request_messages = [
-            cast(ChatCompletionMessageParam, {"role": message.role, "content": message.content})
-            for message in messages
-        ]
-        try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=request_messages,
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        request_messages = [self._serialize_message(message) for message in messages]
+        request_tools = [self._serialize_tool(tool) for tool in tools] if tools else None
+        request_tool_choice: Any = tool_choice
+        if tool_choice not in {"none", "auto", "required"}:
+            request_tool_choice = {"type": "function", "function": {"name": tool_choice}}
+        request: dict[str, Any] = {"model": self._model, "messages": request_messages}
+        if request_tools:
+            request.update(
+                tools=request_tools,
+                tool_choice=request_tool_choice,
+                parallel_tool_calls=False,
             )
+        try:
+            response = await self._client.chat.completions.create(**request)
         except AuthenticationError as exc:
             raise LLMUpstreamError(
                 code="llm_authentication_failed",
@@ -69,11 +90,36 @@ class OpenAICompatibleProvider:
         except APIStatusError as exc:
             raise LLMUpstreamError(message="The language model provider returned an error") from exc
 
-        content = response.choices[0].message.content if response.choices else None
-        if not content:
+        message = response.choices[0].message if response.choices else None
+        content = message.content if message is not None else None
+        tool_calls: list[ToolCall] = []
+        if message is not None and message.tool_calls:
+            for typed_call in message.tool_calls:
+                raw_call: Any = typed_call
+                try:
+                    arguments = json.loads(raw_call.function.arguments)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    raise LLMUpstreamError(
+                        code="llm_invalid_tool_call",
+                        message="The language model returned invalid tool arguments",
+                    ) from exc
+                if not isinstance(arguments, dict):
+                    raise LLMUpstreamError(
+                        code="llm_invalid_tool_call",
+                        message="The language model returned invalid tool arguments",
+                    )
+                tool_calls.append(
+                    ToolCall(
+                        id=raw_call.id,
+                        name=raw_call.function.name,
+                        arguments=arguments,
+                    )
+                )
+
+        if not content and not tool_calls:
             raise LLMUpstreamError(
                 code="llm_empty_response",
-                message="The language model provider returned no text",
+                message="The language model provider returned no text or tool calls",
             )
 
         usage = None
@@ -84,8 +130,62 @@ class OpenAICompatibleProvider:
                 total_tokens=response.usage.total_tokens,
             )
 
-        return LLMResult(text=content, model=response.model or self._model, usage=usage)
+        return LLMResult(
+            text=content or "",
+            model=response.model or self._model,
+            usage=usage,
+            tool_calls=tuple(tool_calls),
+        )
+
+    @staticmethod
+    def _serialize_message(message: ConversationMessage) -> ChatCompletionMessageParam:
+        if isinstance(message, ChatMessage):
+            return cast(
+                ChatCompletionMessageParam,
+                {"role": message.role, "content": message.content},
+            )
+        if isinstance(message, ToolResultMessage):
+            return cast(
+                ChatCompletionMessageParam,
+                {
+                    "role": "tool",
+                    "tool_call_id": message.tool_call_id,
+                    "content": message.content,
+                },
+            )
+        return cast(
+            ChatCompletionMessageParam,
+            {
+                "role": "assistant",
+                "content": message.content or None,
+                "tool_calls": [
+                    {
+                        "id": call.id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                        },
+                    }
+                    for call in message.tool_calls
+                ],
+            },
+        )
+
+    @staticmethod
+    def _serialize_tool(tool: ToolDefinition) -> ChatCompletionToolParam:
+        return cast(
+            ChatCompletionToolParam,
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                    "strict": tool.strict,
+                },
+            },
+        )
 
     async def close(self) -> None:
         await self._client.close()
-

@@ -7,7 +7,13 @@ from pydantic import SecretStr
 from autoscholar.core.config import Settings
 from autoscholar.llm.errors import LLMNotConfiguredError, LLMUnavailableError
 from autoscholar.llm.factory import create_llm_provider
-from autoscholar.llm.models import ChatMessage
+from autoscholar.llm.models import (
+    AssistantToolCallMessage,
+    ChatMessage,
+    ToolCall,
+    ToolDefinition,
+    ToolResultMessage,
+)
 from autoscholar.llm.openai_compatible import OpenAICompatibleProvider
 
 
@@ -69,8 +75,112 @@ async def test_provider_maps_connection_failures() -> None:
 
 
 @pytest.mark.asyncio
+async def test_provider_round_trips_native_tool_calls() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["tool_choice"] == "required"
+        assert payload["parallel_tool_calls"] is False
+        assert payload["tools"][0]["function"]["name"] == "calculator"
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-tool",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "calculator",
+                                        "arguments": '{"expression":"2+2"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+            },
+        )
+
+    tool = ToolDefinition(
+        name="calculator",
+        description="Evaluate arithmetic",
+        parameters={
+            "type": "object",
+            "properties": {"expression": {"type": "string"}},
+            "required": ["expression"],
+            "additionalProperties": False,
+        },
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        provider = OpenAICompatibleProvider(configured_settings(), http_client=http_client)
+        result = await provider.generate(
+            [ChatMessage(role="user", content="calculate 2+2")],
+            tools=[tool],
+            tool_choice="required",
+        )
+
+    assert result.text == ""
+    assert result.tool_calls == (
+        ToolCall(id="call-1", name="calculator", arguments={"expression": "2+2"}),
+    )
+
+
+@pytest.mark.asyncio
+async def test_provider_serializes_tool_results() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["messages"][1]["tool_calls"][0]["id"] == "call-1"
+        assert payload["messages"][2] == {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "content": "4",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-after-tool",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "The answer is 4."},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+
+    messages: list[ChatMessage | AssistantToolCallMessage | ToolResultMessage] = [
+        ChatMessage(role="user", content="calculate 2+2"),
+        AssistantToolCallMessage(
+            tool_calls=(
+                ToolCall(id="call-1", name="calculator", arguments={"expression": "2+2"}),
+            )
+        ),
+        ToolResultMessage(tool_call_id="call-1", content="4"),
+    ]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        provider = OpenAICompatibleProvider(configured_settings(), http_client=http_client)
+        result = await provider.generate(messages)
+
+    assert result.text == "The answer is 4."
+
+
+@pytest.mark.asyncio
 async def test_unconfigured_provider_fails_safely() -> None:
-    provider = create_llm_provider(Settings())
+    provider = create_llm_provider(Settings(llm_api_key=None, llm_model=None))
 
     assert provider.configured is False
     with pytest.raises(LLMNotConfiguredError):

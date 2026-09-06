@@ -5,7 +5,7 @@ from autoscholar.core.config import Settings
 
 
 def test_settings_use_safe_defaults() -> None:
-    settings = Settings()
+    settings = Settings(llm_api_key=None, llm_model=None)
 
     assert settings.app_env == "development"
     assert settings.app_port == 8000

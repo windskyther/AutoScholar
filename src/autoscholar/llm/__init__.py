@@ -2,7 +2,28 @@
 
 from autoscholar.llm.base import LLMProvider
 from autoscholar.llm.factory import create_llm_provider
-from autoscholar.llm.models import ChatMessage, LLMResult, TokenUsage
+from autoscholar.llm.models import (
+    AssistantToolCallMessage,
+    ChatMessage,
+    ConversationMessage,
+    LLMResult,
+    TokenUsage,
+    ToolCall,
+    ToolChoice,
+    ToolDefinition,
+    ToolResultMessage,
+)
 
-__all__ = ["ChatMessage", "LLMProvider", "LLMResult", "TokenUsage", "create_llm_provider"]
-
+__all__ = [
+    "AssistantToolCallMessage",
+    "ChatMessage",
+    "ConversationMessage",
+    "LLMProvider",
+    "LLMResult",
+    "TokenUsage",
+    "ToolCall",
+    "ToolChoice",
+    "ToolDefinition",
+    "ToolResultMessage",
+    "create_llm_provider",
+]

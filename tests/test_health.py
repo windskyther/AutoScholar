@@ -1,7 +1,12 @@
 from fastapi.testclient import TestClient
 
 from autoscholar.core.config import Settings
-from autoscholar.llm.models import ChatMessage, LLMResult
+from autoscholar.llm.models import (
+    ConversationMessage,
+    LLMResult,
+    ToolChoice,
+    ToolDefinition,
+)
 from autoscholar.main import create_app
 
 
@@ -22,8 +27,14 @@ class FakeDependency:
 class FakeLLMProvider:
     configured = True
 
-    async def generate(self, messages: list[ChatMessage]) -> LLMResult:
-        del messages
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        del messages, tools, tool_choice
         return LLMResult(text="ok", model="test-model")
 
     async def close(self) -> None:
@@ -90,7 +101,7 @@ def test_readiness_when_a_dependency_is_unavailable() -> None:
 
 def test_readiness_reports_unconfigured_llm_without_failing_infrastructure() -> None:
     app = create_app(
-        Settings(),
+        Settings(llm_api_key=None, llm_model=None),
         database=FakeDependency(),
         redis=FakeDependency(),
     )
