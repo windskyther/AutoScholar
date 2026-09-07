@@ -14,6 +14,7 @@ from autoscholar.core.config import Settings, get_settings
 from autoscholar.core.errors import register_exception_handlers
 from autoscholar.core.logging import configure_logging
 from autoscholar.core.middleware import request_context_middleware
+from autoscholar.core.responses import UTF8JSONResponse
 from autoscholar.infrastructure import Database, RedisClient
 from autoscholar.infrastructure.base import ManagedDependency
 from autoscholar.llm import LLMProvider, create_llm_provider
@@ -61,6 +62,7 @@ def create_app(
         description="Autonomous AI/ML research and experiment agent platform",
         version=__version__,
         lifespan=lifespan,
+        default_response_class=UTF8JSONResponse,
     )
     application.state.settings = resolved_settings
     application.state.database = resolved_database

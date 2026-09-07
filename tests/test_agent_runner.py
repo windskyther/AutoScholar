@@ -158,3 +158,40 @@ async def test_agent_persists_clear_error_when_native_plan_call_is_missing() -> 
     assert persisted.status == "failed"
     assert persisted.error_code == "native_tool_calling_required"
     await engine.dispose()
+
+
+async def test_executor_retries_once_when_auto_mode_skips_the_tool_call() -> None:
+    store, engine = await repository()
+    provider = ScriptedProvider(
+        [
+            response(
+                tool_call=ToolCall(
+                    id="plan-1",
+                    name="submit_plan",
+                    arguments={"steps": ["Calculate values"]},
+                )
+            ),
+            response(text="This looks simple enough to answer directly."),
+            response(
+                tool_call=ToolCall(
+                    id="python-1",
+                    name="python",
+                    arguments={"code": "print(0, 100)"},
+                )
+            ),
+            response(text="The tool produced endpoint values 0 and 100."),
+            response(text="The minimum is 0 and the maximum is 100."),
+        ]
+    )
+    runner = AgentRunner(
+        provider=provider,
+        repository=store,
+        tools=[RestrictedPythonTool()],
+    )
+
+    result = await runner.run("Analyze x squared", task_id="task-tool-retry")
+
+    assert result.task.status == "succeeded"
+    assert result.task.tool_calls[0].tool_name == "python"
+    assert result.task.metrics["iterations"] == 3
+    await engine.dispose()

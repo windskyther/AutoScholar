@@ -94,6 +94,7 @@ async def test_provider_round_trips_native_tool_calls() -> None:
                         "message": {
                             "role": "assistant",
                             "content": None,
+                            "reasoning_content": "I should calculate this with the tool.",
                             "tool_calls": [
                                 {
                                     "id": "call-1",
@@ -133,6 +134,7 @@ async def test_provider_round_trips_native_tool_calls() -> None:
     assert result.tool_calls == (
         ToolCall(id="call-1", name="calculator", arguments={"expression": "2+2"}),
     )
+    assert result.reasoning_content == "I should calculate this with the tool."
 
 
 @pytest.mark.asyncio
@@ -140,6 +142,7 @@ async def test_provider_serializes_tool_results() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         assert payload["messages"][1]["tool_calls"][0]["id"] == "call-1"
+        assert payload["messages"][1]["reasoning_content"] == "I used the calculator."
         assert payload["messages"][2] == {
             "role": "tool",
             "tool_call_id": "call-1",
@@ -167,7 +170,8 @@ async def test_provider_serializes_tool_results() -> None:
         AssistantToolCallMessage(
             tool_calls=(
                 ToolCall(id="call-1", name="calculator", arguments={"expression": "2+2"}),
-            )
+            ),
+            reasoning_content="I used the calculator.",
         ),
         ToolResultMessage(tool_call_id="call-1", content="4"),
     ]

@@ -3,7 +3,8 @@ from typing import Any
 import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+
+from autoscholar.core.responses import UTF8JSONResponse
 
 logger = structlog.get_logger(__name__)
 
@@ -39,8 +40,8 @@ def _payload(
 
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
-    async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
-        return JSONResponse(
+    async def handle_app_error(request: Request, exc: AppError) -> UTF8JSONResponse:
+        return UTF8JSONResponse(
             status_code=exc.status_code,
             content=_payload(
                 request,
@@ -53,33 +54,33 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(
         request: Request, exc: RequestValidationError
-    ) -> JSONResponse:
+    ) -> UTF8JSONResponse:
         details = [
             {"location": list(error["loc"]), "message": error["msg"], "type": error["type"]}
             for error in exc.errors()
         ]
-        return JSONResponse(
+        return UTF8JSONResponse(
             status_code=422,
             content=_payload(request, "request_validation_error", "Invalid request", details),
         )
 
     @app.exception_handler(HTTPException)
-    async def handle_http_error(request: Request, exc: HTTPException) -> JSONResponse:
+    async def handle_http_error(request: Request, exc: HTTPException) -> UTF8JSONResponse:
         message = exc.detail if isinstance(exc.detail, str) else "HTTP request failed"
-        return JSONResponse(
+        return UTF8JSONResponse(
             status_code=exc.status_code,
             content=_payload(request, "http_error", message),
             headers=exc.headers,
         )
 
     @app.exception_handler(Exception)
-    async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    async def handle_unexpected_error(request: Request, exc: Exception) -> UTF8JSONResponse:
         logger.exception(
             "unhandled_exception",
             request_id=_request_id(request),
             exception_type=type(exc).__name__,
         )
-        return JSONResponse(
+        return UTF8JSONResponse(
             status_code=500,
             content=_payload(request, "internal_error", "Internal server error"),
         )

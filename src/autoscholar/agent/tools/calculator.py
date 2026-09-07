@@ -24,6 +24,7 @@ class CalculatorTool:
         ast.FloorDiv: operator.floordiv,
         ast.Mod: operator.mod,
         ast.Pow: operator.pow,
+        ast.BitXor: operator.pow,
     }
     _unary: ClassVar[dict[type[ast.unaryop], Callable[[Number], Number]]] = {
         ast.UAdd: operator.pos,

@@ -10,6 +10,13 @@ async def test_calculator_evaluates_allowed_math() -> None:
     assert math.isclose(float(result.output), 10.0)
 
 
+async def test_calculator_accepts_caret_as_mathematical_exponent() -> None:
+    result = await CalculatorTool().execute({"expression": "2^3"})
+
+    assert result.succeeded is True
+    assert result.output == "8"
+
+
 async def test_calculator_rejects_unsafe_syntax() -> None:
     result = await CalculatorTool().execute({"expression": "__import__('os').getcwd()"})
 

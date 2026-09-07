@@ -92,6 +92,12 @@ class OpenAICompatibleProvider:
 
         message = response.choices[0].message if response.choices else None
         content = message.content if message is not None else None
+        raw_message: Any = message
+        reasoning_content = (
+            getattr(raw_message, "reasoning_content", None) if message is not None else None
+        )
+        if reasoning_content is not None and not isinstance(reasoning_content, str):
+            reasoning_content = None
         tool_calls: list[ToolCall] = []
         if message is not None and message.tool_calls:
             for typed_call in message.tool_calls:
@@ -135,6 +141,7 @@ class OpenAICompatibleProvider:
             model=response.model or self._model,
             usage=usage,
             tool_calls=tuple(tool_calls),
+            reasoning_content=reasoning_content,
         )
 
     @staticmethod
@@ -153,24 +160,24 @@ class OpenAICompatibleProvider:
                     "content": message.content,
                 },
             )
-        return cast(
-            ChatCompletionMessageParam,
-            {
-                "role": "assistant",
-                "content": message.content or None,
-                "tool_calls": [
-                    {
-                        "id": call.id,
-                        "type": "function",
-                        "function": {
-                            "name": call.name,
-                            "arguments": json.dumps(call.arguments, ensure_ascii=False),
-                        },
-                    }
-                    for call in message.tool_calls
-                ],
-            },
-        )
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            "content": message.content or None,
+            "tool_calls": [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                    },
+                }
+                for call in message.tool_calls
+            ],
+        }
+        if message.reasoning_content is not None:
+            assistant_message["reasoning_content"] = message.reasoning_content
+        return cast(ChatCompletionMessageParam, assistant_message)
 
     @staticmethod
     def _serialize_tool(tool: ToolDefinition) -> ChatCompletionToolParam:

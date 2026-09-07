@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
@@ -149,3 +150,19 @@ def test_agent_error_response_carries_persisted_task_id() -> None:
         "message": "The configured model did not return the required native tool call",
         "task_id": "failed-task",
     }
+
+
+def test_agent_response_explicitly_declares_utf8_and_preserves_chinese() -> None:
+    task = replace(
+        completed_task(),
+        objective="分析函数",
+        plan=["求导数"],
+        answer="函数严格递增",
+    )
+    with client_with_backend(FakeAgentBackend(task)) as client:
+        response = client.post("/agent/run", json={"objective": "分析函数"})
+
+    assert response.headers["content-type"] == "application/json; charset=utf-8"
+    decoded = response.content.decode("utf-8")
+    assert "求导数" in decoded
+    assert "函数严格递增" in decoded

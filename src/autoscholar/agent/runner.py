@@ -105,6 +105,7 @@ class AgentState(TypedDict):
     model: str
     budget_exceeded: bool
     executor_complete: bool
+    tool_prompt_retries: int
 
 
 class AgentRunner:
@@ -143,6 +144,7 @@ class AgentRunner:
             "model": "",
             "budget_exceeded": False,
             "executor_complete": False,
+            "tool_prompt_retries": 0,
         }
         try:
             final = cast(AgentState, await self._graph.ainvoke(initial))
@@ -188,7 +190,7 @@ class AgentRunner:
         graph.add_conditional_edges(
             "executor",
             self._route_after_executor,
-            {"tools": "tools", "writer": "writer"},
+            {"executor": "executor", "tools": "tools", "writer": "writer"},
         )
         graph.add_conditional_edges(
             "tools",
@@ -265,6 +267,12 @@ class AgentRunner:
                 "When enough evidence is available, "
                 "return a concise evidence summary without a tool call.\n"
                 f"Objective: {state['objective']}\nPlan: {state['plan']}\nCurrent step: {step}"
+                + (
+                    "\nNo execution evidence exists yet. You must return one native tool call "
+                    "in this turn instead of answering in text."
+                    if not state["traces"]
+                    else ""
+                )
             ),
         )
         result = await self._provider.generate(
@@ -280,11 +288,41 @@ class AgentRunner:
                 pending_tool_call=call,
                 messages=[
                     *state["messages"],
-                    AssistantToolCallMessage(tool_calls=(call,), content=result.text),
+                    AssistantToolCallMessage(
+                        tool_calls=(call,),
+                        content=result.text,
+                        reasoning_content=result.reasoning_content,
+                    ),
                 ],
                 executor_complete=False,
             )
         else:
+            if not state["traces"]:
+                if state["tool_prompt_retries"] >= 1:
+                    raise AgentProtocolError(
+                        code="native_tool_calling_required",
+                        message=(
+                            "The configured model did not return a required native execution "
+                            "tool call"
+                        ),
+                    )
+                updates.update(
+                    pending_tool_call=None,
+                    messages=[
+                        *state["messages"],
+                        ChatMessage(role="assistant", content=result.text),
+                        ChatMessage(
+                            role="user",
+                            content=(
+                                "No tool evidence was produced. Call exactly one available tool "
+                                "now; do not answer in text."
+                            ),
+                        ),
+                    ],
+                    executor_complete=False,
+                    tool_prompt_retries=state["tool_prompt_retries"] + 1,
+                )
+                return updates
             updates.update(
                 pending_tool_call=None,
                 messages=[
@@ -377,7 +415,7 @@ class AgentRunner:
     def _route_after_executor(state: AgentState) -> str:
         if state["executor_complete"] or state["budget_exceeded"]:
             return "writer"
-        return "tools"
+        return "tools" if state["pending_tool_call"] is not None else "executor"
 
     def _route_after_tool(self, state: AgentState) -> str:
         if state["budget_exceeded"] or state["iterations"] >= self._limits.max_iterations:

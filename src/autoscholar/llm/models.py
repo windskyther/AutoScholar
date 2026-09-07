@@ -29,6 +29,7 @@ class ToolCall:
 class AssistantToolCallMessage:
     tool_calls: tuple[ToolCall, ...]
     content: str = ""
+    reasoning_content: str | None = None
     role: Literal["assistant"] = "assistant"
 
 
@@ -56,3 +57,4 @@ class LLMResult:
     model: str
     usage: TokenUsage | None = None
     tool_calls: tuple[ToolCall, ...] = ()
+    reasoning_content: str | None = None
