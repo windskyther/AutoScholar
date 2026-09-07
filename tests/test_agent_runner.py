@@ -62,7 +62,10 @@ async def test_langgraph_agent_plans_executes_tool_and_writes_answer() -> None:
                 tool_call=ToolCall(
                     id="plan-1",
                     name="submit_plan",
-                    arguments={"steps": ["Calculate values", "Summarize properties"]},
+                    arguments={
+                        "mode": "compute",
+                        "steps": ["Calculate values", "Summarize properties"],
+                    },
                 )
             ),
             response(
@@ -112,7 +115,7 @@ async def test_agent_writes_partial_answer_when_tool_budget_is_exceeded() -> Non
                 tool_call=ToolCall(
                     id="plan-1",
                     name="submit_plan",
-                    arguments={"steps": ["Calculate"]},
+                    arguments={"mode": "compute", "steps": ["Calculate"]},
                 )
             ),
             response(
@@ -168,7 +171,7 @@ async def test_executor_retries_once_when_auto_mode_skips_the_tool_call() -> Non
                 tool_call=ToolCall(
                     id="plan-1",
                     name="submit_plan",
-                    arguments={"steps": ["Calculate values"]},
+                    arguments={"mode": "compute", "steps": ["Calculate values"]},
                 )
             ),
             response(text="This looks simple enough to answer directly."),

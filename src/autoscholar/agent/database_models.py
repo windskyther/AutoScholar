@@ -47,7 +47,7 @@ class AgentTaskRow(Base):
     evidence: Mapped[list["EvidenceRow"]] = relationship(
         back_populates="task",
         cascade="all, delete-orphan",
-        order_by="EvidenceRow.citation_key",
+        order_by=lambda: (func.length(EvidenceRow.citation_key), EvidenceRow.citation_key),
     )
 
 

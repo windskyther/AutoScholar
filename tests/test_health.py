@@ -83,7 +83,11 @@ def test_readiness_when_dependencies_are_healthy() -> None:
     assert response.json() == {
         "status": "ready",
         "dependencies": {"postgres": {"status": "ok"}, "redis": {"status": "ok"}},
-        "capabilities": {"llm": {"status": "ok"}},
+        "capabilities": {
+            "llm": {"status": "ok"},
+            "web_search": {"status": "not_configured"},
+            "paper_search": {"status": "ok"},
+        },
     }
 
 
@@ -95,7 +99,11 @@ def test_readiness_when_a_dependency_is_unavailable() -> None:
     assert response.json() == {
         "status": "not_ready",
         "dependencies": {"postgres": {"status": "ok"}, "redis": {"status": "error"}},
-        "capabilities": {"llm": {"status": "ok"}},
+        "capabilities": {
+            "llm": {"status": "ok"},
+            "web_search": {"status": "not_configured"},
+            "paper_search": {"status": "ok"},
+        },
     }
 
 

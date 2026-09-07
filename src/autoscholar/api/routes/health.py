@@ -59,7 +59,17 @@ async def ready(request: Request) -> ReadyResponse | JSONResponse:
     llm_status: Literal["ok", "not_configured"] = (
         "ok" if request.app.state.llm_provider.configured else "not_configured"
     )
-    capabilities = {"llm": DependencyStatus(status=llm_status)}
+    research_services = request.app.state.research_services
+    research_capabilities = {
+        f"{service.source_type}_search": DependencyStatus(
+            status="ok" if service.configured else "not_configured"
+        )
+        for service in research_services
+    }
+    capabilities = {
+        "llm": DependencyStatus(status=llm_status),
+        **research_capabilities,
+    }
     is_ready = all(dependency.status == "ok" for dependency in dependencies.values())
     response = ReadyResponse(
         status="ready" if is_ready else "not_ready",

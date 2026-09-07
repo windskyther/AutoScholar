@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from autoscholar.agent.records import (
+    AgentMode,
     AgentTaskRecord,
     CitationRecord,
     EvidenceRecord,
@@ -94,10 +95,18 @@ class FakeAgentBackend:
     def __init__(self, task: AgentTaskRecord | None) -> None:
         self.task = task
         self.objective: str | None = None
+        self.mode: AgentMode | None = None
 
-    async def run(self, objective: str, *, task_id: str | None = None) -> AgentRunResult:
+    async def run(
+        self,
+        objective: str,
+        *,
+        task_id: str | None = None,
+        mode: AgentMode = "auto",
+    ) -> AgentRunResult:
         del task_id
         self.objective = objective
+        self.mode = mode
         assert self.task is not None
         return AgentRunResult(task=self.task, model="test-model")
 
@@ -162,8 +171,14 @@ class FakeAgentBackend:
 
 
 class FailingAgentBackend(FakeAgentBackend):
-    async def run(self, objective: str, *, task_id: str | None = None) -> AgentRunResult:
-        del objective, task_id
+    async def run(
+        self,
+        objective: str,
+        *,
+        task_id: str | None = None,
+        mode: AgentMode = "auto",
+    ) -> AgentRunResult:
+        del objective, task_id, mode
         raise AgentRunError(
             task_id="failed-task",
             code="native_tool_calling_required",
@@ -206,6 +221,18 @@ def test_post_agent_run_returns_plan_answer_trace_and_metrics() -> None:
     assert payload["citations"] == []
     assert payload["warnings"] == []
     assert backend.objective == "Calculate 2+2"
+
+
+def test_post_agent_run_passes_explicit_mode_to_runner() -> None:
+    backend = FakeAgentBackend(completed_task())
+    with client_with_backend(backend) as client:
+        response = client.post(
+            "/agent/run",
+            json={"objective": "Research LoRA", "mode": "research"},
+        )
+
+    assert response.status_code == 200
+    assert backend.mode == "research"
 
 
 def test_get_agent_task_returns_persisted_record() -> None:

@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from typing import Any, Literal, cast
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
@@ -174,7 +174,7 @@ class AgentTaskRepository:
             result = await session.execute(
                 select(EvidenceRow)
                 .where(EvidenceRow.task_id == task_id)
-                .order_by(EvidenceRow.citation_key)
+                .order_by(func.length(EvidenceRow.citation_key), EvidenceRow.citation_key)
                 .limit(limit)
                 .offset(offset)
             )

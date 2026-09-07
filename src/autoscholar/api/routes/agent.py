@@ -187,7 +187,7 @@ async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunRespo
             code="agent_not_available",
             message="Agent execution is unavailable without database and LLM configuration",
         )
-    result = await runner.run(payload.objective)
+    result = await runner.run(payload.objective, mode=payload.mode)
     return _run_response(result.task, request.state.request_id)
 
 
