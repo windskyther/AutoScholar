@@ -206,7 +206,8 @@ class SemanticScholarSearchProvider(BaseHTTPResearchProvider):
                     "https://api.semanticscholar.org/graph/v1/paper/search",
                     headers=headers,
                     params={
-                        "query": query,
+                        # Semantic Scholar documents that hyphenated terms do not match.
+                        "query": query.replace("-", " "),
                         "limit": limit,
                         "fields": (
                             "title,url,abstract,authors,year,externalIds,openAccessPdf"

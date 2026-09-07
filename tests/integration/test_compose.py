@@ -25,9 +25,20 @@ def test_compose_stack_is_ready() -> None:
         "postgres": {"status": "ok"},
         "redis": {"status": "ok"},
     }
+    assert readiness["capabilities"]["paper_search"] == {"status": "ok"}
+    assert readiness["capabilities"]["web_search"]["status"] in {
+        "ok",
+        "not_configured",
+    }
 
     missing_task_response = httpx.get(
         "http://localhost:8000/agent/tasks/integration-missing", timeout=5
     )
     assert missing_task_response.status_code == 404
     assert missing_task_response.json()["error"]["code"] == "agent_task_not_found"
+
+    missing_evidence_response = httpx.get(
+        "http://localhost:8000/agent/tasks/integration-missing/evidence", timeout=5
+    )
+    assert missing_evidence_response.status_code == 404
+    assert missing_evidence_response.json()["error"]["code"] == "agent_task_not_found"

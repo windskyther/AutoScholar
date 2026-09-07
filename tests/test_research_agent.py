@@ -386,3 +386,33 @@ async def test_invalid_citations_are_retried_once() -> None:
     assert result.task.metrics["model_calls"] == 5
     assert "Correct the invalid citation response" in provider.calls[4]["messages"][-1].content
     await engine.dispose()
+
+
+async def test_auto_routed_research_failure_keeps_plan_and_mode() -> None:
+    store, engine = await repository()
+    runner = AgentRunner(
+        provider=ScriptedProvider(
+            [
+                tool_response(
+                    "submit_plan",
+                    {"mode": "research", "steps": ["Find primary sources"]},
+                ),
+                LLMResult(text="unstructured queries", model="test-model"),
+            ]
+        ),
+        repository=store,
+        tools=[],
+        research_services=search_services(),
+    )
+
+    with pytest.raises(AgentRunError) as exc_info:
+        await runner.run("Research LoRA", task_id="auto-research")
+
+    assert exc_info.value.code == "invalid_research_queries"
+    persisted = await store.get_task("auto-research")
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.mode == "research"
+    assert persisted.plan == ["Find primary sources"]
+    assert persisted.metrics["model_calls"] == 1
+    await engine.dispose()

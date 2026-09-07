@@ -277,6 +277,17 @@ def test_post_agent_run_validates_objective() -> None:
     assert response.status_code == 422
 
 
+def test_post_agent_run_rejects_unknown_mode() -> None:
+    with client_with_backend(FakeAgentBackend(completed_task())) as client:
+        response = client.post(
+            "/agent/run",
+            json={"objective": "Research LoRA", "mode": "unknown"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "request_validation_error"
+
+
 def test_agent_error_response_carries_persisted_task_id() -> None:
     with client_with_backend(FailingAgentBackend(None)) as client:
         response = client.post("/agent/run", json={"objective": "Calculate 2+2"})

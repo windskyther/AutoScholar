@@ -69,6 +69,7 @@ async def test_semantic_scholar_maps_paper_metadata() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["x-api-key"] == "s2-key"
         assert request.url.params["fields"].startswith("title,url,abstract")
+        assert request.url.params["query"] == "Low Rank Adaptation"
         return httpx.Response(
             200,
             json={
@@ -93,7 +94,7 @@ async def test_semantic_scholar_maps_paper_metadata() -> None:
         minimum_interval_seconds=0,
     )
 
-    results = await provider.search("LoRA", limit=3)
+    results = await provider.search("Low-Rank Adaptation", limit=3)
 
     assert results == [
         SearchResult(

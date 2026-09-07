@@ -10,6 +10,7 @@ from autoscholar.agent.records import (
     CitationRecord,
     EvidenceRecord,
     ResearchWarningRecord,
+    ResolvedAgentMode,
     TaskStatus,
     ToolCallStatus,
 )
@@ -85,7 +86,7 @@ class AgentRunResponse(BaseModel):
     tool_calls: list[ToolCallResponse]
     metrics: AgentMetricsResponse
     request_id: str
-    mode: str
+    mode: ResolvedAgentMode
     evidence: list[EvidenceResponse]
     citations: list[CitationResponse]
     warnings: list[ResearchWarningResponse]

@@ -286,16 +286,23 @@ class AgentRunner:
         except Exception as exc:
             code = getattr(exc, "code", "agent_run_failed")
             public_message = getattr(exc, "message", "Agent execution failed")
-            failed_mode: ResolvedAgentMode = "research" if mode == "research" else "compute"
+            persisted = await self._repository.get_task(resolved_task_id)
+            failed_mode: ResolvedAgentMode = (
+                persisted.mode
+                if persisted is not None
+                else ("research" if mode == "research" else "compute")
+            )
             await self._repository.update_task(
                 resolved_task_id,
                 status="failed",
-                plan=initial["plan"],
+                plan=persisted.plan if persisted is not None else initial["plan"],
                 answer=None,
-                metrics=self._metrics(initial),
+                metrics=persisted.metrics if persisted is not None else self._metrics(initial),
                 error_code=str(code),
                 error_message=str(public_message),
                 mode=failed_mode,
+                citations=persisted.citations if persisted is not None else None,
+                warnings=persisted.warnings if persisted is not None else None,
             )
             raise AgentRunError(
                 task_id=resolved_task_id,
@@ -403,6 +410,17 @@ class AgentRunner:
         resolved_mode = cast(
             ResolvedAgentMode,
             proposed_mode if requested == "auto" else requested,
+        )
+        progress_state = dict(state)
+        progress_state.update(updates)
+        progress_state.update(plan=steps, resolved_mode=resolved_mode)
+        await self._repository.update_task(
+            state["task_id"],
+            status="running",
+            plan=steps,
+            answer=None,
+            metrics=self._metrics(cast(AgentState, progress_state)),
+            mode=resolved_mode,
         )
         return {"plan": steps, "resolved_mode": resolved_mode, **updates}
 
@@ -517,9 +535,26 @@ class AgentRunner:
         for query in state["research_queries"]:
             service = self._research_services.get(query.source_type)
             if service is None or not service.configured:
+                error_code = f"{query.source_type}_search_not_configured"
+                trace = await self._repository.add_tool_call(
+                    task_id=state["task_id"],
+                    sequence=len(traces) + 1,
+                    call_id=f"search-{uuid4()}",
+                    tool_name=f"{query.source_type}_search",
+                    arguments={
+                        "query": query.query,
+                        "topic": query.topic,
+                        "limit": self._research_limits.max_results_per_query,
+                    },
+                    output=f"{query.source_type.title()} search is not configured",
+                    status="failed",
+                    error_code=error_code,
+                    duration_ms=0.0,
+                )
+                traces.append(trace)
                 warnings.append(
                     ResearchWarningRecord(
-                        code=f"{query.source_type}_search_not_configured",
+                        code=error_code,
                         message=f"{query.source_type.title()} search is not configured",
                         provider=service.name if service else None,
                     )
@@ -1083,7 +1118,7 @@ class AgentRunner:
             error_code=code,
             error_message=message,
             mode="research",
-            warnings=state["warnings"],
+            warnings=self._dedupe_warnings(state["warnings"]),
         )
         raise AgentRunError(task_id=state["task_id"], code=code, message=message)
 
