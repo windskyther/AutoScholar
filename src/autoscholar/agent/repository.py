@@ -1,13 +1,22 @@
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from autoscholar.agent.database_models import AgentTaskRow, ToolCallRow
-from autoscholar.agent.records import AgentTaskRecord, TaskStatus, ToolCallStatus, ToolTraceRecord
+from autoscholar.agent.database_models import AgentTaskRow, EvidenceRow, ToolCallRow
+from autoscholar.agent.records import (
+    AgentTaskRecord,
+    CitationRecord,
+    EvidenceRecord,
+    ResearchWarningRecord,
+    ResolvedAgentMode,
+    TaskStatus,
+    ToolCallStatus,
+    ToolTraceRecord,
+)
 
 
 class AgentTaskRepository:
@@ -38,6 +47,9 @@ class AgentTaskRepository:
         metrics: dict[str, int],
         error_code: str | None = None,
         error_message: str | None = None,
+        mode: ResolvedAgentMode = "compute",
+        citations: list[CitationRecord] | None = None,
+        warnings: list[ResearchWarningRecord] | None = None,
     ) -> AgentTaskRecord:
         async with self._sessions() as session:
             row = await session.get(AgentTaskRow, task_id)
@@ -49,6 +61,15 @@ class AgentTaskRepository:
             row.metrics = metrics
             row.error_code = error_code
             row.error_message = error_message
+            row.mode = mode
+            row.citations = [
+                {"claim": item.claim, "evidence_ids": list(item.evidence_ids)}
+                for item in (citations or [])
+            ]
+            row.warnings = [
+                {"code": item.code, "message": item.message, "provider": item.provider}
+                for item in (warnings or [])
+            ]
             await session.commit()
         record = await self.get_task(task_id)
         if record is None:  # pragma: no cover - protected by the transaction above
@@ -91,16 +112,80 @@ class AgentTaskRepository:
             result = await session.execute(
                 select(AgentTaskRow)
                 .where(AgentTaskRow.id == task_id)
-                .options(selectinload(AgentTaskRow.tool_calls))
+                .options(
+                    selectinload(AgentTaskRow.tool_calls),
+                    selectinload(AgentTaskRow.evidence),
+                )
             )
             row = result.scalar_one_or_none()
             if row is None:
                 return None
-            return self._task_record(row, row.tool_calls)
+            return self._task_record(row, row.tool_calls, row.evidence)
+
+    async def add_evidence(
+        self,
+        *,
+        task_id: str,
+        citation_key: str,
+        source_type: str,
+        provider: str,
+        title: str,
+        url: str,
+        authors: tuple[str, ...],
+        year: int | None,
+        external_id: str | None,
+        query: str,
+        topic: str,
+        claim: str,
+        excerpt: str,
+        relevance: float,
+    ) -> EvidenceRecord:
+        async with self._sessions() as session:
+            row = EvidenceRow(
+                id=str(uuid4()),
+                task_id=task_id,
+                citation_key=citation_key,
+                source_type=source_type,
+                provider=provider,
+                title=title,
+                url=url,
+                authors=list(authors),
+                year=year,
+                external_id=external_id,
+                query=query,
+                topic=topic,
+                claim=claim,
+                excerpt=excerpt,
+                relevance=relevance,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._evidence_record(row)
+
+    async def list_evidence(
+        self, task_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[EvidenceRecord], int]:
+        async with self._sessions() as session:
+            total_rows = await session.execute(
+                select(EvidenceRow.id).where(EvidenceRow.task_id == task_id)
+            )
+            total = len(total_rows.scalars().all())
+            result = await session.execute(
+                select(EvidenceRow)
+                .where(EvidenceRow.task_id == task_id)
+                .order_by(EvidenceRow.citation_key)
+                .limit(limit)
+                .offset(offset)
+            )
+            return [self._evidence_record(row) for row in result.scalars().all()], total
 
     @classmethod
     def _task_record(
-        cls, row: AgentTaskRow, tool_calls: Sequence[ToolCallRow]
+        cls,
+        row: AgentTaskRow,
+        tool_calls: Sequence[ToolCallRow],
+        evidence: Sequence[EvidenceRow] = (),
     ) -> AgentTaskRecord:
         return AgentTaskRecord(
             id=row.id,
@@ -111,9 +196,47 @@ class AgentTaskRepository:
             metrics=dict(row.metrics),
             error_code=row.error_code,
             error_message=row.error_message,
+            mode=cast(ResolvedAgentMode, row.mode),
+            citations=[
+                CitationRecord(
+                    claim=str(item["claim"]),
+                    evidence_ids=tuple(str(value) for value in item.get("evidence_ids", [])),
+                )
+                for item in row.citations
+            ],
+            warnings=[
+                ResearchWarningRecord(
+                    code=str(item["code"]),
+                    message=str(item["message"]),
+                    provider=(str(item["provider"]) if item.get("provider") else None),
+                )
+                for item in row.warnings
+            ],
+            evidence=[cls._evidence_record(item) for item in evidence],
             created_at=row.created_at,
             updated_at=row.updated_at,
             tool_calls=[cls._tool_record(call) for call in tool_calls],
+        )
+
+    @staticmethod
+    def _evidence_record(row: EvidenceRow) -> EvidenceRecord:
+        return EvidenceRecord(
+            id=row.id,
+            task_id=row.task_id,
+            citation_key=row.citation_key,
+            source_type=cast(Literal["web", "paper"], row.source_type),
+            provider=row.provider,
+            title=row.title,
+            url=row.url,
+            authors=tuple(row.authors),
+            year=row.year,
+            external_id=row.external_id,
+            query=row.query,
+            topic=row.topic,
+            claim=row.claim,
+            excerpt=row.excerpt,
+            relevance=row.relevance,
+            created_at=row.created_at,
         )
 
     @staticmethod

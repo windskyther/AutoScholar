@@ -4,7 +4,16 @@ from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
 
-from autoscholar.agent.records import AgentTaskRecord, TaskStatus, ToolCallStatus, ToolTraceRecord
+from autoscholar.agent.records import (
+    AgentTaskRecord,
+    CitationRecord,
+    EvidenceRecord,
+    ResearchWarningRecord,
+    ResolvedAgentMode,
+    TaskStatus,
+    ToolCallStatus,
+    ToolTraceRecord,
+)
 from autoscholar.agent.tools import AgentTool
 from autoscholar.core.errors import AppError
 from autoscholar.llm import (
@@ -32,6 +41,9 @@ class TaskStore(Protocol):
         metrics: dict[str, int],
         error_code: str | None = None,
         error_message: str | None = None,
+        mode: ResolvedAgentMode = "compute",
+        citations: list[CitationRecord] | None = None,
+        warnings: list[ResearchWarningRecord] | None = None,
     ) -> AgentTaskRecord: ...
 
     async def add_tool_call(
@@ -49,6 +61,29 @@ class TaskStore(Protocol):
     ) -> ToolTraceRecord: ...
 
     async def get_task(self, task_id: str) -> AgentTaskRecord | None: ...
+
+    async def add_evidence(
+        self,
+        *,
+        task_id: str,
+        citation_key: str,
+        source_type: str,
+        provider: str,
+        title: str,
+        url: str,
+        authors: tuple[str, ...],
+        year: int | None,
+        external_id: str | None,
+        query: str,
+        topic: str,
+        claim: str,
+        excerpt: str,
+        relevance: float,
+    ) -> EvidenceRecord: ...
+
+    async def list_evidence(
+        self, task_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[EvidenceRecord], int]: ...
 
 
 @dataclass(frozen=True, slots=True)
