@@ -28,12 +28,20 @@ class Settings(BaseSettings):
     llm_model: str | None = None
     llm_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
 
+    tavily_api_key: SecretStr | None = None
+    semantic_scholar_api_key: SecretStr | None = None
+    research_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    research_cache_ttl_seconds: int = Field(default=86_400, ge=0, le=604_800)
+
     @property
     def llm_configured(self) -> bool:
         return bool(self.llm_api_key and self.llm_api_key.get_secret_value() and self.llm_model)
+
+    @property
+    def web_search_configured(self) -> bool:
+        return bool(self.tavily_api_key and self.tavily_api_key.get_secret_value())
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
