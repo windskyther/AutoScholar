@@ -1,105 +1,37 @@
 # AutoScholar
 
-> 面向 AI/ML 研究与实验的长任务自主智能体平台  
+> 面向 AI/ML 研究与实验的自主智能体平台  
 > Autonomous AI/ML Research & Experiment Agent Platform
 
-> [!IMPORTANT]
-> AutoScholar 目前已完成 Phase 0 工程骨架，正在进入最小 Agent 阶段。本文后续能力为项目目标，将按里程碑逐步实现。
+AutoScholar 的目标是把复杂研究目标转化为可追踪、可恢复、可评测、可复现的研究流程。项目当前已完成 Phase 1：模型可以规划任务、选择工具、执行计算、记录轨迹，并基于证据生成最终回答。
 
-## 项目简介
+## 当前能力
 
-AutoScholar 希望将一个复杂的 AI/ML 研究目标转化为可追踪、可恢复、可评测、可复现的完整研究流程。它不止回答问题，还将围绕目标自主规划任务、检索资料、整理证据、生成代码、执行实验、分析结果，并在质量不足时重新规划，最终产出带引用的研究报告。
+- FastAPI 服务、结构化日志、请求 ID 与统一错误响应
+- PostgreSQL、Redis、Docker Compose 与 Alembic 自动迁移
+- OpenAI-compatible `LLMProvider`，支持原生 Function Calling
+- LangGraph 最小闭环：`Planner → Executor ⇄ Tools → Writer`
+- Calculator 安全算术表达式工具
+- 受限 Python 子进程工具
+- Agent 任务和 Tool Trace 持久化
+- 同步执行 API 与任务回查 API
 
-一个典型任务是：
+Phase 1 不包含 Web Search、论文检索、RAG、异步任务队列和断点恢复；这些能力将在后续阶段加入。
 
-> 比较 ResNet18 与 Vision Transformer 在 CIFAR-10 小样本场景下的性能差异，并结合相关论文分析产生差异的原因。
-
-## 核心工作流
+## 工作流
 
 ```mermaid
 flowchart LR
-    A[研究目标] --> B[规划]
-    B --> C[资料检索]
-    C --> D[证据整理]
-    D --> E[实验设计]
-    E --> F[编码与执行]
-    F --> G[结果分析]
-    G --> H[质量审查]
-    H -->|通过| I[研究报告]
-    H -->|证据或实验不足| J[重新规划]
-    J --> C
+    S([START]) --> P[Planner]
+    P --> E[Executor]
+    E -->|调用工具| T[Calculator / Python]
+    T --> E
+    E -->|证据充分或预算耗尽| W[Writer]
+    W --> X[(PostgreSQL Task + Tool Trace)]
+    W --> F([END])
 ```
 
-系统的核心执行模式是：
-
-```text
-Plan → Retrieve → Reason → Act → Observe → Evaluate → Replan → Final Answer
-```
-
-## 目标能力
-
-- **Agent 编排**：基于显式状态和工作流执行长任务，支持规划、审查、重规划与预算控制。
-- **Research 与 RAG**：联合检索论文、Web 和本地知识库，提供可追溯的 Evidence 与 Citation。
-- **Coding**：分析代码仓库，创建或修改 Python/PyTorch 代码，并进行静态检查与错误修复。
-- **Experiment**：在受限 Docker 沙箱中执行实验，收集指标、日志、图表和模型等产物。
-- **Memory 与 HITL**：保存任务、项目和历史经验，在高风险或高成本操作前请求人工审批。
-- **Evaluation**：从任务成功率、检索质量、工具调用、代码测试、延迟与成本等维度评测系统。
-
-## 架构概览
-
-AutoScholar 计划采用一个主 LangGraph 与多个专业子图，而不是让多个独立 Agent 自由对话：
-
-```text
-Task Intake
-    ↓
-Planner
-    ├── Research Subgraph
-    ├── Coding Subgraph
-    └── Experiment Subgraph
-              ↓
-           Reviewer
-          ↙        ↘
-      Replanner    Writer
-```
-
-拟采用的主要技术栈：
-
-| 领域 | 技术 |
-|---|---|
-| Agent 编排 | LangGraph、LangChain Model/Tool Adapter |
-| 后端与任务 | FastAPI、Celery |
-| 数据与缓存 | PostgreSQL、Redis |
-| 检索 | Qdrant、BM25、RRF、Reranker |
-| 实验执行 | Docker、Python、PyTorch |
-| 前端 | React、TypeScript、Ant Design |
-| 可观测与评测 | Node/Tool Trace、Benchmark、Ablation Study |
-
-模型层将通过统一的 `LLMProvider` 接口解耦具体供应商，以支持不同模型的效果、成本与延迟对比。工具层会先以原生工具跑通端到端流程，再逐步迁移到 MCP。
-
-## 开发路线
-
-| 里程碑 | 对应阶段 | 主要成果 |
-|---|---|---|
-| 1. Research Assistant | Phase 0–3 | 工程骨架、最小 Agent、论文/Web 检索、Evidence/Citation、RAG 知识库 |
-| 2. Autonomous Experiment Agent | Phase 4–6 | 代码生成与修复、Docker 实验、结果分析、Reviewer 与 Replanning |
-| 3. AutoScholar Platform | Phase 7–9 | Checkpoint、Memory、Human-in-the-loop、MCP 与完整 Web 工作台 |
-| 4. Evaluation & Production | Phase 10–11 | 全链路评测、消融实验、安全加固、CI/CD 与部署 |
-
-项目将遵循以下演进原则：
-
-```text
-先跑通 → 再自动化 → 再智能化 → 再平台化 → 最后评测
-```
-
-### 当前状态：Phase 0 已完成
-
-- [x] Python 3.12 + `uv` 工程和质量门禁
-- [x] FastAPI、配置管理、结构化日志与请求追踪
-- [x] PostgreSQL、Redis 和 Docker Compose
-- [x] 统一 LLM Provider 与 OpenAI-compatible 实现
-- [x] `POST /chat`、健康检查和自动化测试
-
-真实模型调用需要开发者提供自己的兼容服务地址、API Key 和模型名。凭据仅保存在本地 `.env`，不会进入 Git。
+默认预算：最多 6 次执行迭代、4 次工具调用、8 个计划步骤。预算耗尽时，任务状态为 `budget_exceeded`，Writer 会利用已有证据给出带限制说明的部分答案。
 
 ## 快速开始
 
@@ -109,15 +41,15 @@ Planner
 - [`uv`](https://docs.astral.sh/uv/)
 - Docker Desktop（包含 Docker Compose）
 
-本项目当前 Windows 开发环境将 Docker Desktop 安装在 `D:\Applications\Docker`，运行数据存放在 `D:\DockerData\wsl`，避免镜像与卷占用系统盘。其他环境可以使用自己的安装位置。
+当前 Windows 开发环境把 Docker Desktop 安装在 `D:\Applications\Docker`，运行数据保存在 `D:\DockerData\wsl`，避免镜像和卷占用系统盘。其他环境可自行选择安装位置。
 
-### 配置
+### 配置模型
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-如需调用真实模型，在 `.env` 中填写：
+在本地 `.env` 中填写 OpenAI-compatible 服务：
 
 ```dotenv
 LLM_BASE_URL=https://your-provider.example/v1
@@ -125,16 +57,16 @@ LLM_API_KEY=your-api-key
 LLM_MODEL=your-model
 ```
 
-不要提交 `.env` 或在日志、Issue 中粘贴密钥。
+Phase 1 只使用原生 Function Calling，不提供 JSON Prompt 降级方案。模型至少需要支持 `tools` 和 `tool_choice=auto`；若未返回要求的原生工具调用，任务会明确失败并持久化错误。`.env` 已被 Git 忽略，禁止把密钥提交到仓库或粘贴到日志、Issue。
 
 ### 使用 Docker 启动
 
 ```powershell
 docker compose up -d --build
-docker compose ps
+docker compose ps -a
 ```
 
-API 默认监听 `http://localhost:8000`，交互式文档位于 `http://localhost:8000/docs`。
+`migrate` 服务会先执行 `alembic upgrade head`，成功后 API 才会启动。API 默认地址为 `http://localhost:8000`，交互式文档位于 `http://localhost:8000/docs`。
 
 停止服务：
 
@@ -142,59 +74,92 @@ API 默认监听 `http://localhost:8000`，交互式文档位于 `http://localho
 docker compose down
 ```
 
-命名卷会保留 PostgreSQL 和 Redis 数据；如无明确需要，不要使用 `docker compose down -v`。
+命名卷会保留 PostgreSQL 与 Redis 数据。除非确认需要清空数据，否则不要执行 `docker compose down -v`。
 
 ### 本地开发
 
 ```powershell
 uv sync --all-groups
+uv run alembic upgrade head
 uv run uvicorn autoscholar.main:app --reload
 ```
 
-### 接口
+## API
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET` | `/health/live` | API 进程存活检查 |
-| `GET` | `/health/ready` | PostgreSQL、Redis 与 LLM 配置状态 |
+| `GET` | `/health/ready` | PostgreSQL、Redis 和 LLM 配置状态 |
 | `POST` | `/chat` | 无状态单轮模型调用 |
+| `POST` | `/agent/run` | 同步运行最小 Agent 闭环 |
+| `GET` | `/agent/tasks/{task_id}` | 回查任务、指标和 Tool Trace |
 
-`POST /chat` 请求示例：
-
-```json
-{
-  "message": "分析 y=x² 在 0~10 区间的变化趋势"
-}
-```
-
-### 测试
+运行 Agent：
 
 ```powershell
-uv run ruff check .
-uv run mypy src tests
+$body = @{
+  objective = "分析函数 y=x² 在 0 到 10 区间的单调性、极值、导数和顶点"
+} | ConvertTo-Json
+
+$result = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8000/agent/run" `
+  -ContentType "application/json" `
+  -Body $body
+
+$result | ConvertTo-Json -Depth 10
+```
+
+回查已持久化任务：
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://localhost:8000/agent/tasks/$($result.task_id)" |
+  ConvertTo-Json -Depth 10
+```
+
+成功响应包含 `task_id`、`status`、`plan`、`answer`、`tool_calls`、模型调用/Token 指标和 `request_id`。失败响应也会携带 `task_id`，可用它查询已保存的错误状态。
+
+## 受限 Python 的边界
+
+Python 工具会先做 AST 白名单检查，再使用 `python -I -S`、空临时目录和最小环境启动独立子进程。当前限制包括：
+
+- 代码最多 4,000 字符
+- 执行超时 3 秒
+- 输出最多 16,000 字符
+- 禁止 import、文件、网络、进程、属性访问、函数/类定义、异常结构和 `while`
+
+这是降低误用风险的 Phase 1 受限执行器，不是操作系统级强安全沙箱，也不适合运行不可信用户代码。真正隔离的 Docker 实验执行器属于后续阶段。
+
+## 测试
+
+```powershell
+uv run ruff check src tests migrations
+uv run mypy
 uv run pytest
 ```
 
-Compose 服务启动后，可以运行真实基础设施测试：
+Compose 服务健康后运行真实基础设施测试：
 
 ```powershell
 $env:AUTOSCHOLAR_RUN_INTEGRATION="1"
 uv run pytest tests/integration -m integration
 ```
 
+## 开发路线
+
+| 阶段 | 重点 |
+|---|---|
+| Phase 0 | 工程骨架、基础设施、统一 LLM Provider、`/chat` |
+| Phase 1 | 最小 LangGraph Agent、Calculator/Python、任务与轨迹持久化 |
+| Phase 2–3 | Web/论文检索、Evidence/Citation、RAG 知识库 |
+| Phase 4–6 | 代码生成与修复、Docker 实验、Reviewer/Replanning |
+| Phase 7–9 | Checkpoint、Memory、Human-in-the-loop、MCP、Web 工作台 |
+| Phase 10–11 | 全链路评测、安全加固、CI/CD 与部署 |
+
 ## 分支与提交约定
 
-- 日常开发与阶段性同步使用 `dev` 分支。
+- 日常开发和阶段同步使用 `dev`。
 - 每个关键模块通过测试后独立提交并推送到 `origin/dev`。
-- `main` 是受审核分支；所有合并都必须由项目所有者单独检查并明确批准。
+- `main` 是受审核分支；任何合并都必须由项目所有者单独检查并明确批准。
 - 本地设计文档、`.env` 和运行产物不得提交。
-
-## 最终演示目标
-
-最终 Demo 将围绕一个完整研究任务展开：比较 CNN 与 Vision Transformer 在 CIFAR-10 小数据场景下的表现。AutoScholar 将自主完成问题拆解、论文与知识库检索、证据整理、实验设计、代码生成、模型训练、错误恢复、指标分析、质量审查、补充实验和报告生成。
-
-这个任务用于同时验证 Planning、Research、RAG、Tool Calling、Coding、PyTorch、Sandbox、Replanning、Memory、Human-in-the-loop 与 Evaluation，而非仅展示一次性问答。
-
-## 参与项目
-
-项目尚处于早期阶段，欢迎通过 GitHub Issue 或 Discussion 交流使用场景、架构建议和评测思路。贡献规范与许可证将在后续阶段补充。

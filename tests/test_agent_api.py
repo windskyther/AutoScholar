@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from autoscholar.agent.records import AgentTaskRecord, ToolTraceRecord
-from autoscholar.agent.runner import AgentRunResult
+from autoscholar.agent.runner import AgentRunError, AgentRunResult
 from autoscholar.core.config import Settings
 from autoscholar.main import create_app
 from tests.test_chat import SuccessfulProvider
@@ -72,6 +72,16 @@ class FakeAgentBackend:
         return self.task
 
 
+class FailingAgentBackend(FakeAgentBackend):
+    async def run(self, objective: str, *, task_id: str | None = None) -> AgentRunResult:
+        del objective, task_id
+        raise AgentRunError(
+            task_id="failed-task",
+            code="native_tool_calling_required",
+            message="The configured model did not return the required native tool call",
+        )
+
+
 def client_with_backend(backend: FakeAgentBackend) -> TestClient:
     return TestClient(
         create_app(
@@ -127,3 +137,15 @@ def test_post_agent_run_validates_objective() -> None:
         response = client.post("/agent/run", json={"objective": "   "})
 
     assert response.status_code == 422
+
+
+def test_agent_error_response_carries_persisted_task_id() -> None:
+    with client_with_backend(FailingAgentBackend(None)) as client:
+        response = client.post("/agent/run", json={"objective": "Calculate 2+2"})
+
+    assert response.status_code == 502
+    assert response.json()["error"] == {
+        "code": "native_tool_calling_required",
+        "message": "The configured model did not return the required native tool call",
+        "task_id": "failed-task",
+    }

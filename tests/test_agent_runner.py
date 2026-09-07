@@ -1,10 +1,11 @@
 from typing import Any
 
+import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from autoscholar.agent.database_models import Base
 from autoscholar.agent.repository import AgentTaskRepository
-from autoscholar.agent.runner import AgentLimits, AgentRunner
+from autoscholar.agent.runner import AgentLimits, AgentRunError, AgentRunner
 from autoscholar.agent.tools import RestrictedPythonTool
 from autoscholar.llm import (
     ConversationMessage,
@@ -136,4 +137,24 @@ async def test_agent_writes_partial_answer_when_tool_budget_is_exceeded() -> Non
     assert result.task.status == "budget_exceeded"
     assert result.task.answer is not None
     assert result.task.tool_calls == []
+    await engine.dispose()
+
+
+async def test_agent_persists_clear_error_when_native_plan_call_is_missing() -> None:
+    store, engine = await repository()
+    runner = AgentRunner(
+        provider=ScriptedProvider([response(text="Plain text plan")]),
+        repository=store,
+        tools=[RestrictedPythonTool()],
+    )
+
+    with pytest.raises(AgentRunError) as exc_info:
+        await runner.run("Calculate 2+2", task_id="task-no-native-tool")
+
+    assert exc_info.value.code == "native_tool_calling_required"
+    assert exc_info.value.task_id == "task-no-native-tool"
+    persisted = await store.get_task("task-no-native-tool")
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.error_code == "native_tool_calling_required"
     await engine.dispose()
