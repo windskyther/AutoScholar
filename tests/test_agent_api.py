@@ -8,6 +8,7 @@ from autoscholar.agent.records import (
     AgentTaskRecord,
     CitationRecord,
     EvidenceRecord,
+    ResearchSource,
     ResearchWarningRecord,
     ToolTraceRecord,
 )
@@ -95,6 +96,7 @@ class FakeAgentBackend:
         self.task = task
         self.objective: str | None = None
         self.mode: AgentMode | None = None
+        self.research_sources: list[ResearchSource] | None = None
 
     async def run(
         self,
@@ -105,17 +107,24 @@ class FakeAgentBackend:
         project_id: str | None = None,
         document_ids: list[str] | None = None,
         retrieval_mode: RetrievalMode = "dense",
+        research_sources: list[ResearchSource] | None = None,
     ) -> AgentRunResult:
         del task_id, project_id, document_ids, retrieval_mode
         self.objective = objective
         self.mode = mode
+        self.research_sources = research_sources
         assert self.task is not None
         return AgentRunResult(task=self.task, model="test-model")
 
     async def create_task(
-        self, *, task_id: str, objective: str, project_id: str | None = None
+        self,
+        *,
+        task_id: str,
+        objective: str,
+        project_id: str | None = None,
+        research_sources: list[ResearchSource] | None = None,
     ) -> AgentTaskRecord:
-        del task_id, objective, project_id
+        del task_id, objective, project_id, research_sources
         raise NotImplementedError
 
     async def update_task(self, *args: object, **kwargs: object) -> AgentTaskRecord:
@@ -192,8 +201,9 @@ class FailingAgentBackend(FakeAgentBackend):
         project_id: str | None = None,
         document_ids: list[str] | None = None,
         retrieval_mode: RetrievalMode = "dense",
+        research_sources: list[ResearchSource] | None = None,
     ) -> AgentRunResult:
-        del objective, task_id, mode, project_id, document_ids, retrieval_mode
+        del objective, task_id, mode, project_id, document_ids, retrieval_mode, research_sources
         raise AgentRunError(
             task_id="failed-task",
             code="native_tool_calling_required",
@@ -235,6 +245,7 @@ def test_post_agent_run_returns_plan_answer_trace_and_metrics() -> None:
     assert payload["evidence"] == []
     assert payload["citations"] == []
     assert payload["warnings"] == []
+    assert payload["research_sources"] == ["web", "paper"]
     assert backend.objective == "Calculate 2+2"
 
 
@@ -243,11 +254,31 @@ def test_post_agent_run_passes_explicit_mode_to_runner() -> None:
     with client_with_backend(backend) as client:
         response = client.post(
             "/agent/run",
-            json={"objective": "Research LoRA", "mode": "research"},
+            json={
+                "objective": "Research LoRA",
+                "mode": "research",
+                "research_sources": ["web"],
+            },
         )
 
     assert response.status_code == 200
     assert backend.mode == "research"
+    assert backend.research_sources == ["web"]
+
+
+def test_post_agent_run_rejects_duplicate_or_empty_research_sources() -> None:
+    with client_with_backend(FakeAgentBackend(completed_task())) as client:
+        duplicate = client.post(
+            "/agent/run",
+            json={"objective": "Research LoRA", "research_sources": ["web", "web"]},
+        )
+        empty = client.post(
+            "/agent/run",
+            json={"objective": "Research LoRA", "research_sources": []},
+        )
+
+    assert duplicate.status_code == 422
+    assert empty.status_code == 422
 
 
 def test_get_agent_task_returns_persisted_record() -> None:

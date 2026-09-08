@@ -32,6 +32,9 @@ class AgentTaskRow(Base):
     answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     metrics: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
     mode: Mapped[str] = mapped_column(String(16), default="compute")
+    research_sources: Mapped[list[str]] = mapped_column(
+        JSON, default=lambda: ["web", "paper"]
+    )
     citations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     warnings: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)

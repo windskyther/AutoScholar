@@ -14,6 +14,7 @@ from autoscholar.agent.records import (
     AgentTaskRecord,
     CitationRecord,
     EvidenceRecord,
+    ResearchSource,
     ResearchWarningRecord,
     ResolvedAgentMode,
     TaskStatus,
@@ -39,7 +40,12 @@ from autoscholar.research import SearchProviderError, SearchResponse, SearchResu
 
 class TaskStore(Protocol):
     async def create_task(
-        self, *, task_id: str, objective: str, project_id: str | None = None
+        self,
+        *,
+        task_id: str,
+        objective: str,
+        project_id: str | None = None,
+        research_sources: list[ResearchSource] | None = None,
     ) -> AgentTaskRecord: ...
 
     async def update_task(
@@ -147,6 +153,7 @@ class AgentService(Protocol):
         project_id: str | None = None,
         document_ids: list[str] | None = None,
         retrieval_mode: RetrievalMode = "hybrid_rerank",
+        research_sources: list[ResearchSource] | None = None,
     ) -> AgentRunResult: ...
 
 
@@ -215,6 +222,7 @@ class AgentState(TypedDict):
     project_id: str | None
     document_ids: list[str] | None
     retrieval_mode: RetrievalMode
+    research_sources: list[ResearchSource]
 
 
 class AgentRunner:
@@ -250,7 +258,21 @@ class AgentRunner:
         project_id: str | None = None,
         document_ids: list[str] | None = None,
         retrieval_mode: RetrievalMode = "hybrid_rerank",
+        research_sources: list[ResearchSource] | None = None,
     ) -> AgentRunResult:
+        resolved_research_sources = (
+            ["web", "paper"] if research_sources is None else list(research_sources)
+        )
+        if (
+            not resolved_research_sources
+            or len(resolved_research_sources) != len(set(resolved_research_sources))
+            or any(source not in {"web", "paper"} for source in resolved_research_sources)
+        ):
+            raise AppError(
+                status_code=422,
+                code="invalid_research_sources",
+                message="research_sources must contain one or both of: web, paper",
+            )
         if document_ids is not None and project_id is None:
             raise AppError(
                 status_code=422,
@@ -274,6 +296,7 @@ class AgentRunner:
             task_id=resolved_task_id,
             objective=objective,
             project_id=project_id,
+            research_sources=cast(list[ResearchSource], resolved_research_sources),
         )
         initial: AgentState = {
             "task_id": resolved_task_id,
@@ -304,6 +327,7 @@ class AgentRunner:
             "project_id": project_id,
             "document_ids": document_ids,
             "retrieval_mode": retrieval_mode,
+            "research_sources": cast(list[ResearchSource], resolved_research_sources),
         }
         try:
             final = cast(AgentState, await self._graph.ainvoke(initial))

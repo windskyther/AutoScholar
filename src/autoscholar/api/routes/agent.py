@@ -2,13 +2,14 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from autoscholar.agent.records import (
     AgentMode,
     AgentTaskRecord,
     CitationRecord,
     EvidenceRecord,
+    ResearchSource,
     ResearchWarningRecord,
     ResolvedAgentMode,
     TaskStatus,
@@ -25,12 +26,28 @@ ObjectiveText = Annotated[
 ]
 
 
+def _default_research_sources() -> list[ResearchSource]:
+    return ["web", "paper"]
+
+
 class AgentRunRequest(BaseModel):
     objective: ObjectiveText
     mode: AgentMode = "auto"
     project_id: str | None = None
     document_ids: list[str] | None = None
     retrieval_mode: RetrievalMode = "hybrid_rerank"
+    research_sources: list[ResearchSource] = Field(
+        default_factory=_default_research_sources, min_length=1, max_length=2
+    )
+
+    @field_validator("research_sources")
+    @classmethod
+    def validate_research_sources(
+        cls, sources: list[ResearchSource]
+    ) -> list[ResearchSource]:
+        if len(sources) != len(set(sources)):
+            raise ValueError("research_sources must not contain duplicates")
+        return sources
 
 
 class AgentMetricsResponse(BaseModel):
@@ -99,6 +116,7 @@ class AgentRunResponse(BaseModel):
     citations: list[CitationResponse]
     warnings: list[ResearchWarningResponse]
     project_id: str | None
+    research_sources: list[ResearchSource]
 
 
 class AgentTaskResponse(AgentRunResponse):
@@ -189,6 +207,7 @@ def _run_response(task: AgentTaskRecord, request_id: str) -> AgentRunResponse:
         citations=_citations(task.citations),
         warnings=_warnings(task.warnings),
         project_id=task.project_id,
+        research_sources=task.research_sources,
     )
 
 
@@ -207,6 +226,7 @@ async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunRespo
         project_id=payload.project_id,
         document_ids=payload.document_ids,
         retrieval_mode=payload.retrieval_mode,
+        research_sources=payload.research_sources,
     )
     return _run_response(result.task, request.state.request_id)
 
@@ -245,6 +265,7 @@ async def get_agent_task(task_id: str, request: Request) -> AgentTaskResponse:
         citations=_citations(task.citations),
         warnings=_warnings(task.warnings),
         project_id=task.project_id,
+        research_sources=task.research_sources,
     )
 
 

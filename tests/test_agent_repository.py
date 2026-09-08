@@ -12,7 +12,9 @@ async def test_repository_persists_task_and_ordered_tool_trace() -> None:
         await connection.run_sync(Base.metadata.create_all)
     repository = AgentTaskRepository(async_sessionmaker(engine, expire_on_commit=False))
 
-    created = await repository.create_task(task_id="task-1", objective="Calculate 2 + 2")
+    created = await repository.create_task(
+        task_id="task-1", objective="Calculate 2 + 2", research_sources=["web"]
+    )
     await repository.add_tool_call(
         task_id=created.id,
         sequence=1,
@@ -64,6 +66,7 @@ async def test_repository_persists_task_and_ordered_tool_trace() -> None:
     assert loaded.tool_calls[0].call_id == "call-1"
     assert loaded.tool_calls[0].arguments == {"expression": "2 + 2"}
     assert loaded.mode == "research"
+    assert loaded.research_sources == ["web"]
     assert loaded.citations[0].evidence_ids == ("E1",)
     assert loaded.warnings[0].provider == "tavily"
     assert loaded.evidence == [evidence]

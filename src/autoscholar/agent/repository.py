@@ -11,6 +11,7 @@ from autoscholar.agent.records import (
     AgentTaskRecord,
     CitationRecord,
     EvidenceRecord,
+    ResearchSource,
     ResearchWarningRecord,
     ResolvedAgentMode,
     TaskStatus,
@@ -24,7 +25,12 @@ class AgentTaskRepository:
         self._sessions = session_factory
 
     async def create_task(
-        self, *, task_id: str, objective: str, project_id: str | None = None
+        self,
+        *,
+        task_id: str,
+        objective: str,
+        project_id: str | None = None,
+        research_sources: list[ResearchSource] | None = None,
     ) -> AgentTaskRecord:
         async with self._sessions() as session:
             row = AgentTaskRow(
@@ -34,6 +40,7 @@ class AgentTaskRepository:
                 objective=objective,
                 plan=[],
                 metrics={},
+                research_sources=list(research_sources or ["web", "paper"]),
             )
             session.add(row)
             await session.commit()
@@ -228,6 +235,7 @@ class AgentTaskRepository:
             updated_at=row.updated_at,
             tool_calls=[cls._tool_record(call) for call in tool_calls],
             project_id=row.project_id,
+            research_sources=[cast(ResearchSource, item) for item in row.research_sources],
         )
 
     @staticmethod

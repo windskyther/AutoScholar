@@ -6,6 +6,7 @@ TaskStatus = Literal["running", "succeeded", "partial", "failed", "budget_exceed
 ToolCallStatus = Literal["succeeded", "failed"]
 AgentMode = Literal["auto", "research", "compute", "knowledge"]
 ResolvedAgentMode = Literal["research", "compute", "knowledge"]
+ResearchSource = Literal["web", "paper"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,3 +79,6 @@ class AgentTaskRecord:
     evidence: list[EvidenceRecord] = field(default_factory=list)
     tool_calls: list[ToolTraceRecord] = field(default_factory=list)
     project_id: str | None = None
+    research_sources: list[ResearchSource] = field(
+        default_factory=lambda: ["web", "paper"]
+    )
