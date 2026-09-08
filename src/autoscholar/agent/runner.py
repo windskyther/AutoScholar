@@ -944,6 +944,7 @@ class AgentRunner:
                 content=(
                     f"Objective: {state['objective']}\n"
                     f"Required source types: {sorted(self._required_evidence_sources(state))}\n"
+                    f"Required research topics: {sorted(self._required_evidence_topics(state))}\n"
                     f"<untrusted_sources>\n{json.dumps(candidate_payload, ensure_ascii=False)}\n"
                     "</untrusted_sources>"
                 ),
@@ -953,9 +954,16 @@ class AgentRunner:
         best_selections: list[EvidenceSelection] = []
         best_rejections = [EvidenceRejection(candidate_id="response", reason="invalid_response")]
         best_missing = self._required_evidence_sources(state)
-        best_rank = (len(best_missing), len(best_rejections), 0)
+        best_missing_topics = self._required_evidence_topics(state)
+        best_rank = (
+            len(best_missing),
+            len(best_missing_topics),
+            len(best_rejections),
+            0,
+        )
         feedback = ""
         available_sources = {item.result.source_type for item in state["candidates"]}
+        available_topics = {item.topic.casefold() for item in state["candidates"]}
         for attempt in range(2):
             call_messages = messages
             if attempt:
@@ -977,16 +985,28 @@ class AgentRunner:
             results.append(result)
             selections, rejections = self._validate_evidence_selection(state, result)
             missing = self._missing_evidence_sources(state, selections)
-            rank = (len(missing), len(rejections), -len(selections))
+            missing_topics = self._missing_evidence_topics(state, selections)
+            rank = (
+                len(missing),
+                len(missing_topics),
+                len(rejections),
+                -len(selections),
+            )
             if rank < best_rank:
                 best_selections = selections
                 best_rejections = rejections
                 best_missing = missing
+                best_missing_topics = missing_topics
                 best_rank = rank
             retryable_missing = missing & available_sources
-            if not rejections and not retryable_missing:
+            retryable_missing_topics = {
+                topic for topic in missing_topics if topic.casefold() in available_topics
+            }
+            if not rejections and not retryable_missing and not retryable_missing_topics:
                 break
-            feedback = self._evidence_feedback(rejections, retryable_missing)
+            feedback = self._evidence_feedback(
+                rejections, retryable_missing, retryable_missing_topics
+            )
 
         updated_state = dict(state)
         updated_state.update(self._usage_updates_many(state, results))
@@ -996,7 +1016,9 @@ class AgentRunner:
                 code="research_evidence_unavailable",
                 message=(
                     "No model-selected evidence passed source validation: "
-                    f"{self._evidence_feedback(best_rejections, best_missing)}"
+                    f"{self._evidence_feedback(
+                        best_rejections, best_missing, best_missing_topics
+                    )}"
                 ),
             )
         evidence = await self._store_evidence(state, best_selections)
@@ -1008,12 +1030,10 @@ class AgentRunner:
                     message=self._evidence_rejection_message(best_rejections),
                 )
             )
-        topics = {query.topic.casefold() for query in state["research_queries"]}
-        covered_topics = {item.topic.casefold() for item in evidence}
         unique_urls = {self._canonical_url(item.url) for item in evidence}
         provider_warning = any(item.provider is not None for item in warnings)
         partial = (
-            not topics.issubset(covered_topics)
+            bool(best_missing_topics)
             or bool(best_missing)
             or len(unique_urls) < 2
             or provider_warning
@@ -1025,12 +1045,17 @@ class AgentRunner:
                 if best_missing
                 else ""
             )
+            missing_topic_label = (
+                f" Missing research topics: {', '.join(sorted(best_missing_topics))}."
+                if best_missing_topics
+                else ""
+            )
             warnings.append(
                 ResearchWarningRecord(
                     code="research_coverage_incomplete",
                     message=(
                         "Research completed with incomplete topic or source coverage."
-                        f"{missing_label}"
+                        f"{missing_label}{missing_topic_label}"
                     ),
                 )
             )
@@ -1149,12 +1174,29 @@ class AgentRunner:
         return cls._required_evidence_sources(state) - selected
 
     @staticmethod
+    def _required_evidence_topics(state: AgentState) -> set[str]:
+        return {query.topic for query in state["research_queries"]}
+
+    @classmethod
+    def _missing_evidence_topics(
+        cls, state: AgentState, selections: list[EvidenceSelection]
+    ) -> set[str]:
+        covered = {item.candidate.topic.casefold() for item in selections}
+        return {
+            topic
+            for topic in cls._required_evidence_topics(state)
+            if topic.casefold() not in covered
+        }
+
+    @staticmethod
     def _evidence_feedback(
-        rejections: list[EvidenceRejection], missing: set[SourceType]
+        rejections: list[EvidenceRejection], missing: set[SourceType], missing_topics: set[str]
     ) -> str:
         details = [f"{item.candidate_id}:{item.reason}" for item in rejections]
         if missing:
             details.append(f"missing_sources:{','.join(sorted(missing))}")
+        if missing_topics:
+            details.append(f"missing_topics:{','.join(sorted(missing_topics))}")
         return "; ".join(details) or "selection is valid"
 
     @staticmethod

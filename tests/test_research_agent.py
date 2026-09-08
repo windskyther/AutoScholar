@@ -508,6 +508,7 @@ async def test_invalid_evidence_selection_is_corrected_on_retry() -> None:
     assert len(result.task.evidence) == 3
     assert result.task.warnings == []
     assert "C99:unknown_candidate" in provider.calls[3]["messages"][-1].content
+    assert "missing_topics" in provider.calls[3]["messages"][-1].content
     assert result.task.metrics["model_calls"] == 5
     await engine.dispose()
 
@@ -576,7 +577,12 @@ async def test_single_provider_failure_returns_partial_with_failed_trace() -> No
                     "candidate_id": "C1",
                     "claim": "LoRA adds low-rank matrices",
                     "relevance": 0.9,
-                }
+                },
+                {
+                    "candidate_id": "C2",
+                    "claim": "QLoRA uses frozen 4-bit weights",
+                    "relevance": 0.8,
+                },
             ]
         },
     )
