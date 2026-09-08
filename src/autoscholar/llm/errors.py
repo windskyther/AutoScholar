@@ -18,4 +18,3 @@ class LLMUpstreamError(AppError):
 class LLMUnavailableError(AppError):
     def __init__(self, *, code: str, message: str) -> None:
         super().__init__(status_code=503, code=code, message=message)
-
