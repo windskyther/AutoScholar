@@ -15,7 +15,7 @@ from autoscholar.core.errors import register_exception_handlers
 from autoscholar.core.logging import configure_logging
 from autoscholar.core.middleware import request_context_middleware
 from autoscholar.core.responses import UTF8JSONResponse
-from autoscholar.infrastructure import Database, RedisClient
+from autoscholar.infrastructure import Database, Qdrant, RedisClient
 from autoscholar.infrastructure.base import ManagedDependency
 from autoscholar.llm import LLMProvider, create_llm_provider
 from autoscholar.research import (
@@ -31,6 +31,7 @@ def create_app(
     *,
     database: ManagedDependency | None = None,
     redis: ManagedDependency | None = None,
+    qdrant: ManagedDependency | None = None,
     llm_provider: LLMProvider | None = None,
     agent_repository: TaskStore | None = None,
     agent_runner: AgentService | None = None,
@@ -40,6 +41,12 @@ def create_app(
     configure_logging(resolved_settings.log_level)
     resolved_database = database or Database(resolved_settings.database_url)
     resolved_redis = redis or RedisClient(resolved_settings.redis_url)
+    qdrant_key = (
+        resolved_settings.qdrant_api_key.get_secret_value()
+        if resolved_settings.qdrant_api_key
+        else None
+    )
+    resolved_qdrant = qdrant or Qdrant(resolved_settings.qdrant_url, api_key=qdrant_key)
     resolved_llm_provider = llm_provider or create_llm_provider(resolved_settings)
     resolved_agent_repository = agent_repository
     if resolved_agent_repository is None and isinstance(resolved_database, Database):
@@ -93,6 +100,7 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.database = resolved_database
         application.state.redis = resolved_redis
+        application.state.qdrant = resolved_qdrant
         application.state.llm_provider = resolved_llm_provider
         application.state.agent_repository = resolved_agent_repository
         application.state.agent_runner = resolved_agent_runner
@@ -102,6 +110,7 @@ def create_app(
             await service.close()
         await resolved_llm_provider.close()
         await resolved_redis.close()
+        await resolved_qdrant.close()
         await resolved_database.close()
 
     application = FastAPI(
@@ -114,6 +123,7 @@ def create_app(
     application.state.settings = resolved_settings
     application.state.database = resolved_database
     application.state.redis = resolved_redis
+    application.state.qdrant = resolved_qdrant
     application.state.llm_provider = resolved_llm_provider
     application.state.agent_repository = resolved_agent_repository
     application.state.agent_runner = resolved_agent_runner

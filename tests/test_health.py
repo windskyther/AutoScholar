@@ -41,12 +41,18 @@ class FakeLLMProvider:
         return None
 
 
-def create_test_client(*, database_healthy: bool = True, redis_healthy: bool = True) -> TestClient:
+def create_test_client(
+    *,
+    database_healthy: bool = True,
+    redis_healthy: bool = True,
+    qdrant_healthy: bool = True,
+) -> TestClient:
     return TestClient(
         create_app(
             Settings(),
             database=FakeDependency(healthy=database_healthy),
             redis=FakeDependency(healthy=redis_healthy),
+            qdrant=FakeDependency(healthy=qdrant_healthy),
             llm_provider=FakeLLMProvider(),
         )
     )
@@ -82,11 +88,16 @@ def test_readiness_when_dependencies_are_healthy() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "ready",
-        "dependencies": {"postgres": {"status": "ok"}, "redis": {"status": "ok"}},
+        "dependencies": {
+            "postgres": {"status": "ok"},
+            "redis": {"status": "ok"},
+            "qdrant": {"status": "ok"},
+        },
         "capabilities": {
             "llm": {"status": "ok"},
             "web_search": {"status": "not_configured"},
             "paper_search": {"status": "ok"},
+            "rag": {"status": "ok"},
         },
     }
 
@@ -98,11 +109,16 @@ def test_readiness_when_a_dependency_is_unavailable() -> None:
     assert response.status_code == 503
     assert response.json() == {
         "status": "not_ready",
-        "dependencies": {"postgres": {"status": "ok"}, "redis": {"status": "error"}},
+        "dependencies": {
+            "postgres": {"status": "ok"},
+            "redis": {"status": "error"},
+            "qdrant": {"status": "ok"},
+        },
         "capabilities": {
             "llm": {"status": "ok"},
             "web_search": {"status": "not_configured"},
             "paper_search": {"status": "ok"},
+            "rag": {"status": "ok"},
         },
     }
 
@@ -112,6 +128,7 @@ def test_readiness_reports_unconfigured_llm_without_failing_infrastructure() -> 
         Settings(llm_api_key=None, llm_model=None),
         database=FakeDependency(),
         redis=FakeDependency(),
+        qdrant=FakeDependency(),
     )
 
     with TestClient(app) as client:

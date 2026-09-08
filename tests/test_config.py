@@ -11,6 +11,9 @@ def test_settings_use_safe_defaults() -> None:
     assert settings.app_port == 8000
     assert settings.llm_configured is False
     assert settings.web_search_configured is False
+    assert settings.embedding_configured is True
+    assert settings.rag_configured is True
+    assert settings.qdrant_collection == "autoscholar_chunks_v1"
     assert settings.research_timeout_seconds == 20
     assert settings.research_cache_ttl_seconds == 86_400
 
@@ -39,3 +42,13 @@ def test_research_keys_are_secret_and_tavily_controls_web_capability() -> None:
 def test_invalid_port_is_rejected() -> None:
     with pytest.raises(ValidationError):
         Settings(app_port=70000)
+
+
+def test_external_embeddings_require_a_secret() -> None:
+    settings = Settings(
+        embedding_provider="openai_compatible",
+        embedding_api_key=None,
+    )
+
+    assert settings.embedding_configured is False
+    assert settings.rag_configured is False

@@ -48,13 +48,16 @@ async def live() -> LiveResponse:
 async def ready(request: Request) -> ReadyResponse | JSONResponse:
     database: ManagedDependency = request.app.state.database
     redis: ManagedDependency = request.app.state.redis
-    database_status, redis_status = await asyncio.gather(
+    qdrant: ManagedDependency = request.app.state.qdrant
+    database_status, redis_status, qdrant_status = await asyncio.gather(
         _check_dependency(database),
         _check_dependency(redis),
+        _check_dependency(qdrant),
     )
     dependencies = {
         "postgres": database_status,
         "redis": redis_status,
+        "qdrant": qdrant_status,
     }
     llm_status: Literal["ok", "not_configured"] = (
         "ok" if request.app.state.llm_provider.configured else "not_configured"
@@ -68,6 +71,9 @@ async def ready(request: Request) -> ReadyResponse | JSONResponse:
     }
     capabilities = {
         "llm": DependencyStatus(status=llm_status),
+        "rag": DependencyStatus(
+            status="ok" if request.app.state.settings.rag_configured else "not_configured"
+        ),
         **research_capabilities,
     }
     is_ready = all(dependency.status == "ok" for dependency in dependencies.values())

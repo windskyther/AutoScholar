@@ -11,6 +11,9 @@ services:
       LOG_LEVEL: INFO
       DATABASE_URL: postgresql+asyncpg://autoscholar:autoscholar@postgres:5432/autoscholar
       REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-autoscholar_chunks_v1}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}
@@ -19,6 +22,28 @@ services:
       SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
       RESEARCH_TIMEOUT_SECONDS: ${RESEARCH_TIMEOUT_SECONDS:-20}
       RESEARCH_CACHE_TTL_SECONDS: ${RESEARCH_CACHE_TTL_SECONDS:-86400}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-fastembed}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.openai.com/v1}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-384}
+      SPARSE_MODEL: ${SPARSE_MODEL:-Qdrant/bm25}
+      RERANKER_MODEL: ${RERANKER_MODEL:-BAAI/bge-reranker-base}
+      MODEL_CACHE_PATH: /models
+      DOCUMENT_STORAGE_PATH: /data/documents
+      DOCUMENT_MAX_BYTES: ${DOCUMENT_MAX_BYTES:-52428800}
+      DOCUMENT_MAX_PAGES: ${DOCUMENT_MAX_PAGES:-500}
+      DOCUMENT_PARSE_TIMEOUT_SECONDS: ${DOCUMENT_PARSE_TIMEOUT_SECONDS:-120}
+      RAG_CHUNK_TOKENS: ${RAG_CHUNK_TOKENS:-96}
+      RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-16}
+      RAG_TOP_K: ${RAG_TOP_K:-8}
+      RAG_CANDIDATE_LIMIT: ${RAG_CANDIDATE_LIMIT:-30}
+      RAG_WORKER_POLL_SECONDS: ${RAG_WORKER_POLL_SECONDS:-2}
+      RAG_JOB_LEASE_SECONDS: ${RAG_JOB_LEASE_SECONDS:-600}
+      RAG_JOB_MAX_ATTEMPTS: ${RAG_JOB_MAX_ATTEMPTS:-3}
+    volumes:
+      - document_data:/data/documents
+      - model_cache:/models
     ports:
       - "8000:8000"
     depends_on:
@@ -28,6 +53,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -80,6 +107,22 @@ services:
       retries: 10
     restart: unless-stopped
 
+  qdrant:
+    image: qdrant/qdrant:v1.19.0
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
+  qdrant_data:
+  document_data:
+  model_cache:

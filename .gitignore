@@ -27,6 +27,7 @@ htmlcov/
 logs/
 artifacts/
 outputs/
+data/
 
 # Editors and operating systems
 .idea/
