@@ -251,6 +251,12 @@ class AgentRunner:
         document_ids: list[str] | None = None,
         retrieval_mode: RetrievalMode = "hybrid_rerank",
     ) -> AgentRunResult:
+        if document_ids is not None and project_id is None:
+            raise AppError(
+                status_code=422,
+                code="project_id_required",
+                message="project_id is required when document_ids are supplied",
+            )
         if mode == "knowledge" and project_id is None:
             raise AppError(
                 status_code=422,
@@ -764,6 +770,14 @@ class AgentRunner:
                     duration_ms=(time.perf_counter() - started) * 1000,
                 )
                 traces.append(trace)
+                if not chunks:
+                    warnings.append(
+                        ResearchWarningRecord(
+                            code="knowledge_evidence_not_found",
+                            message="No relevant local document passages were found",
+                            provider="qdrant",
+                        )
+                    )
                 for chunk in chunks:
                     result = SearchResult(
                         source_type="document",
@@ -911,9 +925,7 @@ class AgentRunner:
         covered_topics = {item.topic.casefold() for item in evidence}
         source_types = {item.source_type for item in evidence}
         unique_urls = {self._canonical_url(item.url) for item in evidence}
-        provider_warning = any(
-            item.provider is not None and "search" in item.code for item in warnings
-        )
+        provider_warning = any(item.provider is not None for item in warnings)
         partial = (
             not topics.issubset(covered_topics)
             or not {"web", "paper"}.issubset(source_types)

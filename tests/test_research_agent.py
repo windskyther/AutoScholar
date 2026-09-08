@@ -366,6 +366,30 @@ async def test_research_with_project_mixes_local_and_external_evidence() -> None
     await engine.dispose()
 
 
+async def test_research_with_empty_project_results_is_explicitly_partial() -> None:
+    store, engine = await repository()
+    runner = AgentRunner(
+        provider=ScriptedProvider(successful_responses()),
+        repository=store,
+        tools=[],
+        research_services=search_services(),
+        knowledge_service=FakeKnowledgeService([]),
+    )
+
+    result = await runner.run(
+        "Compare methods with my project",
+        mode="research",
+        project_id="project-1",
+    )
+
+    assert result.task.status == "partial"
+    assert any(
+        warning.code == "knowledge_evidence_not_found"
+        for warning in result.task.warnings
+    )
+    await engine.dispose()
+
+
 async def test_research_rejects_fabricated_excerpt_and_marks_partial() -> None:
     store, engine = await repository()
     responses = successful_responses()

@@ -7,6 +7,7 @@ from autoscholar.agent.database_models import Base
 from autoscholar.agent.repository import AgentTaskRepository
 from autoscholar.agent.runner import AgentLimits, AgentRunError, AgentRunner
 from autoscholar.agent.tools import RestrictedPythonTool
+from autoscholar.core.errors import AppError
 from autoscholar.llm import (
     ConversationMessage,
     LLMResult,
@@ -160,6 +161,22 @@ async def test_agent_persists_clear_error_when_native_plan_call_is_missing() -> 
     assert persisted is not None
     assert persisted.status == "failed"
     assert persisted.error_code == "native_tool_calling_required"
+    await engine.dispose()
+
+
+async def test_agent_rejects_document_scope_without_project() -> None:
+    store, engine = await repository()
+    runner = AgentRunner(
+        provider=ScriptedProvider([]),
+        repository=store,
+        tools=[],
+    )
+
+    with pytest.raises(AppError) as exc_info:
+        await runner.run("Question", document_ids=["document-1"])
+
+    assert exc_info.value.code == "project_id_required"
+    assert exc_info.value.status_code == 422
     await engine.dispose()
 
 
