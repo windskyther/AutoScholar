@@ -3,7 +3,7 @@
 > 面向 AI/ML 研究与实验的自主智能体平台  
 > Autonomous AI/ML Research & Experiment Agent Platform
 
-AutoScholar 的目标是把复杂研究目标转化为可追踪、可恢复、可评测、可复现的研究流程。项目当前已完成 Phase 2：模型可以在计算与研究模式之间自动路由，规划 Web/论文检索，提取可验证 Evidence，并生成带可追溯 Citation 的回答。
+AutoScholar 的目标是把复杂研究目标转化为可追踪、可恢复、可评测、可复现的研究流程。项目当前已完成 Phase 3：除 Web/论文研究与安全计算外，还支持按项目隔离的 PDF 知识库、混合检索、重排和页码级引用。
 
 ## 当前能力
 
@@ -15,11 +15,16 @@ AutoScholar 的目标是把复杂研究目标转化为可追踪、可恢复、�
 - 受限 Python 子进程工具
 - Tavily Web Search 与 Semantic Scholar Paper Search
 - Query Planner、Evidence Extractor 与 Citation Writer
+- PDF 上传、文本解析、结构感知分块与可恢复后台摄取任务
+- Qdrant Dense + BM25 Sparse 检索、RRF 融合与 BGE Reranker
+- 独立 RAG Query API 与 Agent `knowledge` 模式
+- 本地文档、Web 和论文来源统一进入 Evidence Pool
+- Recall@K、HitRate@K、MRR、NDCG RAG Benchmark
 - Evidence、Claim-Citation 映射和降级警告持久化
 - Agent 任务和 Tool Trace 持久化
 - 同步执行 API 与任务回查 API
 
-Phase 2 使用网页检索片段和论文摘要，不下载网页或论文全文。PDF 解析、Qdrant/RAG、异步任务队列和断点恢复将在后续阶段加入。
+当前 PDF 管线只处理可提取文本的 PDF，不执行 OCR；扫描件和加密 PDF 会明确失败。Web/论文检索仍只使用搜索片段与论文摘要，不自动下载外部全文。
 
 ## 工作流
 
@@ -30,8 +35,10 @@ flowchart LR
     E -->|调用工具| T[Calculator / Python]
     T --> E
     P -->|research| Q[Query Planner]
-    Q --> R[Web / Paper Search]
+    Q --> R[Web / Paper / Project Search]
     R --> V[Evidence Extractor]
+    P -->|knowledge| K[Dense + Sparse → RRF → Reranker]
+    K --> W
     V --> W[Citation Writer]
     E -->|证据充分或预算耗尽| W
     W --> X[(PostgreSQL Task + Trace + Evidence)]
@@ -85,7 +92,7 @@ docker compose ps -a
 docker compose down
 ```
 
-命名卷会保留 PostgreSQL 与 Redis 数据。除非确认需要清空数据，否则不要执行 `docker compose down -v`。
+命名卷会保留 PostgreSQL、Redis、Qdrant、PDF 原文件和本地模型缓存。除非确认需要清空全部数据，否则不要执行 `docker compose down -v`。
 
 ### 本地开发
 
@@ -105,6 +112,15 @@ uv run uvicorn autoscholar.main:app --reload
 | `POST` | `/agent/run` | 同步运行最小 Agent 闭环 |
 | `GET` | `/agent/tasks/{task_id}` | 回查任务、指标和 Tool Trace |
 | `GET` | `/agent/tasks/{task_id}/evidence` | 分页查询结构化 Evidence |
+| `POST` | `/projects` | 创建隔离的知识库项目 |
+| `GET` | `/projects`、`/projects/{project_id}` | 列出或读取项目 |
+| `POST` | `/projects/{project_id}/documents` | 上传 PDF 并进入后台摄取队列 |
+| `GET` | `/projects/{project_id}/documents` | 查询 PDF 处理状态 |
+| `GET` | `/projects/{project_id}/documents/{document_id}/content` | 受控读取 PDF 原文件 |
+| `POST` | `/projects/{project_id}/documents/{document_id}/retry` | 重试失败的 PDF |
+| `POST` | `/projects/{project_id}/documents/{document_id}/reindex` | 重新解析和索引 PDF |
+| `DELETE` | `/projects/{project_id}/documents/{document_id}` | 异步删除原文件、元数据和向量 |
+| `POST` | `/projects/{project_id}/rag/query` | 查询项目知识库并返回页码证据 |
 
 运行 Agent：
 
@@ -142,7 +158,7 @@ Invoke-RestMethod `
   ConvertTo-Json -Depth 10
 ```
 
-`mode` 支持 `auto`、`research` 和 `compute`，默认 `auto`。成功响应包含 `evidence`、`citations` 和 `warnings`；研究来源部分失败但仍有证据时状态为 `partial`，完全没有有效证据时任务失败且不会生成无依据结论。失败响应也会携带 `task_id`，可回查持久化错误。
+`mode` 支持 `auto`、`research`、`compute` 和 `knowledge`，默认 `auto`。`knowledge` 必须携带 `project_id`；可用 `document_ids` 进一步缩小范围。`research` 携带 `project_id` 时会混合本地文档、Web 与论文证据。成功响应包含 `evidence`、`citations` 和 `warnings`；来源部分失败但仍有证据时状态为 `partial`，完全没有有效证据时任务失败且不会生成无依据结论。失败响应也会携带 `task_id`，可回查持久化错误。
 
 ## 受限 Python 的边界
 
@@ -182,6 +198,114 @@ uv run pytest tests/integration -m integration
 - API 重启后仍能通过 `task_id` 查到 Answer、Trace、Evidence 和 Citation
 
 自动化测试使用 Mock Provider，不消耗 Tavily 或 Semantic Scholar API 配额。真实验收需要在本地 `.env` 配置 Tavily Key；Semantic Scholar 匿名接口可能受共享限流影响，因此建议同时配置其 API Key。
+
+### Phase 3 本地验收
+
+以下命令适用于 Windows PowerShell。先启动 Compose，并确认 `api`、`worker`、`postgres`、`redis`、`qdrant` 为正常状态：
+
+```powershell
+docker compose up -d --build
+docker compose ps -a
+Invoke-RestMethod http://127.0.0.1:8000/health/ready |
+  ConvertTo-Json -Depth 5
+```
+
+创建项目：
+
+```powershell
+$projectBody = @{ name = "Phase 3 验收"; description = "本地论文知识库" } |
+  ConvertTo-Json -Compress
+$project = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/projects" `
+  -ContentType "application/json; charset=utf-8" `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($projectBody))
+$projectId = $project.id
+```
+
+准备一个可复制文本的 PDF，把路径替换为你的实际文件。使用 `curl.exe` 可兼容 Windows PowerShell 5.1 的 multipart 上传：
+
+```powershell
+$pdfPath = "D:\papers\lora.pdf"
+$uploadJson = curl.exe -sS -X POST `
+  "http://127.0.0.1:8000/projects/$projectId/documents" `
+  -F "file=@$pdfPath;type=application/pdf" `
+  -F "title=LoRA Paper"
+$document = $uploadJson | ConvertFrom-Json
+$documentId = $document.id
+```
+
+后台 Worker 首次运行会下载 Dense 和 BM25 模型。轮询直到 `ready`；如果变为 `failed`，命令会输出错误码和错误信息：
+
+```powershell
+do {
+  Start-Sleep -Seconds 2
+  $document = Invoke-RestMethod `
+    "http://127.0.0.1:8000/projects/$projectId/documents/$documentId"
+  $document | Select-Object status,page_count,chunk_count,index_version,error_code,error_message
+} while ($document.status -in @("queued", "processing"))
+
+if ($document.status -ne "ready") { throw "PDF indexing failed: $($document.error_code)" }
+```
+
+执行默认的 Hybrid + Reranker 查询。首次查询还会下载 Reranker 模型，因此耗时会明显长于后续请求：
+
+```powershell
+$ragBody = @{
+  question = "这篇论文提出了什么方法？请指出依据。"
+  document_ids = @($documentId)
+  retrieval_mode = "hybrid_rerank"
+  top_k = 5
+} | ConvertTo-Json -Depth 5 -Compress
+
+$rag = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/projects/$projectId/rag/query" `
+  -ContentType "application/json; charset=utf-8" `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($ragBody)) `
+  -TimeoutSec 300
+
+$rag.answer
+$rag.evidence | Format-Table citation_key,title,page,section,relevance,document_id,chunk_id
+$rag.citations | ConvertTo-Json -Depth 5
+```
+
+验收时确认：`evidence` 全部属于当前项目和选定文档；每项都有 `page`、原文 `excerpt` 与 `chunk_id`；回答里的 `[E#]` 都存在于 `evidence`，且 `citations` 的映射一致。还可以把 `retrieval_mode` 分别改为 `dense`、`sparse`、`hybrid` 做对照。
+
+通过 Agent 验收 `knowledge` 路由：
+
+```powershell
+$agentBody = @{
+  objective = "根据我上传的论文解释其核心方法"
+  mode = "knowledge"
+  project_id = $projectId
+  document_ids = @($documentId)
+  retrieval_mode = "hybrid_rerank"
+} | ConvertTo-Json -Depth 5 -Compress
+
+$agent = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/agent/run" `
+  -ContentType "application/json; charset=utf-8" `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($agentBody)) `
+  -TimeoutSec 300
+
+$agent | ConvertTo-Json -Depth 10
+Invoke-RestMethod "http://127.0.0.1:8000/agent/tasks/$($agent.task_id)" |
+  ConvertTo-Json -Depth 10
+```
+
+若还要验收本地与外部资料混合，将 `mode` 改为 `research` 并保留 `project_id`；此项需要 Tavily，Semantic Scholar 可匿名调用或配置 Key。`tool_calls` 应包含 `knowledge_search` 以及外部搜索调用。
+
+RAG Benchmark 示例位于 `benchmarks/rag/example.jsonl`。把占位 ID 替换为人工标注的 `document_id`/`chunk_id` 后运行：
+
+```powershell
+uv run python -m autoscholar.evaluation.rag `
+  --dataset benchmarks/rag/my-benchmark.jsonl `
+  --project-id $projectId `
+  --modes dense sparse hybrid hybrid_rerank `
+  --ks 5 10
+```
 
 ## 开发路线
 
