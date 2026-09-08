@@ -10,6 +10,7 @@ from autoscholar.agent.tools import CalculatorTool, RestrictedPythonTool
 from autoscholar.api.routes.agent import router as agent_router
 from autoscholar.api.routes.chat import router as chat_router
 from autoscholar.api.routes.health import router as health_router
+from autoscholar.api.routes.projects import router as projects_router
 from autoscholar.core.config import Settings, get_settings
 from autoscholar.core.errors import register_exception_handlers
 from autoscholar.core.logging import configure_logging
@@ -18,6 +19,12 @@ from autoscholar.core.responses import UTF8JSONResponse
 from autoscholar.infrastructure import Database, Qdrant, RedisClient
 from autoscholar.infrastructure.base import ManagedDependency
 from autoscholar.llm import LLMProvider, create_llm_provider
+from autoscholar.rag import (
+    DocumentStorage,
+    KnowledgeRepository,
+    KnowledgeStore,
+    LocalDocumentStorage,
+)
 from autoscholar.research import (
     RedisResearchCache,
     ResearchSearchService,
@@ -36,6 +43,8 @@ def create_app(
     agent_repository: TaskStore | None = None,
     agent_runner: AgentService | None = None,
     research_services: list[ResearchSearch] | None = None,
+    knowledge_repository: KnowledgeStore | None = None,
+    document_storage: DocumentStorage | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings.log_level)
@@ -49,8 +58,14 @@ def create_app(
     resolved_qdrant = qdrant or Qdrant(resolved_settings.qdrant_url, api_key=qdrant_key)
     resolved_llm_provider = llm_provider or create_llm_provider(resolved_settings)
     resolved_agent_repository = agent_repository
+    resolved_knowledge_repository = knowledge_repository
     if resolved_agent_repository is None and isinstance(resolved_database, Database):
         resolved_agent_repository = AgentTaskRepository(resolved_database.session_factory)
+    if resolved_knowledge_repository is None and isinstance(resolved_database, Database):
+        resolved_knowledge_repository = KnowledgeRepository(resolved_database.session_factory)
+    resolved_document_storage = document_storage or LocalDocumentStorage(
+        resolved_settings.document_storage_path
+    )
     resolved_research_services = research_services
     if resolved_research_services is None:
         cache = (
@@ -104,6 +119,8 @@ def create_app(
         application.state.llm_provider = resolved_llm_provider
         application.state.agent_repository = resolved_agent_repository
         application.state.agent_runner = resolved_agent_runner
+        application.state.knowledge_repository = resolved_knowledge_repository
+        application.state.document_storage = resolved_document_storage
         application.state.research_services = resolved_research_services
         yield
         for service in resolved_research_services:
@@ -127,12 +144,15 @@ def create_app(
     application.state.llm_provider = resolved_llm_provider
     application.state.agent_repository = resolved_agent_repository
     application.state.agent_runner = resolved_agent_runner
+    application.state.knowledge_repository = resolved_knowledge_repository
+    application.state.document_storage = resolved_document_storage
     application.state.research_services = resolved_research_services
     application.middleware("http")(request_context_middleware)
     register_exception_handlers(application)
     application.include_router(health_router)
     application.include_router(chat_router)
     application.include_router(agent_router)
+    application.include_router(projects_router)
     return application
 
 

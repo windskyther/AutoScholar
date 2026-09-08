@@ -23,8 +23,10 @@ def test_compose_stack_is_ready() -> None:
     assert readiness["status"] == "ready"
     assert readiness["dependencies"] == {
         "postgres": {"status": "ok"},
+        "qdrant": {"status": "ok"},
         "redis": {"status": "ok"},
     }
+    assert readiness["capabilities"]["rag"] == {"status": "ok"}
     assert readiness["capabilities"]["paper_search"] == {"status": "ok"}
     assert readiness["capabilities"]["web_search"]["status"] in {
         "ok",

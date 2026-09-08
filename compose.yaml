@@ -80,6 +80,40 @@ services:
         condition: service_healthy
     restart: "no"
 
+  worker:
+    build:
+      context: .
+    command: ["python", "-m", "autoscholar.rag.worker"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://autoscholar:autoscholar@postgres:5432/autoscholar
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-autoscholar_chunks_v1}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-fastembed}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.openai.com/v1}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-384}
+      MODEL_CACHE_PATH: /models
+      DOCUMENT_STORAGE_PATH: /data/documents
+      DOCUMENT_MAX_PAGES: ${DOCUMENT_MAX_PAGES:-500}
+      DOCUMENT_PARSE_TIMEOUT_SECONDS: ${DOCUMENT_PARSE_TIMEOUT_SECONDS:-120}
+      RAG_CHUNK_TOKENS: ${RAG_CHUNK_TOKENS:-96}
+      RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-16}
+      RAG_WORKER_POLL_SECONDS: ${RAG_WORKER_POLL_SECONDS:-2}
+      RAG_JOB_LEASE_SECONDS: ${RAG_JOB_LEASE_SECONDS:-600}
+      RAG_JOB_MAX_ATTEMPTS: ${RAG_JOB_MAX_ATTEMPTS:-3}
+    volumes:
+      - document_data:/data/documents
+      - model_cache:/models
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 3g
+
   postgres:
     image: postgres:16-alpine
     environment:

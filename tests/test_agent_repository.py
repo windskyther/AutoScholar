@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from autoscholar.agent.database_models import Base
 from autoscholar.agent.records import CitationRecord, ResearchWarningRecord
 from autoscholar.agent.repository import AgentTaskRepository
+from autoscholar.rag import database_models as rag_database_models  # noqa: F401
 
 
 async def test_repository_persists_task_and_ordered_tool_trace() -> None:

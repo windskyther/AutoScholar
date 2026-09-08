@@ -1,0 +1,112 @@
+from collections.abc import Sequence
+from typing import Protocol
+
+from qdrant_client import AsyncQdrantClient, models
+
+from autoscholar.rag.models import DocumentChunkRecord, DocumentRecord
+
+
+class ChunkIndex(Protocol):
+    async def ensure_collection(self) -> None: ...
+
+    async def replace_document(
+        self,
+        document: DocumentRecord,
+        chunks: Sequence[DocumentChunkRecord],
+        vectors: Sequence[Sequence[float]],
+    ) -> None: ...
+
+    async def delete_document(self, project_id: str, document_id: str) -> None: ...
+
+
+class QdrantChunkIndex:
+    def __init__(
+        self,
+        client: AsyncQdrantClient,
+        *,
+        collection: str,
+        dense_dimensions: int,
+    ) -> None:
+        self._client = client
+        self._collection = collection
+        self._dense_dimensions = dense_dimensions
+
+    async def ensure_collection(self) -> None:
+        if await self._client.collection_exists(self._collection):
+            return
+        await self._client.create_collection(
+            collection_name=self._collection,
+            vectors_config={
+                "dense": models.VectorParams(
+                    size=self._dense_dimensions,
+                    distance=models.Distance.COSINE,
+                )
+            },
+            sparse_vectors_config={
+                "sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)
+            },
+        )
+        await self._client.create_payload_index(
+            self._collection, "project_id", models.PayloadSchemaType.KEYWORD
+        )
+        await self._client.create_payload_index(
+            self._collection, "document_id", models.PayloadSchemaType.KEYWORD
+        )
+        await self._client.create_payload_index(
+            self._collection, "page", models.PayloadSchemaType.INTEGER
+        )
+        await self._client.create_payload_index(
+            self._collection, "index_version", models.PayloadSchemaType.INTEGER
+        )
+
+    async def replace_document(
+        self,
+        document: DocumentRecord,
+        chunks: Sequence[DocumentChunkRecord],
+        vectors: Sequence[Sequence[float]],
+    ) -> None:
+        if len(chunks) != len(vectors):
+            raise ValueError("Chunk and embedding counts do not match")
+        await self.ensure_collection()
+        await self.delete_document(document.project_id, document.id)
+        points = [
+            models.PointStruct(
+                id=chunk.id,
+                vector={"dense": list(vector)},
+                payload={
+                    "project_id": chunk.project_id,
+                    "document_id": chunk.document_id,
+                    "title": document.title,
+                    "page": chunk.page,
+                    "section": chunk.section,
+                    "content": chunk.content,
+                    "ordinal": chunk.ordinal,
+                    "index_version": 1,
+                },
+            )
+            for chunk, vector in zip(chunks, vectors, strict=True)
+        ]
+        for start in range(0, len(points), 64):
+            await self._client.upsert(
+                collection_name=self._collection,
+                points=points[start : start + 64],
+                wait=True,
+            )
+
+    async def delete_document(self, project_id: str, document_id: str) -> None:
+        if not await self._client.collection_exists(self._collection):
+            return
+        await self._client.delete(
+            collection_name=self._collection,
+            points_selector=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="project_id", match=models.MatchValue(value=project_id)
+                    ),
+                    models.FieldCondition(
+                        key="document_id", match=models.MatchValue(value=document_id)
+                    ),
+                ]
+            ),
+            wait=True,
+        )
