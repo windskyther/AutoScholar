@@ -126,14 +126,6 @@ def create_app(
                 cache=cache,
             ),
         ]
-    resolved_agent_runner = agent_runner
-    if resolved_agent_runner is None and resolved_agent_repository is not None:
-        resolved_agent_runner = AgentRunner(
-            provider=resolved_llm_provider,
-            repository=resolved_agent_repository,
-            tools=[CalculatorTool(), RestrictedPythonTool()],
-            research_services=resolved_research_services,
-        )
     resolved_rag_query_service = rag_query_service
     if (
         resolved_rag_query_service is None
@@ -149,6 +141,15 @@ def create_app(
             knowledge=resolved_knowledge_repository,
             tasks=resolved_agent_repository,
             default_top_k=resolved_settings.rag_top_k,
+        )
+    resolved_agent_runner = agent_runner
+    if resolved_agent_runner is None and resolved_agent_repository is not None:
+        resolved_agent_runner = AgentRunner(
+            provider=resolved_llm_provider,
+            repository=resolved_agent_repository,
+            tools=[CalculatorTool(), RestrictedPythonTool()],
+            research_services=resolved_research_services,
+            knowledge_service=resolved_rag_query_service,
         )
 
     @asynccontextmanager

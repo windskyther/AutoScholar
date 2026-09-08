@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from autoscholar.agent.database_models import Base
 from autoscholar.agent.records import AgentTaskRecord, CitationRecord, EvidenceRecord
 from autoscholar.agent.repository import AgentTaskRepository
+from autoscholar.agent.runner import AgentRunner
 from autoscholar.core.config import Settings
 from autoscholar.core.errors import AppError
 from autoscholar.llm import (
@@ -116,6 +117,39 @@ class CitedAnswerProvider:
 
     async def close(self) -> None:
         return None
+
+
+class KnowledgeAgentProvider(CitedAnswerProvider):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        self.calls += 1
+        if tools and tools[0].name == "submit_plan":
+            return LLMResult(
+                text="",
+                model="test-model",
+                usage=TokenUsage(input_tokens=4, output_tokens=2, total_tokens=6),
+                tool_calls=(
+                    ToolCall(
+                        id="plan-1",
+                        name="submit_plan",
+                        arguments={
+                            "mode": "knowledge",
+                            "steps": ["Search the project documents", "Write a cited answer"],
+                        },
+                    ),
+                ),
+            )
+        return await super().generate(
+            messages, tools=tools, tool_choice=tool_choice
+        )
 
 
 async def _ready_knowledge_base() -> tuple[KnowledgeRepository, AgentTaskRepository, Any, str, str]:
@@ -241,7 +275,64 @@ async def test_rag_query_rejects_non_ready_selected_document() -> None:
     await engine.dispose()
 
 
+async def test_agent_auto_routes_project_question_to_knowledge_graph() -> None:
+    knowledge, tasks, engine, project_id, document_id = await _ready_knowledge_base()
+    index = FakeChunkIndex(
+        [
+            RetrievedChunk(
+                id="chunk-1",
+                project_id=project_id,
+                document_id=document_id,
+                title="LoRA",
+                page=4,
+                section="Method",
+                content="The base weights are frozen and trainable low-rank matrices are added.",
+                score=0.91,
+                ordinal=0,
+            )
+        ]
+    )
+    provider = KnowledgeAgentProvider()
+    rag = RAGQueryService(
+        provider=provider,
+        embeddings=FakeEmbeddingProvider(),
+        index=index,
+        knowledge=knowledge,
+        tasks=tasks,
+    )
+    runner = AgentRunner(
+        provider=provider,
+        repository=tasks,
+        tools=[],
+        knowledge_service=rag,
+    )
+
+    result = await runner.run(
+        "What does my LoRA paper propose?",
+        project_id=project_id,
+        document_ids=[document_id],
+    )
+
+    assert result.task.status == "succeeded"
+    assert result.task.mode == "knowledge"
+    assert result.task.project_id == project_id
+    assert result.task.evidence[0].page == 4
+    assert result.task.metrics == {
+        "iterations": 1,
+        "model_calls": 2,
+        "input_tokens": 14,
+        "output_tokens": 7,
+        "total_tokens": 21,
+    }
+    assert provider.calls == 2
+    await engine.dispose()
+
+
 class FakeRAGService:
+    async def retrieve(self, *args: object, **kwargs: object) -> list[RetrievedChunk]:
+        del args, kwargs
+        return []
+
     async def query(self, *args: object, **kwargs: object) -> RAGQueryResult:
         del args, kwargs
         now = datetime.now(UTC)

@@ -16,6 +16,7 @@ from autoscholar.agent.records import (
 )
 from autoscholar.agent.runner import AgentService, TaskStore
 from autoscholar.core.errors import AppError
+from autoscholar.rag.models import RetrievalMode
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 ObjectiveText = Annotated[
@@ -27,6 +28,9 @@ ObjectiveText = Annotated[
 class AgentRunRequest(BaseModel):
     objective: ObjectiveText
     mode: AgentMode = "auto"
+    project_id: str | None = None
+    document_ids: list[str] | None = None
+    retrieval_mode: RetrievalMode = "dense"
 
 
 class AgentMetricsResponse(BaseModel):
@@ -94,6 +98,7 @@ class AgentRunResponse(BaseModel):
     evidence: list[EvidenceResponse]
     citations: list[CitationResponse]
     warnings: list[ResearchWarningResponse]
+    project_id: str | None
 
 
 class AgentTaskResponse(AgentRunResponse):
@@ -183,6 +188,7 @@ def _run_response(task: AgentTaskRecord, request_id: str) -> AgentRunResponse:
         evidence=[_evidence(item) for item in task.evidence],
         citations=_citations(task.citations),
         warnings=_warnings(task.warnings),
+        project_id=task.project_id,
     )
 
 
@@ -195,7 +201,13 @@ async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunRespo
             code="agent_not_available",
             message="Agent execution is unavailable without database and LLM configuration",
         )
-    result = await runner.run(payload.objective, mode=payload.mode)
+    result = await runner.run(
+        payload.objective,
+        mode=payload.mode,
+        project_id=payload.project_id,
+        document_ids=payload.document_ids,
+        retrieval_mode=payload.retrieval_mode,
+    )
     return _run_response(result.task, request.state.request_id)
 
 
@@ -232,6 +244,7 @@ async def get_agent_task(task_id: str, request: Request) -> AgentTaskResponse:
         evidence=[_evidence(item) for item in task.evidence],
         citations=_citations(task.citations),
         warnings=_warnings(task.warnings),
+        project_id=task.project_id,
     )
 
 

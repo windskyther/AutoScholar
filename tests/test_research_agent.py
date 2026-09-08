@@ -14,6 +14,8 @@ from autoscholar.llm import (
     ToolChoice,
     ToolDefinition,
 )
+from autoscholar.rag.models import RetrievalMode, RetrievedChunk
+from autoscholar.rag.service import RAGQueryResult
 from autoscholar.research import SearchProviderError, SearchResponse, SearchResult, SourceType
 
 
@@ -76,6 +78,45 @@ class FakeResearchService:
 
     async def close(self) -> None:
         return None
+
+
+class FakeKnowledgeService:
+    def __init__(self, chunks: list[RetrievedChunk]) -> None:
+        self.chunks = chunks
+
+    async def retrieve(
+        self,
+        question: str,
+        *,
+        project_id: str,
+        document_ids: list[str] | None = None,
+        retrieval_mode: RetrievalMode = "dense",
+        top_k: int | None = None,
+    ) -> list[RetrievedChunk]:
+        del question, project_id, document_ids, retrieval_mode
+        return self.chunks[:top_k]
+
+    async def query(
+        self,
+        question: str,
+        *,
+        project_id: str,
+        document_ids: list[str] | None = None,
+        retrieval_mode: RetrievalMode = "dense",
+        top_k: int | None = None,
+        task_id: str | None = None,
+        task_exists: bool = False,
+    ) -> RAGQueryResult:
+        del (
+            question,
+            project_id,
+            document_ids,
+            retrieval_mode,
+            top_k,
+            task_id,
+            task_exists,
+        )
+        raise NotImplementedError
 
 
 async def repository() -> tuple[AgentTaskRepository, Any]:
@@ -230,6 +271,98 @@ async def test_research_graph_searches_extracts_and_cites_verified_evidence() ->
     assert result.task.metrics["iterations"] == 3
     extractor_prompt = provider.calls[2]["messages"][0]
     assert "UNTRUSTED DATA" in extractor_prompt.content
+    await engine.dispose()
+
+
+async def test_research_with_project_mixes_local_and_external_evidence() -> None:
+    store, engine = await repository()
+    responses = successful_responses()
+    responses[2] = tool_response(
+        "submit_evidence",
+        {
+            "items": [
+                {
+                    "candidate_id": "C1",
+                    "claim": "LoRA adds trainable low-rank matrices",
+                    "excerpt": (
+                        "LoRA freezes pretrained weights and adds trainable low-rank matrices."
+                    ),
+                    "relevance": 0.98,
+                },
+                {
+                    "candidate_id": "C2",
+                    "claim": "QLoRA trains adapters through a frozen 4-bit model",
+                    "excerpt": (
+                        "QLoRA backpropagates through a frozen 4-bit quantized model into "
+                        "adapters."
+                    ),
+                    "relevance": 0.97,
+                },
+                {
+                    "candidate_id": "C3",
+                    "claim": "DoRA separates magnitude and direction",
+                    "excerpt": (
+                        "DoRA decomposes weights into magnitude and direction for adaptation."
+                    ),
+                    "relevance": 0.96,
+                },
+                {
+                    "candidate_id": "C4",
+                    "claim": "The uploaded paper reports an adapter rank of eight",
+                    "excerpt": "We use rank eight for all adapter layers.",
+                    "relevance": 0.94,
+                },
+            ]
+        },
+    )
+    responses[3] = tool_response(
+        "submit_research_report",
+        {
+            "answer": (
+                "LoRA uses low-rank matrices [E1], QLoRA uses 4-bit weights [E2], "
+                "DoRA separates magnitude and direction [E3], and the uploaded paper uses "
+                "rank eight [E4]."
+            ),
+            "citations": [
+                {"claim": "LoRA", "evidence_ids": ["E1"]},
+                {"claim": "QLoRA", "evidence_ids": ["E2"]},
+                {"claim": "DoRA", "evidence_ids": ["E3"]},
+                {"claim": "Local rank", "evidence_ids": ["E4"]},
+            ],
+        },
+    )
+    local = RetrievedChunk(
+        id="chunk-local",
+        project_id="project-1",
+        document_id="document-1",
+        title="Uploaded adapter study",
+        page=7,
+        section="Experiments",
+        content="We use rank eight for all adapter layers.",
+        score=0.94,
+        ordinal=12,
+    )
+    runner = AgentRunner(
+        provider=ScriptedProvider(responses),
+        repository=store,
+        tools=[],
+        research_services=search_services(),
+        knowledge_service=FakeKnowledgeService([local]),
+    )
+
+    result = await runner.run(
+        "Compare adapter methods with my uploaded study",
+        mode="research",
+        project_id="project-1",
+    )
+
+    assert result.task.status == "succeeded"
+    assert [trace.tool_name for trace in result.task.tool_calls][-1] == "knowledge_search"
+    local_evidence = result.task.evidence[-1]
+    assert local_evidence.source_type == "document"
+    assert local_evidence.document_id == "document-1"
+    assert local_evidence.chunk_id == "chunk-local"
+    assert local_evidence.page == 7
     await engine.dispose()
 
 

@@ -14,6 +14,7 @@ from autoscholar.agent.records import (
 from autoscholar.agent.runner import AgentRunError, AgentRunResult
 from autoscholar.core.config import Settings
 from autoscholar.main import create_app
+from autoscholar.rag.models import RetrievalMode
 from tests.test_chat import SuccessfulProvider
 from tests.test_health import FakeDependency
 
@@ -101,8 +102,11 @@ class FakeAgentBackend:
         *,
         task_id: str | None = None,
         mode: AgentMode = "auto",
+        project_id: str | None = None,
+        document_ids: list[str] | None = None,
+        retrieval_mode: RetrievalMode = "dense",
     ) -> AgentRunResult:
-        del task_id
+        del task_id, project_id, document_ids, retrieval_mode
         self.objective = objective
         self.mode = mode
         assert self.task is not None
@@ -185,8 +189,11 @@ class FailingAgentBackend(FakeAgentBackend):
         *,
         task_id: str | None = None,
         mode: AgentMode = "auto",
+        project_id: str | None = None,
+        document_ids: list[str] | None = None,
+        retrieval_mode: RetrievalMode = "dense",
     ) -> AgentRunResult:
-        del objective, task_id, mode
+        del objective, task_id, mode, project_id, document_ids, retrieval_mode
         raise AgentRunError(
             task_id="failed-task",
             code="native_tool_calling_required",

@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, cast
 
-SourceType = Literal["web", "paper"]
+SourceType = Literal["web", "paper", "document"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +15,10 @@ class SearchResult:
     year: int | None = None
     external_id: str | None = None
     relevance: float | None = None
+    document_id: str | None = None
+    chunk_id: str | None = None
+    page: int | None = None
+    section: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -37,6 +41,12 @@ class SearchResult:
             relevance=(
                 float(payload["relevance"]) if payload.get("relevance") is not None else None
             ),
+            document_id=(
+                str(payload["document_id"]) if payload.get("document_id") is not None else None
+            ),
+            chunk_id=(str(payload["chunk_id"]) if payload.get("chunk_id") is not None else None),
+            page=int(payload["page"]) if payload.get("page") is not None else None,
+            section=(str(payload["section"]) if payload.get("section") is not None else None),
         )
 
 

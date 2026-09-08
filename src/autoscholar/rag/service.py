@@ -22,7 +22,7 @@ from autoscholar.llm import (
 )
 from autoscholar.rag.embeddings import EmbeddingProvider
 from autoscholar.rag.index import ChunkIndex
-from autoscholar.rag.models import DocumentRecord, RetrievalMode
+from autoscholar.rag.models import DocumentRecord, RetrievalMode, RetrievedChunk
 from autoscholar.rag.repository import KnowledgeStore
 
 
@@ -78,6 +78,16 @@ class RAGQueryResult:
 
 
 class RAGQueryServiceProtocol(Protocol):
+    async def retrieve(
+        self,
+        question: str,
+        *,
+        project_id: str,
+        document_ids: list[str] | None = None,
+        retrieval_mode: RetrievalMode = "dense",
+        top_k: int | None = None,
+    ) -> list[RetrievedChunk]: ...
+
     async def query(
         self,
         question: str,
@@ -87,6 +97,7 @@ class RAGQueryServiceProtocol(Protocol):
         retrieval_mode: RetrievalMode = "dense",
         top_k: int | None = None,
         task_id: str | None = None,
+        task_exists: bool = False,
     ) -> RAGQueryResult: ...
 
 
@@ -112,6 +123,30 @@ class RAGQueryService:
         self._tasks = tasks
         self._default_top_k = default_top_k
 
+    async def retrieve(
+        self,
+        question: str,
+        *,
+        project_id: str,
+        document_ids: list[str] | None = None,
+        retrieval_mode: RetrievalMode = "dense",
+        top_k: int | None = None,
+    ) -> list[RetrievedChunk]:
+        if retrieval_mode != "dense":
+            raise AppError(
+                status_code=422,
+                code="retrieval_mode_not_available",
+                message="Only dense retrieval is available in the current index version",
+            )
+        documents = await self._validate_scope(project_id, document_ids)
+        vector = await self._embeddings.embed_query(question)
+        return await self._index.search_dense(
+            project_id=project_id,
+            vector=vector,
+            document_ids=[document.id for document in documents],
+            limit=top_k or self._default_top_k,
+        )
+
     async def query(
         self,
         question: str,
@@ -121,30 +156,24 @@ class RAGQueryService:
         retrieval_mode: RetrievalMode = "dense",
         top_k: int | None = None,
         task_id: str | None = None,
+        task_exists: bool = False,
     ) -> RAGQueryResult:
-        if retrieval_mode != "dense":
-            raise AppError(
-                status_code=422,
-                code="retrieval_mode_not_available",
-                message="Only dense retrieval is available in the current index version",
-            )
-        documents = await self._validate_scope(project_id, document_ids)
-        selected_ids = [document.id for document in documents]
         resolved_task_id = task_id or str(uuid4())
         plan = ["Retrieve relevant project document passages", "Write a cited answer"]
-        await self._tasks.create_task(
-            task_id=resolved_task_id,
-            objective=question,
-            project_id=project_id,
-        )
+        if not task_exists:
+            await self._tasks.create_task(
+                task_id=resolved_task_id,
+                objective=question,
+                project_id=project_id,
+            )
         metrics = self._empty_metrics()
         try:
-            vector = await self._embeddings.embed_query(question)
-            chunks = await self._index.search_dense(
+            chunks = await self.retrieve(
+                question,
                 project_id=project_id,
-                vector=vector,
-                document_ids=selected_ids,
-                limit=top_k or self._default_top_k,
+                document_ids=document_ids,
+                retrieval_mode=retrieval_mode,
+                top_k=top_k,
             )
             metrics["iterations"] = 1
             if not chunks:

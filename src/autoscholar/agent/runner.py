@@ -32,6 +32,8 @@ from autoscholar.llm import (
     ToolDefinition,
     ToolResultMessage,
 )
+from autoscholar.rag.models import RetrievalMode
+from autoscholar.rag.service import RAGQueryServiceProtocol
 from autoscholar.research import SearchProviderError, SearchResponse, SearchResult, SourceType
 
 
@@ -142,6 +144,9 @@ class AgentService(Protocol):
         *,
         task_id: str | None = None,
         mode: AgentMode = "auto",
+        project_id: str | None = None,
+        document_ids: list[str] | None = None,
+        retrieval_mode: RetrievalMode = "dense",
     ) -> AgentRunResult: ...
 
 
@@ -207,6 +212,9 @@ class AgentState(TypedDict):
     citations: list[CitationRecord]
     warnings: list[ResearchWarningRecord]
     research_partial: bool
+    project_id: str | None
+    document_ids: list[str] | None
+    retrieval_mode: RetrievalMode
 
 
 class AgentRunner:
@@ -217,6 +225,7 @@ class AgentRunner:
         repository: TaskStore,
         tools: list[AgentTool],
         research_services: Sequence[ResearchSearch] | None = None,
+        knowledge_service: RAGQueryServiceProtocol | None = None,
         limits: AgentLimits | None = None,
         research_limits: ResearchLimits | None = None,
     ) -> None:
@@ -229,6 +238,7 @@ class AgentRunner:
         self._research_services = {
             service.source_type: service for service in (research_services or [])
         }
+        self._knowledge_service = knowledge_service
         self._graph = self._build_graph()
 
     async def run(
@@ -237,9 +247,28 @@ class AgentRunner:
         *,
         task_id: str | None = None,
         mode: AgentMode = "auto",
+        project_id: str | None = None,
+        document_ids: list[str] | None = None,
+        retrieval_mode: RetrievalMode = "dense",
     ) -> AgentRunResult:
+        if mode == "knowledge" and project_id is None:
+            raise AppError(
+                status_code=422,
+                code="project_id_required",
+                message="project_id is required for knowledge mode",
+            )
+        if mode == "knowledge" and self._knowledge_service is None:
+            raise AppError(
+                status_code=503,
+                code="rag_not_available",
+                message="Knowledge-base querying is unavailable",
+            )
         resolved_task_id = task_id or str(uuid4())
-        await self._repository.create_task(task_id=resolved_task_id, objective=objective)
+        await self._repository.create_task(
+            task_id=resolved_task_id,
+            objective=objective,
+            project_id=project_id,
+        )
         initial: AgentState = {
             "task_id": resolved_task_id,
             "objective": objective,
@@ -266,6 +295,9 @@ class AgentRunner:
             "citations": [],
             "warnings": [],
             "research_partial": False,
+            "project_id": project_id,
+            "document_ids": document_ids,
+            "retrieval_mode": retrieval_mode,
         }
         try:
             final = cast(AgentState, await self._graph.ainvoke(initial))
@@ -296,7 +328,11 @@ class AgentRunner:
             failed_mode: ResolvedAgentMode = (
                 persisted.mode
                 if persisted is not None
-                else ("research" if mode == "research" else "compute")
+                else (
+                    "research"
+                    if mode == "research"
+                    else ("knowledge" if mode == "knowledge" else "compute")
+                )
             )
             await self._repository.update_task(
                 resolved_task_id,
@@ -325,11 +361,16 @@ class AgentRunner:
         graph.add_node("research", self._research)
         graph.add_node("evidence_extractor", self._evidence_extractor)
         graph.add_node("writer", self._writer)
+        graph.add_node("knowledge", self._knowledge)
         graph.add_edge(START, "planner")
         graph.add_conditional_edges(
             "planner",
             self._route_after_planner,
-            {"executor": "executor", "query_planner": "query_planner"},
+            {
+                "executor": "executor",
+                "query_planner": "query_planner",
+                "knowledge": "knowledge",
+            },
         )
         graph.add_conditional_edges(
             "executor",
@@ -345,16 +386,20 @@ class AgentRunner:
         graph.add_edge("research", "evidence_extractor")
         graph.add_edge("evidence_extractor", "writer")
         graph.add_edge("writer", END)
+        graph.add_edge("knowledge", END)
         return graph.compile()
 
     async def _planner(self, state: AgentState) -> dict[str, Any]:
+        available_modes = ["research", "compute"]
+        if state["project_id"] is not None and self._knowledge_service is not None:
+            available_modes.append("knowledge")
         submit_plan = ToolDefinition(
             name="submit_plan",
             description="Submit the execution mode and ordered plan.",
             parameters={
                 "type": "object",
                 "properties": {
-                    "mode": {"type": "string", "enum": ["research", "compute"]},
+                    "mode": {"type": "string", "enum": available_modes},
                     "steps": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -369,7 +414,9 @@ class AgentRunner:
         requested = state["requested_mode"]
         mode_instruction = (
             "Classify literature reviews, comparisons of published methods, current facts, and "
-            "requests for sources as research. Classify deterministic calculations as compute."
+            "requests for external sources as research. Classify deterministic calculations as "
+            "compute. Classify questions whose answer should come from the supplied project "
+            "documents as knowledge when that mode is available."
             if requested == "auto"
             else f"The caller explicitly requires {requested} mode; return that exact mode."
         )
@@ -397,7 +444,7 @@ class AgentRunner:
         arguments = result.tool_calls[0].arguments
         raw_steps = arguments.get("steps")
         proposed_mode = arguments.get("mode")
-        if proposed_mode not in {"research", "compute"}:
+        if proposed_mode not in set(available_modes):
             raise AgentProtocolError(
                 code="invalid_agent_plan",
                 message="The configured model returned an invalid execution mode",
@@ -429,6 +476,34 @@ class AgentRunner:
             mode=resolved_mode,
         )
         return {"plan": steps, "resolved_mode": resolved_mode, **updates}
+
+    async def _knowledge(self, state: AgentState) -> dict[str, Any]:
+        if self._knowledge_service is None or state["project_id"] is None:
+            raise AgentProtocolError(
+                code="rag_not_available",
+                message="Knowledge-base querying is unavailable",
+            )
+        result = await self._knowledge_service.query(
+            state["objective"],
+            project_id=state["project_id"],
+            document_ids=state["document_ids"],
+            retrieval_mode=state["retrieval_mode"],
+            task_id=state["task_id"],
+            task_exists=True,
+        )
+        task_metrics = result.task.metrics
+        return {
+            "answer": result.task.answer or "",
+            "evidence": result.task.evidence,
+            "citations": result.task.citations,
+            "warnings": result.task.warnings,
+            "model": result.model,
+            "iterations": state["iterations"] + task_metrics.get("iterations", 0),
+            "model_calls": state["model_calls"] + task_metrics.get("model_calls", 0),
+            "input_tokens": state["input_tokens"] + task_metrics.get("input_tokens", 0),
+            "output_tokens": state["output_tokens"] + task_metrics.get("output_tokens", 0),
+            "total_tokens": state["total_tokens"] + task_metrics.get("total_tokens", 0),
+        }
 
     async def _query_planner(self, state: AgentState) -> dict[str, Any]:
         submit_queries = ToolDefinition(
@@ -643,11 +718,108 @@ class AgentRunner:
                         provider=service.name,
                     )
                 )
+        if state["project_id"] is not None:
+            started = time.perf_counter()
+            call_id = f"knowledge-{uuid4()}"
+            arguments = {
+                "query": state["objective"],
+                "project_id": state["project_id"],
+                "document_ids": state["document_ids"],
+                "limit": self._research_limits.max_results_per_query,
+            }
+            try:
+                if self._knowledge_service is None:
+                    raise AppError(
+                        status_code=503,
+                        code="rag_not_available",
+                        message="Knowledge-base querying is unavailable",
+                    )
+                chunks = await self._knowledge_service.retrieve(
+                    state["objective"],
+                    project_id=state["project_id"],
+                    document_ids=state["document_ids"],
+                    retrieval_mode=state["retrieval_mode"],
+                    top_k=self._research_limits.max_results_per_query,
+                )
+                payload = [
+                    {
+                        "chunk_id": chunk.id,
+                        "document_id": chunk.document_id,
+                        "title": chunk.title,
+                        "page": chunk.page,
+                        "section": chunk.section,
+                        "content": chunk.content,
+                        "score": chunk.score,
+                    }
+                    for chunk in chunks
+                ]
+                trace = await self._repository.add_tool_call(
+                    task_id=state["task_id"],
+                    sequence=len(traces) + 1,
+                    call_id=call_id,
+                    tool_name="knowledge_search",
+                    arguments=arguments,
+                    output=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    status="succeeded",
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                )
+                traces.append(trace)
+                for chunk in chunks:
+                    result = SearchResult(
+                        source_type="document",
+                        provider="qdrant",
+                        title=chunk.title,
+                        url=(
+                            f"/projects/{chunk.project_id}/documents/{chunk.document_id}/content"
+                            f"#page={chunk.page}"
+                        ),
+                        content=chunk.content,
+                        external_id=chunk.id,
+                        relevance=chunk.score,
+                        document_id=chunk.document_id,
+                        chunk_id=chunk.id,
+                        page=chunk.page,
+                        section=chunk.section,
+                    )
+                    dedupe_key = self._result_key(result)
+                    if dedupe_key in seen_results:
+                        continue
+                    seen_results.add(dedupe_key)
+                    candidates.append(
+                        SearchCandidate(
+                            candidate_id=f"C{len(candidates) + 1}",
+                            topic="Local project documents",
+                            query=state["objective"],
+                            result=result,
+                        )
+                    )
+            except AppError as exc:
+                trace = await self._repository.add_tool_call(
+                    task_id=state["task_id"],
+                    sequence=len(traces) + 1,
+                    call_id=call_id,
+                    tool_name="knowledge_search",
+                    arguments=arguments,
+                    output=exc.message,
+                    status="failed",
+                    error_code=exc.code,
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                )
+                traces.append(trace)
+                warnings.append(
+                    ResearchWarningRecord(
+                        code=exc.code,
+                        message=exc.message,
+                        provider="qdrant",
+                    )
+                )
         return {
             "traces": traces,
             "candidates": candidates,
             "warnings": warnings,
-            "iterations": state["iterations"] + len(state["research_queries"]),
+            "iterations": state["iterations"]
+            + len(state["research_queries"])
+            + (1 if state["project_id"] is not None else 0),
         }
 
     async def _evidence_extractor(self, state: AgentState) -> dict[str, Any]:
@@ -744,7 +916,7 @@ class AgentRunner:
         )
         partial = (
             not topics.issubset(covered_topics)
-            or source_types != {"web", "paper"}
+            or not {"web", "paper"}.issubset(source_types)
             or len(unique_urls) < 2
             or provider_warning
         )
@@ -791,7 +963,9 @@ class AgentRunner:
                 or excerpt not in candidate.result.content
                 or not isinstance(raw_relevance, int | float)
                 or not 0 <= float(raw_relevance) <= 1
-                or not self._valid_source_url(candidate.result.url)
+                or not self._valid_source_url(
+                    candidate.result.url, candidate.result.source_type
+                )
             ):
                 rejected += 1
                 continue
@@ -810,6 +984,10 @@ class AgentRunner:
                 claim=claim,
                 excerpt=excerpt,
                 relevance=float(raw_relevance),
+                document_id=candidate.result.document_id,
+                chunk_id=candidate.result.chunk_id,
+                page=candidate.result.page,
+                section=candidate.result.section,
             )
             evidence.append(record)
             used_candidates.add(candidate_id)
@@ -1128,7 +1306,11 @@ class AgentRunner:
 
     @staticmethod
     def _route_after_planner(state: AgentState) -> str:
-        return "query_planner" if state["resolved_mode"] == "research" else "executor"
+        if state["resolved_mode"] == "research":
+            return "query_planner"
+        if state["resolved_mode"] == "knowledge":
+            return "knowledge"
+        return "executor"
 
     @staticmethod
     def _route_after_executor(state: AgentState) -> str:
@@ -1186,7 +1368,9 @@ class AgentRunner:
         return f"url:{cls._canonical_url(result.url)}"
 
     @staticmethod
-    def _valid_source_url(url: str) -> bool:
+    def _valid_source_url(url: str, source_type: SourceType) -> bool:
+        if source_type == "document":
+            return url.startswith("/projects/") and "/documents/" in url
         parsed = urlsplit(url)
         return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
