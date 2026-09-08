@@ -158,7 +158,7 @@ Invoke-RestMethod `
   ConvertTo-Json -Depth 10
 ```
 
-`mode` 支持 `auto`、`research`、`compute` 和 `knowledge`，默认 `auto`。`knowledge` 必须携带 `project_id`；可用 `document_ids` 进一步缩小范围。`research` 携带 `project_id` 时会混合本地文档、Web 与论文证据。成功响应包含 `evidence`、`citations` 和 `warnings`；来源部分失败但仍有证据时状态为 `partial`，完全没有有效证据时任务失败且不会生成无依据结论。失败响应也会携带 `task_id`，可回查持久化错误。
+`mode` 支持 `auto`、`research`、`compute` 和 `knowledge`，默认 `auto`。`knowledge` 必须携带 `project_id`；可用 `document_ids` 进一步缩小范围。`research` 携带 `project_id` 时会混合本地文档和外部证据；`research_sources` 可选择 `web`、`paper` 或两者，默认 `@("web", "paper")`。该选择会随任务持久化。成功响应包含 `evidence`、`citations` 和 `warnings`；请求中的来源部分失败但仍有证据时状态为 `partial`，完全没有有效证据时任务失败且不会生成无依据结论。失败响应也会携带 `task_id`，可回查持久化错误。
 
 ## 受限 Python 的边界
 
@@ -295,7 +295,49 @@ Invoke-RestMethod "http://127.0.0.1:8000/agent/tasks/$($agent.task_id)" |
   ConvertTo-Json -Depth 10
 ```
 
-若还要验收本地与外部资料混合，将 `mode` 改为 `research` 并保留 `project_id`；此项需要 Tavily，Semantic Scholar 可匿名调用或配置 Key。`tool_calls` 应包含 `knowledge_search` 以及外部搜索调用。
+使用 Tavily 验收本地与外部资料混合，同时避免 Semantic Scholar 匿名限流影响本阶段结果：
+
+```powershell
+$mixedBody = @{
+  objective = "对照上传论文和 Web 资料，解释 LoRA 的参数效率、初始化和推理行为"
+  mode = "research"
+  project_id = $projectId
+  document_ids = @($documentId)
+  retrieval_mode = "hybrid_rerank"
+  research_sources = @("web")
+} | ConvertTo-Json -Depth 6 -Compress
+
+$mixed = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/agent/run" `
+  -ContentType "application/json; charset=utf-8" `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($mixedBody)) `
+  -TimeoutSec 600
+
+$mixed | ConvertTo-Json -Depth 10
+
+if ($mixed.status -ne "succeeded") { throw "Mixed research failed: $($mixed.status)" }
+if (-not ($mixed.tool_calls | Where-Object { $_.tool_name -eq "web_search" -and $_.status -eq "succeeded" })) {
+  throw "Tavily web_search did not succeed"
+}
+if (-not ($mixed.tool_calls | Where-Object { $_.tool_name -eq "knowledge_search" -and $_.status -eq "succeeded" })) {
+  throw "Local knowledge_search did not succeed"
+}
+if ($mixed.tool_calls | Where-Object { $_.tool_name -eq "paper_search" }) {
+  throw "paper_search should not run when research_sources contains only web"
+}
+if (-not ($mixed.evidence | Where-Object { $_.provider -eq "tavily" -and $_.source_type -eq "web" })) {
+  throw "Tavily Evidence is missing"
+}
+if (-not ($mixed.evidence | Where-Object {
+  $_.provider -eq "qdrant" -and $_.source_type -eq "document" -and
+  $_.document_id -eq $documentId -and $_.chunk_id -and $_.page
+})) {
+  throw "Project document Evidence is missing or out of scope"
+}
+```
+
+验收结果必须同时包含 Tavily `web` 和 Qdrant `document` Evidence，且本地 Evidence 的 `excerpt` 是服务器保存的原始 PDF 分块，不依赖模型逐字符复写。若需要完整 Web + 论文研究，省略 `research_sources` 或指定 `@("web", "paper")`；此时 Semantic Scholar 失败会如实返回 `partial`。
 
 RAG Benchmark 示例位于 `benchmarks/rag/example.jsonl`。把占位 ID 替换为人工标注的 `document_id`/`chunk_id` 后运行：
 
