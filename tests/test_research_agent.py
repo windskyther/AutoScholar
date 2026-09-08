@@ -206,26 +206,16 @@ def successful_responses() -> list[LLMResult]:
                     {
                         "candidate_id": "C1",
                         "claim": "LoRA adds trainable low-rank matrices",
-                        "excerpt": (
-                            "LoRA freezes pretrained weights and adds trainable low-rank matrices."
-                        ),
                         "relevance": 0.98,
                     },
                     {
                         "candidate_id": "C2",
                         "claim": "QLoRA trains adapters through a frozen 4-bit model",
-                        "excerpt": (
-                            "QLoRA backpropagates through a frozen 4-bit quantized model into "
-                            "adapters."
-                        ),
                         "relevance": 0.97,
                     },
                     {
                         "candidate_id": "C3",
                         "claim": "DoRA separates magnitude and direction",
-                        "excerpt": (
-                            "DoRA decomposes weights into magnitude and direction for adaptation."
-                        ),
                         "relevance": 0.96,
                     },
                 ]
@@ -284,32 +274,21 @@ async def test_research_with_project_mixes_local_and_external_evidence() -> None
                 {
                     "candidate_id": "C1",
                     "claim": "LoRA adds trainable low-rank matrices",
-                    "excerpt": (
-                        "LoRA freezes pretrained weights and adds trainable low-rank matrices."
-                    ),
                     "relevance": 0.98,
                 },
                 {
                     "candidate_id": "C2",
                     "claim": "QLoRA trains adapters through a frozen 4-bit model",
-                    "excerpt": (
-                        "QLoRA backpropagates through a frozen 4-bit quantized model into "
-                        "adapters."
-                    ),
                     "relevance": 0.97,
                 },
                 {
                     "candidate_id": "C3",
                     "claim": "DoRA separates magnitude and direction",
-                    "excerpt": (
-                        "DoRA decomposes weights into magnitude and direction for adaptation."
-                    ),
                     "relevance": 0.96,
                 },
                 {
                     "candidate_id": "C4",
                     "claim": "The uploaded paper reports an adapter rank of eight",
-                    "excerpt": "We use rank eight for all adapter layers.",
                     "relevance": 0.94,
                 },
             ]
@@ -338,7 +317,7 @@ async def test_research_with_project_mixes_local_and_external_evidence() -> None
         title="Uploaded adapter study",
         page=7,
         section="Experiments",
-        content="We use rank eight for all adapter layers.",
+        content="We use rank eight for all adapter\nlayers and avoid task-switching over-\nhead.",
         score=0.94,
         ordinal=12,
     )
@@ -363,6 +342,114 @@ async def test_research_with_project_mixes_local_and_external_evidence() -> None
     assert local_evidence.document_id == "document-1"
     assert local_evidence.chunk_id == "chunk-local"
     assert local_evidence.page == 7
+    assert local_evidence.excerpt == local.content
+    await engine.dispose()
+
+
+async def test_web_only_research_with_project_requires_web_and_document_evidence() -> None:
+    store, engine = await repository()
+    web_queries = [
+        ("Method", "LoRA web method"),
+        ("Efficiency", "LoRA web efficiency"),
+        ("Deployment", "LoRA web deployment"),
+    ]
+    query_response = tool_response(
+        "submit_research_queries",
+        {
+            "queries": [
+                {
+                    "topic": topic,
+                    "query": query,
+                    "source_type": "web",
+                    "purpose": f"Verify {topic.lower()}",
+                }
+                for topic, query in web_queries
+            ]
+        },
+    )
+    web_results = {
+        query: SearchResult(
+            source_type="web",
+            provider="tavily",
+            title=f"LoRA {topic}",
+            url=f"https://example.com/{topic.lower()}",
+            content=f"Authoritative web evidence about LoRA {topic.lower()}.",
+        )
+        for topic, query in web_queries
+    }
+    local = RetrievedChunk(
+        id="chunk-local",
+        project_id="project-1",
+        document_id="document-1",
+        title="LoRA Paper",
+        page=2,
+        section="Method",
+        content="LoRA lowers task-switching over-\nhead while keeping the base weights frozen.",
+        score=0.92,
+        ordinal=3,
+    )
+    responses = [
+        tool_response("submit_plan", {"mode": "research", "steps": ["Compare sources"]}),
+        query_response,
+        tool_response(
+            "submit_evidence",
+            {
+                "items": [
+                    {
+                        "candidate_id": candidate_id,
+                        "claim": f"Supported claim {candidate_id}",
+                        "relevance": 0.9,
+                    }
+                    for candidate_id in ("C1", "C2", "C3", "C4")
+                ]
+            },
+        ),
+        tool_response(
+            "submit_research_report",
+            {
+                "answer": "Web findings [E1] [E2] [E3] agree with the uploaded paper [E4].",
+                "citations": [
+                    {"claim": f"Claim {number}", "evidence_ids": [f"E{number}"]}
+                    for number in range(1, 5)
+                ],
+            },
+        ),
+    ]
+    provider = ScriptedProvider(responses)
+    runner = AgentRunner(
+        provider=provider,
+        repository=store,
+        tools=[],
+        research_services=[FakeResearchService("web", results=web_results)],
+        knowledge_service=FakeKnowledgeService([local]),
+    )
+
+    result = await runner.run(
+        "Compare LoRA with my uploaded paper",
+        mode="research",
+        project_id="project-1",
+        document_ids=["document-1"],
+        research_sources=["web"],
+    )
+
+    assert result.task.status == "succeeded"
+    assert result.task.research_sources == ["web"]
+    assert [trace.tool_name for trace in result.task.tool_calls] == [
+        "web_search",
+        "web_search",
+        "web_search",
+        "knowledge_search",
+    ]
+    assert {item.source_type for item in result.task.evidence} == {"web", "document"}
+    document_evidence = next(
+        item for item in result.task.evidence if item.source_type == "document"
+    )
+    assert document_evidence.excerpt == local.content
+    assert document_evidence.document_id == "document-1"
+    query_tool = provider.calls[1]["tools"][0]
+    assert query_tool.parameters["properties"]["queries"]["items"]["properties"][
+        "source_type"
+    ]["enum"] == ["web"]
     await engine.dispose()
 
 
@@ -390,35 +477,68 @@ async def test_research_with_empty_project_results_is_explicitly_partial() -> No
     await engine.dispose()
 
 
-async def test_research_rejects_fabricated_excerpt_and_marks_partial() -> None:
+async def test_invalid_evidence_selection_is_corrected_on_retry() -> None:
     store, engine = await repository()
     responses = successful_responses()
+    corrected = responses[2]
     responses[2] = tool_response(
         "submit_evidence",
         {
             "items": [
                 {
-                    "candidate_id": "C1",
-                    "claim": "Fabricated claim",
-                    "excerpt": "This text is not in the source.",
+                    "candidate_id": "C99",
+                    "claim": "Unknown source",
                     "relevance": 1.0,
-                },
-                {
-                    "candidate_id": "C3",
-                    "claim": "DoRA separates magnitude and direction",
-                    "excerpt": (
-                        "DoRA decomposes weights into magnitude and direction for adaptation."
-                    ),
-                    "relevance": 0.9,
                 },
             ]
         },
     )
-    responses[3] = tool_response(
+    responses.insert(3, corrected)
+    provider = ScriptedProvider(responses)
+    runner = AgentRunner(
+        provider=provider,
+        repository=store,
+        tools=[],
+        research_services=search_services(),
+    )
+
+    result = await runner.run("Compare methods", mode="research")
+
+    assert result.task.status == "succeeded"
+    assert len(result.task.evidence) == 3
+    assert result.task.warnings == []
+    assert "C99:unknown_candidate" in provider.calls[3]["messages"][-1].content
+    assert result.task.metrics["model_calls"] == 5
+    await engine.dispose()
+
+
+async def test_persistently_invalid_evidence_reports_candidate_and_reason() -> None:
+    store, engine = await repository()
+    responses = successful_responses()
+    partial_selection = tool_response(
+        "submit_evidence",
+        {
+            "items": [
+                {
+                    "candidate_id": "C1",
+                    "claim": "LoRA adds low-rank matrices",
+                    "relevance": 0.9,
+                },
+                {
+                    "candidate_id": "C99",
+                    "claim": "Unknown source",
+                    "relevance": 1.0,
+                },
+            ]
+        },
+    )
+    responses[2] = partial_selection
+    responses.insert(3, partial_selection)
+    responses[4] = tool_response(
         "submit_research_report",
         {
-            "answer": "Available evidence describes DoRA [E1].",
-            "citations": [{"claim": "DoRA mechanism", "evidence_ids": ["E1"]}],
+            "answer": "Available evidence describes LoRA [E1].",
+            "citations": [{"claim": "LoRA mechanism", "evidence_ids": ["E1"]}],
         },
     )
     runner = AgentRunner(
@@ -431,11 +551,17 @@ async def test_research_rejects_fabricated_excerpt_and_marks_partial() -> None:
     result = await runner.run("Compare methods", mode="research")
 
     assert result.task.status == "partial"
-    assert len(result.task.evidence) == 1
-    assert {warning.code for warning in result.task.warnings} == {
-        "evidence_items_rejected",
-        "research_coverage_incomplete",
-    }
+    rejected = next(
+        warning
+        for warning in result.task.warnings
+        if warning.code == "evidence_items_rejected"
+    )
+    assert "unknown_candidate=1" in rejected.message
+    assert "C99" in rejected.message
+    assert any(
+        warning.code == "research_coverage_incomplete"
+        for warning in result.task.warnings
+    )
     await engine.dispose()
 
 
@@ -449,9 +575,6 @@ async def test_single_provider_failure_returns_partial_with_failed_trace() -> No
                 {
                     "candidate_id": "C1",
                     "claim": "LoRA adds low-rank matrices",
-                    "excerpt": (
-                        "LoRA freezes pretrained weights and adds trainable low-rank matrices."
-                    ),
                     "relevance": 0.9,
                 }
             ]
