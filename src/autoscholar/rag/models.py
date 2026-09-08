@@ -5,6 +5,7 @@ from typing import Literal
 DocumentStatus = Literal["queued", "processing", "ready", "failed", "deleting"]
 DocumentJobKind = Literal["ingest", "reindex", "delete"]
 DocumentJobStatus = Literal["queued", "processing", "succeeded", "failed"]
+RetrievalMode = Literal["dense", "sparse", "hybrid", "hybrid_rerank"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,3 +64,16 @@ class DocumentJobRecord:
     error_message: str | None
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievedChunk:
+    id: str
+    project_id: str
+    document_id: str
+    title: str
+    page: int
+    section: str | None
+    content: str
+    score: float
+    ordinal: int

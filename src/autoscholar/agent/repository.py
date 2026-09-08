@@ -23,10 +23,13 @@ class AgentTaskRepository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = session_factory
 
-    async def create_task(self, *, task_id: str, objective: str) -> AgentTaskRecord:
+    async def create_task(
+        self, *, task_id: str, objective: str, project_id: str | None = None
+    ) -> AgentTaskRecord:
         async with self._sessions() as session:
             row = AgentTaskRow(
                 id=task_id,
+                project_id=project_id,
                 status="running",
                 objective=objective,
                 plan=[],
@@ -139,6 +142,10 @@ class AgentTaskRepository:
         claim: str,
         excerpt: str,
         relevance: float,
+        document_id: str | None = None,
+        chunk_id: str | None = None,
+        page: int | None = None,
+        section: str | None = None,
     ) -> EvidenceRecord:
         async with self._sessions() as session:
             row = EvidenceRow(
@@ -157,6 +164,10 @@ class AgentTaskRepository:
                 claim=claim,
                 excerpt=excerpt,
                 relevance=relevance,
+                document_id=document_id,
+                chunk_id=chunk_id,
+                page=page,
+                section=section,
             )
             session.add(row)
             await session.commit()
@@ -216,6 +227,7 @@ class AgentTaskRepository:
             created_at=row.created_at,
             updated_at=row.updated_at,
             tool_calls=[cls._tool_record(call) for call in tool_calls],
+            project_id=row.project_id,
         )
 
     @staticmethod
@@ -224,7 +236,7 @@ class AgentTaskRepository:
             id=row.id,
             task_id=row.task_id,
             citation_key=row.citation_key,
-            source_type=cast(Literal["web", "paper"], row.source_type),
+            source_type=cast(Literal["web", "paper", "document"], row.source_type),
             provider=row.provider,
             title=row.title,
             url=row.url,
@@ -237,6 +249,10 @@ class AgentTaskRepository:
             excerpt=row.excerpt,
             relevance=row.relevance,
             created_at=row.created_at,
+            document_id=row.document_id,
+            chunk_id=row.chunk_id,
+            page=row.page,
+            section=row.section,
         )
 
     @staticmethod

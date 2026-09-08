@@ -36,7 +36,9 @@ from autoscholar.research import SearchProviderError, SearchResponse, SearchResu
 
 
 class TaskStore(Protocol):
-    async def create_task(self, *, task_id: str, objective: str) -> AgentTaskRecord: ...
+    async def create_task(
+        self, *, task_id: str, objective: str, project_id: str | None = None
+    ) -> AgentTaskRecord: ...
 
     async def update_task(
         self,
@@ -86,6 +88,10 @@ class TaskStore(Protocol):
         claim: str,
         excerpt: str,
         relevance: float,
+        document_id: str | None = None,
+        chunk_id: str | None = None,
+        page: int | None = None,
+        section: str | None = None,
     ) -> EvidenceRecord: ...
 
     async def list_evidence(
@@ -1106,9 +1112,7 @@ class AgentRunner:
             )
         return answer, citations
 
-    async def _raise_research_failure(
-        self, state: AgentState, *, code: str, message: str
-    ) -> Never:
+    async def _raise_research_failure(self, state: AgentState, *, code: str, message: str) -> Never:
         await self._repository.update_task(
             state["task_id"],
             status="failed",

@@ -77,9 +77,7 @@ def research_task() -> AgentTaskRecord:
         id="task-research",
         mode="research",
         answer="LoRA uses low-rank adaptation [E1].",
-        citations=[
-            CitationRecord(claim="LoRA uses low-rank adaptation", evidence_ids=("E1",))
-        ],
+        citations=[CitationRecord(claim="LoRA uses low-rank adaptation", evidence_ids=("E1",))],
         warnings=[
             ResearchWarningRecord(
                 code="web_search_partial",
@@ -110,8 +108,10 @@ class FakeAgentBackend:
         assert self.task is not None
         return AgentRunResult(task=self.task, model="test-model")
 
-    async def create_task(self, *, task_id: str, objective: str) -> AgentTaskRecord:
-        del task_id, objective
+    async def create_task(
+        self, *, task_id: str, objective: str, project_id: str | None = None
+    ) -> AgentTaskRecord:
+        del task_id, objective, project_id
         raise NotImplementedError
 
     async def update_task(self, *args: object, **kwargs: object) -> AgentTaskRecord:
@@ -150,6 +150,10 @@ class FakeAgentBackend:
         claim: str,
         excerpt: str,
         relevance: float,
+        document_id: str | None = None,
+        chunk_id: str | None = None,
+        page: int | None = None,
+        section: str | None = None,
     ) -> EvidenceRecord:
         del (
             task_id,
@@ -166,6 +170,10 @@ class FakeAgentBackend:
             claim,
             excerpt,
             relevance,
+            document_id,
+            chunk_id,
+            page,
+            section,
         )
         raise NotImplementedError
 

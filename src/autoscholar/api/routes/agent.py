@@ -53,6 +53,10 @@ class EvidenceResponse(BaseModel):
     excerpt: str
     relevance: float
     created_at: datetime
+    document_id: str | None
+    chunk_id: str | None
+    page: int | None
+    section: str | None
 
 
 class CitationResponse(BaseModel):
@@ -146,13 +150,16 @@ def _evidence(item: EvidenceRecord) -> EvidenceResponse:
         excerpt=item.excerpt,
         relevance=item.relevance,
         created_at=item.created_at,
+        document_id=item.document_id,
+        chunk_id=item.chunk_id,
+        page=item.page,
+        section=item.section,
     )
 
 
 def _citations(items: list[CitationRecord]) -> list[CitationResponse]:
     return [
-        CitationResponse(claim=item.claim, evidence_ids=list(item.evidence_ids))
-        for item in items
+        CitationResponse(claim=item.claim, evidence_ids=list(item.evidence_ids)) for item in items
     ]
 
 

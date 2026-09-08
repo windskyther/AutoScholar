@@ -4,8 +4,8 @@ from typing import Any, Literal
 
 TaskStatus = Literal["running", "succeeded", "partial", "failed", "budget_exceeded"]
 ToolCallStatus = Literal["succeeded", "failed"]
-AgentMode = Literal["auto", "research", "compute"]
-ResolvedAgentMode = Literal["research", "compute"]
+AgentMode = Literal["auto", "research", "compute", "knowledge"]
+ResolvedAgentMode = Literal["research", "compute", "knowledge"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +28,7 @@ class EvidenceRecord:
     id: str
     task_id: str
     citation_key: str
-    source_type: Literal["web", "paper"]
+    source_type: Literal["web", "paper", "document"]
     provider: str
     title: str
     url: str
@@ -41,6 +41,10 @@ class EvidenceRecord:
     excerpt: str
     relevance: float
     created_at: datetime
+    document_id: str | None = None
+    chunk_id: str | None = None
+    page: int | None = None
+    section: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,3 +77,4 @@ class AgentTaskRecord:
     warnings: list[ResearchWarningRecord] = field(default_factory=list)
     evidence: list[EvidenceRecord] = field(default_factory=list)
     tool_calls: list[ToolTraceRecord] = field(default_factory=list)
+    project_id: str | None = None

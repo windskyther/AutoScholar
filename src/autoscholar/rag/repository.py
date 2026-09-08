@@ -50,9 +50,7 @@ class KnowledgeStore(Protocol):
         size_bytes: int,
     ) -> DocumentRecord: ...
 
-    async def get_document(
-        self, project_id: str, document_id: str
-    ) -> DocumentRecord | None: ...
+    async def get_document(self, project_id: str, document_id: str) -> DocumentRecord | None: ...
 
     async def list_documents(
         self, project_id: str, *, limit: int, offset: int
@@ -61,6 +59,10 @@ class KnowledgeStore(Protocol):
     async def enqueue_document_job(
         self, document_id: str, *, kind: DocumentJobKind
     ) -> DocumentRecord: ...
+
+    async def get_ready_documents(
+        self, project_id: str, document_ids: Sequence[str] | None = None
+    ) -> list[DocumentRecord]: ...
 
 
 class KnowledgeRepository:
@@ -136,9 +138,7 @@ class KnowledgeRepository:
             await session.refresh(row)
             return self._document_record(row)
 
-    async def get_document(
-        self, project_id: str, document_id: str
-    ) -> DocumentRecord | None:
+    async def get_document(self, project_id: str, document_id: str) -> DocumentRecord | None:
         async with self._sessions() as session:
             result = await session.execute(
                 select(DocumentRow).where(
@@ -171,6 +171,21 @@ class KnowledgeRepository:
             )
             return [self._document_record(row) for row in result.scalars()], total
 
+    async def get_ready_documents(
+        self, project_id: str, document_ids: Sequence[str] | None = None
+    ) -> list[DocumentRecord]:
+        async with self._sessions() as session:
+            statement = select(DocumentRow).where(
+                DocumentRow.project_id == project_id,
+                DocumentRow.status == "ready",
+            )
+            if document_ids is not None:
+                if not document_ids:
+                    return []
+                statement = statement.where(DocumentRow.id.in_(set(document_ids)))
+            result = await session.execute(statement.order_by(DocumentRow.created_at))
+            return [self._document_record(row) for row in result.scalars()]
+
     async def enqueue_document_job(
         self, document_id: str, *, kind: DocumentJobKind
     ) -> DocumentRecord:
@@ -201,8 +216,7 @@ class KnowledgeRepository:
                 select(DocumentJobRow)
                 .where(
                     or_(
-                        (DocumentJobRow.status == "queued")
-                        & (DocumentJobRow.available_at <= now),
+                        (DocumentJobRow.status == "queued") & (DocumentJobRow.available_at <= now),
                         (DocumentJobRow.status == "processing")
                         & (DocumentJobRow.lease_expires_at < now),
                     )

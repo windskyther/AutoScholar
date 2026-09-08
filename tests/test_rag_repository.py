@@ -31,9 +31,7 @@ async def test_repository_persists_projects_documents_and_jobs() -> None:
     loaded = await repository.get_document(project.id, document.id)
     assert loaded == document
     projects, project_total = await repository.list_projects(limit=10, offset=0)
-    documents, document_total = await repository.list_documents(
-        project.id, limit=10, offset=0
-    )
+    documents, document_total = await repository.list_documents(project.id, limit=10, offset=0)
     assert projects == [project]
     assert project_total == 1
     assert documents == [document]
@@ -70,6 +68,9 @@ async def test_repository_persists_projects_documents_and_jobs() -> None:
     assert ready.status == "ready"
     assert ready.page_count == 4
     assert ready.chunk_count == 1
+    assert await repository.get_ready_documents(project.id) == [ready]
+    assert await repository.get_ready_documents(project.id, [document.id]) == [ready]
+    assert await repository.get_ready_documents(project.id, ["missing"]) == []
 
     with pytest.raises(DuplicateDocumentError):
         await repository.create_document(

@@ -3,7 +3,7 @@ from typing import Protocol
 
 from qdrant_client import AsyncQdrantClient, models
 
-from autoscholar.rag.models import DocumentChunkRecord, DocumentRecord
+from autoscholar.rag.models import DocumentChunkRecord, DocumentRecord, RetrievedChunk
 
 
 class ChunkIndex(Protocol):
@@ -17,6 +17,15 @@ class ChunkIndex(Protocol):
     ) -> None: ...
 
     async def delete_document(self, project_id: str, document_id: str) -> None: ...
+
+    async def search_dense(
+        self,
+        *,
+        project_id: str,
+        vector: Sequence[float],
+        document_ids: Sequence[str] | None = None,
+        limit: int = 8,
+    ) -> list[RetrievedChunk]: ...
 
 
 class QdrantChunkIndex:
@@ -110,3 +119,52 @@ class QdrantChunkIndex:
             ),
             wait=True,
         )
+
+    async def search_dense(
+        self,
+        *,
+        project_id: str,
+        vector: Sequence[float],
+        document_ids: Sequence[str] | None = None,
+        limit: int = 8,
+    ) -> list[RetrievedChunk]:
+        must: list[models.Condition] = [
+            models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id))
+        ]
+        if document_ids is not None:
+            if not document_ids:
+                return []
+            must.append(
+                models.FieldCondition(
+                    key="document_id",
+                    match=models.MatchAny(any=list(dict.fromkeys(document_ids))),
+                )
+            )
+        if not await self._client.collection_exists(self._collection):
+            return []
+        response = await self._client.query_points(
+            collection_name=self._collection,
+            query=list(vector),
+            using="dense",
+            query_filter=models.Filter(must=must),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        chunks: list[RetrievedChunk] = []
+        for point in response.points:
+            payload = point.payload or {}
+            chunks.append(
+                RetrievedChunk(
+                    id=str(point.id),
+                    project_id=str(payload.get("project_id") or ""),
+                    document_id=str(payload.get("document_id") or ""),
+                    title=str(payload.get("title") or "Untitled document"),
+                    page=int(payload.get("page") or 0),
+                    section=(str(payload["section"]) if payload.get("section") else None),
+                    content=str(payload.get("content") or ""),
+                    score=float(point.score),
+                    ordinal=int(payload.get("ordinal") or 0),
+                )
+            )
+        return chunks

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,9 +40,7 @@ class FakeKnowledgeStore:
     async def get_project(self, project_id: str) -> ProjectRecord | None:
         return self.projects.get(project_id)
 
-    async def list_projects(
-        self, *, limit: int, offset: int
-    ) -> tuple[list[ProjectRecord], int]:
+    async def list_projects(self, *, limit: int, offset: int) -> tuple[list[ProjectRecord], int]:
         items = list(self.projects.values())
         return items[offset : offset + limit], len(items)
 
@@ -85,9 +84,7 @@ class FakeKnowledgeStore:
         self.documents[record.id] = record
         return record
 
-    async def get_document(
-        self, project_id: str, document_id: str
-    ) -> DocumentRecord | None:
+    async def get_document(self, project_id: str, document_id: str) -> DocumentRecord | None:
         record = self.documents.get(document_id)
         return record if record is not None and record.project_id == project_id else None
 
@@ -96,6 +93,18 @@ class FakeKnowledgeStore:
     ) -> tuple[list[DocumentRecord], int]:
         items = [item for item in self.documents.values() if item.project_id == project_id]
         return items[offset : offset + limit], len(items)
+
+    async def get_ready_documents(
+        self, project_id: str, document_ids: Sequence[str] | None = None
+    ) -> list[DocumentRecord]:
+        selected = set(document_ids) if document_ids is not None else None
+        return [
+            item
+            for item in self.documents.values()
+            if item.project_id == project_id
+            and item.status == "ready"
+            and (selected is None or item.id in selected)
+        ]
 
     async def enqueue_document_job(
         self, document_id: str, *, kind: DocumentJobKind
