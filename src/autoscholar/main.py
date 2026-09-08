@@ -24,12 +24,16 @@ from autoscholar.rag import (
     ChunkIndex,
     DocumentStorage,
     EmbeddingProvider,
+    FastEmbedReranker,
+    FastEmbedSparseProvider,
     KnowledgeRepository,
     KnowledgeStore,
     LocalDocumentStorage,
     QdrantChunkIndex,
     RAGQueryService,
     RAGQueryServiceProtocol,
+    Reranker,
+    SparseEmbeddingProvider,
 )
 from autoscholar.rag.worker import create_embedding_provider
 from autoscholar.research import (
@@ -53,6 +57,8 @@ def create_app(
     knowledge_repository: KnowledgeStore | None = None,
     document_storage: DocumentStorage | None = None,
     embedding_provider: EmbeddingProvider | None = None,
+    sparse_embedding_provider: SparseEmbeddingProvider | None = None,
+    reranker: Reranker | None = None,
     chunk_index: ChunkIndex | None = None,
     rag_query_service: RAGQueryServiceProtocol | None = None,
 ) -> FastAPI:
@@ -77,9 +83,21 @@ def create_app(
         resolved_settings.document_storage_path
     )
     resolved_embedding_provider = embedding_provider
+    resolved_sparse_embedding_provider = sparse_embedding_provider
+    resolved_reranker = reranker
     resolved_chunk_index = chunk_index
     if resolved_embedding_provider is None and isinstance(resolved_qdrant, Qdrant):
         resolved_embedding_provider = create_embedding_provider(resolved_settings)
+    if resolved_sparse_embedding_provider is None and isinstance(resolved_qdrant, Qdrant):
+        resolved_sparse_embedding_provider = FastEmbedSparseProvider(
+            model=resolved_settings.sparse_model,
+            cache_dir=resolved_settings.model_cache_path,
+        )
+    if resolved_reranker is None and isinstance(resolved_qdrant, Qdrant):
+        resolved_reranker = FastEmbedReranker(
+            model=resolved_settings.reranker_model,
+            cache_dir=resolved_settings.model_cache_path,
+        )
     if (
         resolved_chunk_index is None
         and isinstance(resolved_qdrant, Qdrant)
@@ -141,6 +159,9 @@ def create_app(
             knowledge=resolved_knowledge_repository,
             tasks=resolved_agent_repository,
             default_top_k=resolved_settings.rag_top_k,
+            sparse_embeddings=resolved_sparse_embedding_provider,
+            reranker=resolved_reranker,
+            candidate_limit=resolved_settings.rag_candidate_limit,
         )
     resolved_agent_runner = agent_runner
     if resolved_agent_runner is None and resolved_agent_repository is not None:
@@ -164,6 +185,8 @@ def create_app(
         application.state.document_storage = resolved_document_storage
         application.state.research_services = resolved_research_services
         application.state.embedding_provider = resolved_embedding_provider
+        application.state.sparse_embedding_provider = resolved_sparse_embedding_provider
+        application.state.reranker = resolved_reranker
         application.state.chunk_index = resolved_chunk_index
         application.state.rag_query_service = resolved_rag_query_service
         yield
@@ -172,6 +195,10 @@ def create_app(
         await resolved_llm_provider.close()
         if resolved_embedding_provider is not None:
             await resolved_embedding_provider.close()
+        if resolved_sparse_embedding_provider is not None:
+            await resolved_sparse_embedding_provider.close()
+        if resolved_reranker is not None:
+            await resolved_reranker.close()
         await resolved_redis.close()
         await resolved_qdrant.close()
         await resolved_database.close()
@@ -194,6 +221,8 @@ def create_app(
     application.state.document_storage = resolved_document_storage
     application.state.research_services = resolved_research_services
     application.state.embedding_provider = resolved_embedding_provider
+    application.state.sparse_embedding_provider = resolved_sparse_embedding_provider
+    application.state.reranker = resolved_reranker
     application.state.chunk_index = resolved_chunk_index
     application.state.rag_query_service = resolved_rag_query_service
     application.middleware("http")(request_context_middleware)

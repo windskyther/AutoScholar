@@ -146,7 +146,7 @@ class AgentService(Protocol):
         mode: AgentMode = "auto",
         project_id: str | None = None,
         document_ids: list[str] | None = None,
-        retrieval_mode: RetrievalMode = "dense",
+        retrieval_mode: RetrievalMode = "hybrid_rerank",
     ) -> AgentRunResult: ...
 
 
@@ -249,7 +249,7 @@ class AgentRunner:
         mode: AgentMode = "auto",
         project_id: str | None = None,
         document_ids: list[str] | None = None,
-        retrieval_mode: RetrievalMode = "dense",
+        retrieval_mode: RetrievalMode = "hybrid_rerank",
     ) -> AgentRunResult:
         if mode == "knowledge" and project_id is None:
             raise AppError(

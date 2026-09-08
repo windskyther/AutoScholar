@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from qdrant_client import AsyncQdrantClient, models
 
+from autoscholar.rag.embeddings import SparseVectorData
 from autoscholar.rag.index import QdrantChunkIndex
 from autoscholar.rag.models import DocumentChunkRecord, DocumentRecord
 
@@ -41,7 +42,8 @@ async def test_qdrant_index_replaces_and_filters_document_points() -> None:
         created_at=now,
     )
 
-    await index.replace_document(document, [chunk], [[1.0, 0.0]])
+    sparse = SparseVectorData(indices=[10], values=[1.0])
+    await index.replace_document(document, [chunk], [[1.0, 0.0]], [sparse])
     response = await client.query_points(
         "test_chunks",
         query=[1.0, 0.0],
@@ -70,6 +72,17 @@ async def test_qdrant_index_replaces_and_filters_document_points() -> None:
     assert retrieved[0].document_id == document.id
     assert retrieved[0].page == 3
     assert await index.search_dense(project_id="other-project", vector=[1.0, 0.0], limit=5) == []
+    sparse_results = await index.search_sparse(
+        project_id="project-1", vector=sparse, limit=5
+    )
+    assert [item.id for item in sparse_results] == [chunk.id]
+    hybrid_results = await index.search_hybrid(
+        project_id="project-1",
+        dense_vector=[1.0, 0.0],
+        sparse_vector=sparse,
+        limit=5,
+    )
+    assert [item.id for item in hybrid_results] == [chunk.id]
 
     await index.delete_document(document.project_id, document.id)
     empty = await client.query_points("test_chunks", query=[1.0, 0.0], using="dense", limit=5)

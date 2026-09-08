@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -21,6 +22,7 @@ from autoscholar.llm import (
     ToolDefinition,
 )
 from autoscholar.main import create_app
+from autoscholar.rag.embeddings import SparseVectorData
 from autoscholar.rag.models import DocumentChunkRecord, DocumentRecord, RetrievedChunk
 from autoscholar.rag.repository import KnowledgeRepository
 from autoscholar.rag.service import RAGQueryResult, RAGQueryService
@@ -47,6 +49,8 @@ class FakeChunkIndex:
     def __init__(self, chunks: list[RetrievedChunk]) -> None:
         self.chunks = chunks
         self.searches: list[dict[str, Any]] = []
+        self.sparse_searches = 0
+        self.hybrid_limits: list[int] = []
 
     async def ensure_collection(self) -> None:
         return None
@@ -56,8 +60,9 @@ class FakeChunkIndex:
         document: DocumentRecord,
         chunks: Sequence[DocumentChunkRecord],
         vectors: Sequence[Sequence[float]],
+        sparse_vectors: Sequence[SparseVectorData] | None = None,
     ) -> None:
-        del document, chunks, vectors
+        del document, chunks, vectors, sparse_vectors
 
     async def delete_document(self, project_id: str, document_id: str) -> None:
         del project_id, document_id
@@ -79,6 +84,65 @@ class FakeChunkIndex:
             }
         )
         return self.chunks[:limit]
+
+    async def search_sparse(
+        self,
+        *,
+        project_id: str,
+        vector: SparseVectorData,
+        document_ids: Sequence[str] | None = None,
+        limit: int = 8,
+    ) -> list[RetrievedChunk]:
+        del project_id, vector, document_ids
+        self.sparse_searches += 1
+        return self.chunks[:limit]
+
+    async def search_hybrid(
+        self,
+        *,
+        project_id: str,
+        dense_vector: Sequence[float],
+        sparse_vector: SparseVectorData,
+        document_ids: Sequence[str] | None = None,
+        limit: int = 30,
+    ) -> list[RetrievedChunk]:
+        del project_id, dense_vector, sparse_vector, document_ids
+        self.hybrid_limits.append(limit)
+        return self.chunks[:limit]
+
+
+class FakeSparseEmbeddingProvider:
+    model = "test-sparse"
+
+    async def embed_documents(self, documents: Sequence[str]) -> list[SparseVectorData]:
+        return [SparseVectorData(indices=[1], values=[1.0]) for _ in documents]
+
+    async def embed_query(self, query: str) -> SparseVectorData:
+        assert query
+        return SparseVectorData(indices=[1], values=[1.0])
+
+    async def close(self) -> None:
+        return None
+
+
+class ReverseReranker:
+    model = "test-reranker"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def rerank(
+        self, query: str, chunks: Sequence[RetrievedChunk], *, limit: int
+    ) -> list[RetrievedChunk]:
+        assert query
+        self.calls += 1
+        return [
+            replace(chunk, score=float(position))
+            for position, chunk in enumerate(reversed(chunks), start=1)
+        ][:limit]
+
+    async def close(self) -> None:
+        return None
 
 
 class CitedAnswerProvider:
@@ -220,6 +284,7 @@ async def test_dense_rag_query_persists_page_grounded_evidence() -> None:
         "What is the LoRA method?",
         project_id=project_id,
         document_ids=[document_id],
+        retrieval_mode="dense",
         task_id="rag-task-1",
     )
 
@@ -275,6 +340,48 @@ async def test_rag_query_rejects_non_ready_selected_document() -> None:
     await engine.dispose()
 
 
+async def test_hybrid_rerieval_uses_rrf_candidates_and_cross_encoder() -> None:
+    knowledge, tasks, engine, project_id, document_id = await _ready_knowledge_base()
+    chunks = [
+        RetrievedChunk(
+            id=f"chunk-{number}",
+            project_id=project_id,
+            document_id=document_id,
+            title="LoRA",
+            page=number,
+            section=None,
+            content=f"Passage {number}",
+            score=0.5,
+            ordinal=number,
+        )
+        for number in (1, 2)
+    ]
+    index = FakeChunkIndex(chunks)
+    reranker = ReverseReranker()
+    service = RAGQueryService(
+        provider=CitedAnswerProvider(),
+        embeddings=FakeEmbeddingProvider(),
+        sparse_embeddings=FakeSparseEmbeddingProvider(),
+        reranker=reranker,
+        index=index,
+        knowledge=knowledge,
+        tasks=tasks,
+        candidate_limit=12,
+    )
+
+    result = await service.retrieve(
+        "Which passage is relevant?",
+        project_id=project_id,
+        retrieval_mode="hybrid_rerank",
+        top_k=1,
+    )
+
+    assert [item.id for item in result] == ["chunk-2"]
+    assert index.hybrid_limits == [12]
+    assert reranker.calls == 1
+    await engine.dispose()
+
+
 async def test_agent_auto_routes_project_question_to_knowledge_graph() -> None:
     knowledge, tasks, engine, project_id, document_id = await _ready_knowledge_base()
     index = FakeChunkIndex(
@@ -311,6 +418,7 @@ async def test_agent_auto_routes_project_question_to_knowledge_graph() -> None:
         "What does my LoRA paper propose?",
         project_id=project_id,
         document_ids=[document_id],
+        retrieval_mode="dense",
     )
 
     assert result.task.status == "succeeded"

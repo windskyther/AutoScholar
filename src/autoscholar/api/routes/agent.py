@@ -30,7 +30,7 @@ class AgentRunRequest(BaseModel):
     mode: AgentMode = "auto"
     project_id: str | None = None
     document_ids: list[str] | None = None
-    retrieval_mode: RetrievalMode = "dense"
+    retrieval_mode: RetrievalMode = "hybrid_rerank"
 
 
 class AgentMetricsResponse(BaseModel):

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from dataclasses import dataclass
@@ -20,7 +21,7 @@ from autoscholar.llm import (
     LLMResult,
     ToolDefinition,
 )
-from autoscholar.rag.embeddings import EmbeddingProvider
+from autoscholar.rag.embeddings import EmbeddingProvider, Reranker, SparseEmbeddingProvider
 from autoscholar.rag.index import ChunkIndex
 from autoscholar.rag.models import DocumentRecord, RetrievalMode, RetrievedChunk
 from autoscholar.rag.repository import KnowledgeStore
@@ -84,7 +85,7 @@ class RAGQueryServiceProtocol(Protocol):
         *,
         project_id: str,
         document_ids: list[str] | None = None,
-        retrieval_mode: RetrievalMode = "dense",
+        retrieval_mode: RetrievalMode = "hybrid_rerank",
         top_k: int | None = None,
     ) -> list[RetrievedChunk]: ...
 
@@ -94,7 +95,7 @@ class RAGQueryServiceProtocol(Protocol):
         *,
         project_id: str,
         document_ids: list[str] | None = None,
-        retrieval_mode: RetrievalMode = "dense",
+        retrieval_mode: RetrievalMode = "hybrid_rerank",
         top_k: int | None = None,
         task_id: str | None = None,
         task_exists: bool = False,
@@ -115,6 +116,9 @@ class RAGQueryService:
         knowledge: KnowledgeStore,
         tasks: RAGTaskStore,
         default_top_k: int = 8,
+        sparse_embeddings: SparseEmbeddingProvider | None = None,
+        reranker: Reranker | None = None,
+        candidate_limit: int = 30,
     ) -> None:
         self._provider = provider
         self._embeddings = embeddings
@@ -122,6 +126,9 @@ class RAGQueryService:
         self._knowledge = knowledge
         self._tasks = tasks
         self._default_top_k = default_top_k
+        self._sparse_embeddings = sparse_embeddings
+        self._reranker = reranker
+        self._candidate_limit = candidate_limit
 
     async def retrieve(
         self,
@@ -129,22 +136,60 @@ class RAGQueryService:
         *,
         project_id: str,
         document_ids: list[str] | None = None,
-        retrieval_mode: RetrievalMode = "dense",
+        retrieval_mode: RetrievalMode = "hybrid_rerank",
         top_k: int | None = None,
     ) -> list[RetrievedChunk]:
-        if retrieval_mode != "dense":
-            raise AppError(
-                status_code=422,
-                code="retrieval_mode_not_available",
-                message="Only dense retrieval is available in the current index version",
-            )
         documents = await self._validate_scope(project_id, document_ids)
-        vector = await self._embeddings.embed_query(question)
-        return await self._index.search_dense(
+        selected_ids = [document.id for document in documents]
+        resolved_top_k = top_k or self._default_top_k
+        if retrieval_mode == "dense":
+            vector = await self._embeddings.embed_query(question)
+            return await self._index.search_dense(
+                project_id=project_id,
+                vector=vector,
+                document_ids=selected_ids,
+                limit=resolved_top_k,
+            )
+        if self._sparse_embeddings is None:
+            raise AppError(
+                status_code=503,
+                code="sparse_retrieval_not_available",
+                message="Sparse retrieval is unavailable",
+            )
+        if retrieval_mode == "sparse":
+            sparse_vector = await self._sparse_embeddings.embed_query(question)
+            return await self._index.search_sparse(
+                project_id=project_id,
+                vector=sparse_vector,
+                document_ids=selected_ids,
+                limit=resolved_top_k,
+            )
+        dense_vector, sparse_vector = await asyncio.gather(
+            self._embeddings.embed_query(question),
+            self._sparse_embeddings.embed_query(question),
+        )
+        candidate_limit = (
+            max(resolved_top_k, self._candidate_limit)
+            if retrieval_mode == "hybrid_rerank"
+            else resolved_top_k
+        )
+        candidates = await self._index.search_hybrid(
             project_id=project_id,
-            vector=vector,
-            document_ids=[document.id for document in documents],
-            limit=top_k or self._default_top_k,
+            dense_vector=dense_vector,
+            sparse_vector=sparse_vector,
+            document_ids=selected_ids,
+            limit=candidate_limit,
+        )
+        if retrieval_mode == "hybrid":
+            return candidates[:resolved_top_k]
+        if self._reranker is None:
+            raise AppError(
+                status_code=503,
+                code="reranker_not_available",
+                message="RAG reranking is unavailable",
+            )
+        return await self._reranker.rerank(
+            question, candidates, limit=resolved_top_k
         )
 
     async def query(
@@ -153,7 +198,7 @@ class RAGQueryService:
         *,
         project_id: str,
         document_ids: list[str] | None = None,
-        retrieval_mode: RetrievalMode = "dense",
+        retrieval_mode: RetrievalMode = "hybrid_rerank",
         top_k: int | None = None,
         task_id: str | None = None,
         task_exists: bool = False,

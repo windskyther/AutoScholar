@@ -23,7 +23,7 @@ QuestionText = Annotated[
 class RAGQueryRequest(BaseModel):
     question: QuestionText
     document_ids: list[str] | None = None
-    retrieval_mode: RetrievalMode = "dense"
+    retrieval_mode: RetrievalMode = "hybrid_rerank"
     top_k: int | None = Field(default=None, ge=1, le=50)
 
 

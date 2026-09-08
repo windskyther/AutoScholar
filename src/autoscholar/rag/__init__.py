@@ -1,4 +1,12 @@
-from autoscholar.rag.embeddings import EmbeddingProvider, FastEmbedProvider
+from autoscholar.rag.embeddings import (
+    EmbeddingProvider,
+    FastEmbedProvider,
+    FastEmbedReranker,
+    FastEmbedSparseProvider,
+    Reranker,
+    SparseEmbeddingProvider,
+    SparseVectorData,
+)
 from autoscholar.rag.index import ChunkIndex, QdrantChunkIndex
 from autoscholar.rag.models import (
     DocumentRecord,
@@ -31,6 +39,8 @@ __all__ = [
     "DuplicateDocumentError",
     "EmbeddingProvider",
     "FastEmbedProvider",
+    "FastEmbedReranker",
+    "FastEmbedSparseProvider",
     "KnowledgeRepository",
     "KnowledgeStore",
     "LocalDocumentStorage",
@@ -42,7 +52,10 @@ __all__ = [
     "RAGQueryResult",
     "RAGQueryService",
     "RAGQueryServiceProtocol",
+    "Reranker",
     "RetrievalMode",
     "RetrievedChunk",
+    "SparseEmbeddingProvider",
+    "SparseVectorData",
     "StoredDocument",
 ]

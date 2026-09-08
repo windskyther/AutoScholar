@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import cast
 
 from autoscholar.rag.chunking import StructureAwareChunker
-from autoscholar.rag.embeddings import EmbeddingProvider
+from autoscholar.rag.embeddings import EmbeddingProvider, SparseVectorData
 from autoscholar.rag.index import ChunkIndex
 from autoscholar.rag.models import (
     DocumentChunkRecord,
@@ -159,8 +159,9 @@ class FakeIndex:
         document: DocumentRecord,
         chunks: list[DocumentChunkRecord],
         vectors: list[list[float]],
+        sparse_vectors: list[SparseVectorData] | None = None,
     ) -> None:
-        del document
+        del document, sparse_vectors
         assert len(chunks) == len(vectors)
         self.indexed = len(chunks)
 

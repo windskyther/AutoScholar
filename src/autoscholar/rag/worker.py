@@ -10,7 +10,9 @@ from autoscholar.rag.chunking import StructureAwareChunker
 from autoscholar.rag.embeddings import (
     EmbeddingProvider,
     FastEmbedProvider,
+    FastEmbedSparseProvider,
     OpenAICompatibleEmbeddingProvider,
+    SparseEmbeddingProvider,
 )
 from autoscholar.rag.index import ChunkIndex, QdrantChunkIndex
 from autoscholar.rag.parser import DocumentProcessingError, PDFParser
@@ -38,6 +40,13 @@ def create_embedding_provider(settings: Settings) -> EmbeddingProvider:
     )
 
 
+def create_sparse_embedding_provider(settings: Settings) -> SparseEmbeddingProvider:
+    return FastEmbedSparseProvider(
+        model=settings.sparse_model,
+        cache_dir=settings.model_cache_path,
+    )
+
+
 class DocumentWorker:
     def __init__(
         self,
@@ -52,6 +61,7 @@ class DocumentWorker:
         max_attempts: int,
         parse_timeout_seconds: int,
         max_pages: int,
+        sparse_embeddings: SparseEmbeddingProvider | None = None,
     ) -> None:
         self._repository = repository
         self._storage = storage
@@ -63,6 +73,7 @@ class DocumentWorker:
         self._max_attempts = max_attempts
         self._parse_timeout_seconds = parse_timeout_seconds
         self._max_pages = max_pages
+        self._sparse_embeddings = sparse_embeddings
 
     async def run_once(self) -> bool:
         job = await self._repository.claim_job(lease_seconds=self._lease_seconds)
@@ -96,13 +107,22 @@ class DocumentWorker:
             vectors = await self._embeddings.embed_documents(
                 [chunk.content for chunk in chunks]
             )
-            await self._index.replace_document(document, chunks, vectors)
+            sparse_vectors = (
+                await self._sparse_embeddings.embed_documents(
+                    [chunk.content for chunk in chunks]
+                )
+                if self._sparse_embeddings is not None
+                else None
+            )
+            await self._index.replace_document(
+                document, chunks, vectors, sparse_vectors=sparse_vectors
+            )
             await self._repository.replace_chunks(
                 document.id,
                 chunks,
                 page_count=parsed.page_count,
                 embedding_model=self._embeddings.model,
-                index_version=1,
+                index_version=2 if sparse_vectors is not None else 1,
             )
             await self._repository.complete_job(job.id)
         except DocumentProcessingError as exc:
@@ -138,6 +158,7 @@ async def run_worker(
     )
     qdrant = Qdrant(settings.qdrant_url, api_key=qdrant_key)
     embeddings = create_embedding_provider(settings)
+    sparse_embeddings = create_sparse_embedding_provider(settings)
     worker = DocumentWorker(
         repository=KnowledgeRepository(database.session_factory),
         storage=LocalDocumentStorage(settings.document_storage_path),
@@ -156,6 +177,7 @@ async def run_worker(
         max_attempts=settings.rag_job_max_attempts,
         parse_timeout_seconds=settings.document_parse_timeout_seconds,
         max_pages=settings.document_max_pages,
+        sparse_embeddings=sparse_embeddings,
     )
     try:
         while True:
@@ -173,6 +195,7 @@ async def run_worker(
                 )
     finally:
         await embeddings.close()
+        await sparse_embeddings.close()
         await qdrant.close()
         await database.close()
 
