@@ -75,7 +75,7 @@ class CodingState(TypedDict):
     objective: str
     plan: list[str]
     messages: list[ConversationMessage]
-    pending_tool_call: ToolCall | None
+    pending_tool_calls: list[ToolCall]
     traces: list[ToolTraceRecord]
     tool_calls: int
     prompt_retries: int
@@ -141,7 +141,7 @@ class CodingAgent:
             "objective": objective,
             "plan": plan,
             "messages": [ChatMessage(role="user", content=objective)],
-            "pending_tool_call": None,
+            "pending_tool_calls": [],
             "traces": [],
             "tool_calls": 0,
             "prompt_retries": 0,
@@ -184,9 +184,15 @@ class CodingAgent:
         graph.add_node("finalize", self._finalize)
         graph.add_edge(START, "author")
         graph.add_conditional_edges(
-            "author", self._route_after_author, {"tool": "tool", "validate": "validate"}
+            "author",
+            self._route_after_author,
+            {"author": "author", "tool": "tool", "validate": "validate"},
         )
-        graph.add_edge("tool", "author")
+        graph.add_conditional_edges(
+            "tool",
+            self._route_after_tool,
+            {"author": "author", "tool": "tool", "validate": "validate"},
+        )
         graph.add_conditional_edges(
             "validate", self._route_after_validation, {"author": "author", "finalize": "finalize"}
         )
@@ -225,7 +231,7 @@ class CodingAgent:
             tool_choice="auto",
         )
         updates = self._usage(state, result)
-        if len(result.tool_calls) != 1:
+        if not result.tool_calls:
             if state["prompt_retries"] >= 1:
                 raise CodingRunError(
                     "native_tool_calling_required",
@@ -243,15 +249,23 @@ class CodingAgent:
                     ),
                 ],
             }
-        call = result.tool_calls[0]
+        calls = list(result.tool_calls)
+        ready_positions = [
+            index for index, call in enumerate(calls) if call.name == "submit_code_ready"
+        ]
+        if ready_positions and ready_positions != [len(calls) - 1]:
+            raise CodingRunError(
+                "coding_protocol_error",
+                "submit_code_ready must be the final call in a coding tool batch",
+            )
         return {
             **updates,
-            "pending_tool_call": call,
+            "pending_tool_calls": calls,
             "prompt_retries": 0,
             "messages": [
                 *state["messages"],
                 AssistantToolCallMessage(
-                    tool_calls=(call,),
+                    tool_calls=tuple(calls),
                     content=result.text,
                     reasoning_content=result.reasoning_content,
                 ),
@@ -259,9 +273,14 @@ class CodingAgent:
         }
 
     async def _execute_tool(self, state: CodingState) -> dict[str, Any]:
-        call = state["pending_tool_call"]
-        if call is None:
+        calls = state["pending_tool_calls"]
+        if not calls:
             raise CodingRunError("coding_protocol_error", "Coding tool call was missing")
+        if state["tool_calls"] >= self._limits.max_file_tool_calls:
+            raise CodingRunError(
+                "coding_tool_budget_exceeded", "The coding file-operation budget was exhausted"
+            )
+        call = calls[0]
         tool = self._task_tools[state["task_id"]].get(call.name)
         error_code: str | None
         if tool is None:
@@ -290,7 +309,7 @@ class CodingAgent:
             1 if succeeded and call.name in {"create_file", "edit_file", "delete_file"} else 0
         )
         return {
-            "pending_tool_call": None,
+            "pending_tool_calls": calls[1:],
             "traces": [*state["traces"], trace],
             "tool_calls": state["tool_calls"] + 1,
             "sandbox_runs": state["sandbox_runs"] + sandbox_increment,
@@ -426,8 +445,17 @@ class CodingAgent:
 
     @staticmethod
     def _route_after_author(state: CodingState) -> str:
-        call = state["pending_tool_call"]
-        return "validate" if call is not None and call.name == "submit_code_ready" else "tool"
+        calls = state["pending_tool_calls"]
+        if not calls:
+            return "author"
+        return "validate" if calls[0].name == "submit_code_ready" else "tool"
+
+    @staticmethod
+    def _route_after_tool(state: CodingState) -> str:
+        calls = state["pending_tool_calls"]
+        if not calls:
+            return "author"
+        return "validate" if calls[0].name == "submit_code_ready" else "tool"
 
     @staticmethod
     def _route_after_validation(state: CodingState) -> str:

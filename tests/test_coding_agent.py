@@ -53,6 +53,35 @@ class ScriptedCodingProvider:
         return None
 
 
+class PlainThenScriptedProvider(ScriptedCodingProvider):
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        if not self.prompts:
+            self.prompts.append(messages)
+            return LLMResult(text="I will create the files.", model="coding-model")
+        return await super().generate(messages, tools=tools, tool_choice=tool_choice)
+
+
+class BatchedCodingProvider(ScriptedCodingProvider):
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        del tools, tool_choice
+        self.prompts.append(messages)
+        calls = tuple(self.calls)
+        self.calls.clear()
+        return LLMResult(text="", model="coding-model", tool_calls=calls)
+
+
 class FakeSandbox:
     def __init__(self, results: list[SandboxRunResult]) -> None:
         self.results = results
@@ -292,3 +321,72 @@ def test_error_parser_classifies_and_redacts_diagnostics() -> None:
     assert diagnostic.category == "cuda_oom"
     assert "secret-value" not in diagnostic.stderr
     assert "abc123" not in diagnostic.stderr
+
+
+async def test_coding_agent_reprompts_when_first_tool_call_is_missing(tmp_path: Path) -> None:
+    store, engine = await repository()
+    await store.create_task(task_id="coding-reprompt", objective="Create code")
+    provider = PlainThenScriptedProvider(
+        [
+            call(
+                "create-1",
+                "create_file",
+                {"path": "test_ok.py", "content": "def test_ok():\n    assert True\n"},
+            ),
+            call("ready-1", "submit_code_ready", {"summary": "ready"}),
+        ]
+    )
+    agent = CodingAgent(
+        provider=provider,
+        repository=store,
+        workspaces=WorkspaceManager(tmp_path),
+        sandbox=FakeSandbox([run_result(), run_result()]),
+    )
+
+    result = await agent.run(
+        task_id="coding-reprompt", objective="Create code", plan=["Create", "Test"]
+    )
+
+    assert result.model_calls == 3
+    assert result.files_written == 1
+    await engine.dispose()
+
+
+async def test_coding_agent_executes_batched_file_calls_in_order(tmp_path: Path) -> None:
+    store, engine = await repository()
+    await store.create_task(task_id="coding-batch", objective="Create code")
+    provider = BatchedCodingProvider(
+        [
+            call(
+                "create-1",
+                "create_file",
+                {"path": "main.py", "content": "def ok():\n    return True\n"},
+            ),
+            call(
+                "create-2",
+                "create_file",
+                {"path": "test_main.py", "content": "def test_ok():\n    assert True\n"},
+            ),
+            call("ready-1", "submit_code_ready", {"summary": "ready"}),
+        ]
+    )
+    agent = CodingAgent(
+        provider=provider,
+        repository=store,
+        workspaces=WorkspaceManager(tmp_path),
+        sandbox=FakeSandbox([run_result(), run_result()]),
+    )
+
+    result = await agent.run(
+        task_id="coding-batch", objective="Create code", plan=["Create", "Test"]
+    )
+
+    assert result.files_written == 2
+    assert result.model_calls == 1
+    assert [trace.tool_name for trace in result.traces] == [
+        "create_file",
+        "create_file",
+        "static_check",
+        "run_pytest",
+    ]
+    await engine.dispose()
