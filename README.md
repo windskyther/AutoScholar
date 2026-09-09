@@ -3,7 +3,7 @@
 > 面向 AI/ML 研究与实验的自主智能体平台  
 > Autonomous AI/ML Research & Experiment Agent Platform
 
-AutoScholar 的目标是把复杂研究目标转化为可追踪、可恢复、可评测、可复现的研究流程。项目当前已完成 Phase 3：除 Web/论文研究与安全计算外，还支持按项目隔离的 PDF 知识库、混合检索、重排和页码级引用。
+AutoScholar 的目标是把复杂研究目标转化为可追踪、可恢复、可评测、可复现的研究流程。项目当前已完成 Phase 4：除 Web/论文研究与项目知识库外，还支持任务级代码工作区、代码生成与修复，以及真正隔离的 Docker 执行环境。
 
 ## 当前能力
 
@@ -22,6 +22,10 @@ AutoScholar 的目标是把复杂研究目标转化为可追踪、可恢复、�
 - Recall@K、HitRate@K、MRR、NDCG RAG Benchmark
 - Evidence、Claim-Citation 映射和降级警告持久化
 - Agent 任务和 Tool Trace 持久化
+- Coding Agent：生成、搜索、读取、原子修改和删除任务源码
+- 静态检查、pytest、结构化错误分类和最多 3 次自动修复
+- 断网、非 root、限制 CPU/内存/PID/时长的一次性 Docker 沙箱
+- 真实 MNIST 只读数据卷与 CPU PyTorch 运行环境
 - 同步执行 API 与任务回查 API
 
 当前 PDF 管线只处理可提取文本的 PDF，不执行 OCR；扫描件和加密 PDF 会明确失败。Web/论文检索仍只使用搜索片段与论文摘要，不自动下载外部全文。
@@ -38,6 +42,10 @@ flowchart LR
     Q --> R[Web / Paper / Project Search]
     R --> V[Evidence Extractor]
     P -->|knowledge| K[Dense + Sparse → RRF → Reranker]
+    P -->|coding| C[Workspace → Code Tools → Static Check]
+    C --> D[Docker Sandbox]
+    D -->|失败，最多 3 次| C
+    D -->|pytest 通过| W
     K --> W
     V --> W[Citation Writer]
     E -->|证据充分或预算耗尽| W
@@ -94,6 +102,16 @@ docker compose down
 
 命名卷会保留 PostgreSQL、Redis、Qdrant、PDF 原文件和本地模型缓存。除非确认需要清空全部数据，否则不要执行 `docker compose down -v`。
 
+首次使用 Coding Agent 前，需要联网准备一次真实 MNIST 数据；之后任务沙箱始终断网运行：
+
+```powershell
+docker compose build sandbox-image
+docker compose --profile datasets run --rm mnist-init
+docker compose up -d --build
+```
+
+该操作只写入 `autoscholar_mnist_data` Docker 卷，不会把数据写入 Git。
+
 ### 本地开发
 
 ```powershell
@@ -112,6 +130,8 @@ uv run uvicorn autoscholar.main:app --reload
 | `POST` | `/agent/run` | 同步运行最小 Agent 闭环 |
 | `GET` | `/agent/tasks/{task_id}` | 回查任务、指标和 Tool Trace |
 | `GET` | `/agent/tasks/{task_id}/evidence` | 分页查询结构化 Evidence |
+| `GET` | `/agent/tasks/{task_id}/workspace` | 查询 Coding 任务工作区清单和校验值 |
+| `GET` | `/agent/tasks/{task_id}/workspace/files/{path}` | 读取工作区 UTF-8 文本文件 |
 | `POST` | `/projects` | 创建隔离的知识库项目 |
 | `GET` | `/projects`、`/projects/{project_id}` | 列出或读取项目 |
 | `POST` | `/projects/{project_id}/documents` | 上传 PDF 并进入后台摄取队列 |
@@ -158,7 +178,7 @@ Invoke-RestMethod `
   ConvertTo-Json -Depth 10
 ```
 
-`mode` 支持 `auto`、`research`、`compute` 和 `knowledge`，默认 `auto`。`knowledge` 必须携带 `project_id`；可用 `document_ids` 进一步缩小范围。`research` 携带 `project_id` 时会混合本地文档和外部证据；`research_sources` 可选择 `web`、`paper` 或两者，默认 `@("web", "paper")`。该选择会随任务持久化。成功响应包含 `evidence`、`citations` 和 `warnings`；请求中的来源部分失败但仍有证据时状态为 `partial`，完全没有有效证据时任务失败且不会生成无依据结论。失败响应也会携带 `task_id`，可回查持久化错误。
+`mode` 支持 `auto`、`research`、`compute`、`knowledge` 和 `coding`，默认 `auto`。`knowledge` 必须携带 `project_id`；可用 `document_ids` 进一步缩小范围。`research` 携带 `project_id` 时会混合本地文档和外部证据；`research_sources` 可选择 `web`、`paper` 或两者，默认 `@("web", "paper")`。`coding` 在任务专属工作区内创建项目，只有静态检查和 pytest 都通过才会返回 `succeeded`。失败响应也会携带 `task_id`，可回查持久化错误和 Tool Trace。
 
 ## 受限 Python 的边界
 
@@ -169,7 +189,7 @@ Python 工具会先做 AST 白名单检查，再使用 `python -I -S`、空临�
 - 输出最多 16,000 字符
 - 禁止 import、文件、网络、进程、属性访问、函数/类定义、异常结构和 `while`
 
-这是降低误用风险的 Phase 1 受限执行器，不是操作系统级强安全沙箱，也不适合运行不可信用户代码。真正隔离的 Docker 实验执行器属于后续阶段。
+这是 Phase 1 的轻量计算器，不适合运行生成项目。Phase 4 Coding Agent 使用单独的 Docker 沙箱：API 不直接持有 Docker Socket；内部管理服务为每次运行创建一次性、断网、非 root 容器，而且不会向容器传递 AutoScholar 的 `.env` 或外部服务密钥。
 
 ## 测试
 
@@ -349,6 +369,80 @@ uv run python -m autoscholar.evaluation.rag `
   --ks 5 10
 ```
 
+### Phase 4 本地验收
+
+以下命令适用于当前 Windows 环境，并显式使用 D 盘安装的 Docker：
+
+```powershell
+$docker = "D:\Applications\Docker\resources\bin\docker.exe"
+& $docker compose build sandbox-image
+& $docker compose --profile datasets run --rm mnist-init
+& $docker compose up -d --build
+& $docker compose ps -a
+
+$health = Invoke-RestMethod "http://127.0.0.1:8000/health/ready"
+$health.capabilities | Format-List
+if ($health.capabilities.sandbox.status -ne "ok") { throw "Sandbox is not ready" }
+if ($health.capabilities.mnist_dataset.status -ne "ok") { throw "MNIST is not ready" }
+
+& $docker compose exec -T sandbox-manager python -m autoscholar.sandbox.smoke
+```
+
+执行真实 Coding Agent 任务：
+
+```powershell
+$codingBody = @{
+  objective = @"
+在空工作区中创建一个小型、可测试的 PyTorch MNIST MLP 项目。
+要求包含模型、训练入口和 pytest；使用 MNIST_ROOT 环境变量、download=False、固定随机种子，
+测试真实 MNIST 的一个小批次，验证输出形状、有限损失以及反向传播后参数发生更新。
+"@
+  mode = "coding"
+} | ConvertTo-Json -Compress
+
+$coding = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/agent/run" `
+  -ContentType "application/json; charset=utf-8" `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($codingBody)) `
+  -TimeoutSec 1800
+
+$coding | ConvertTo-Json -Depth 10
+if ($coding.status -ne "succeeded") { throw "Coding task failed" }
+if ($coding.mode -ne "coding") { throw "Coding mode was not used" }
+if (-not ($coding.tool_calls | Where-Object { $_.tool_name -eq "static_check" -and $_.status -eq "succeeded" })) {
+  throw "Static check did not pass"
+}
+if (-not ($coding.tool_calls | Where-Object { $_.tool_name -eq "run_pytest" -and $_.status -eq "succeeded" })) {
+  throw "pytest did not pass"
+}
+```
+
+查看生成文件、校验值和持久化执行日志：
+
+```powershell
+$workspace = Invoke-RestMethod `
+  "http://127.0.0.1:8000/agent/tasks/$($coding.task_id)/workspace"
+$workspace.files | Format-Table path,size_bytes,sha256
+
+$sourcePath = ($workspace.files | Where-Object { $_.path -like "source/*.py" } |
+  Select-Object -First 1).path
+$encodedPath = ($sourcePath -split "/" | ForEach-Object {
+  [System.Uri]::EscapeDataString($_)
+}) -join "/"
+Invoke-RestMethod `
+  "http://127.0.0.1:8000/agent/tasks/$($coding.task_id)/workspace/files/$encodedPath" |
+  Select-Object path,content
+```
+
+自动化验收中的故障脚本会先制造 `SyntaxError`，确认错误被分类后由 Agent 修改文件并重新运行；因此不要求真实模型每次都故意产生错误。可单独执行：
+
+```powershell
+uv run pytest tests/test_coding_agent.py tests/test_coding_workspace.py tests/test_sandbox.py
+```
+
+Phase 4 验收标准是：工作区不能越界，沙箱看不到密钥且不能联网，超时会终止并清理容器，真实 MNIST 项目静态检查和 pytest 通过，强制故障用例至少完成一次修复。模型检查点、图表、实验指标和通用 Artifact 生命周期留到 Phase 5。
+
 ## 开发路线
 
 | 阶段 | 重点 |
@@ -357,7 +451,8 @@ uv run python -m autoscholar.evaluation.rag `
 | Phase 1 | 最小 LangGraph Agent、Calculator/Python、任务与轨迹持久化 |
 | Phase 2 | Web/论文检索、Evidence/Citation、Research Agent |
 | Phase 3 | PDF 文档处理、Qdrant、RAG 知识库 |
-| Phase 4–6 | 代码生成与修复、Docker 实验、Reviewer/Replanning |
+| Phase 4 | 任务工作区、代码生成与修复、隔离 Docker 沙箱 |
+| Phase 5–6 | 实验指标与产物、Reviewer/Replanning |
 | Phase 7–9 | Checkpoint、Memory、Human-in-the-loop、MCP、Web 工作台 |
 | Phase 10–11 | 全链路评测、安全加固、CI/CD 与部署 |
 
