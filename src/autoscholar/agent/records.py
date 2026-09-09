@@ -4,8 +4,8 @@ from typing import Any, Literal
 
 TaskStatus = Literal["running", "succeeded", "partial", "failed", "budget_exceeded"]
 ToolCallStatus = Literal["succeeded", "failed"]
-AgentMode = Literal["auto", "research", "compute", "knowledge"]
-ResolvedAgentMode = Literal["research", "compute", "knowledge"]
+AgentMode = Literal["auto", "research", "compute", "knowledge", "coding"]
+ResolvedAgentMode = Literal["research", "compute", "knowledge", "coding"]
 ResearchSource = Literal["web", "paper"]
 
 

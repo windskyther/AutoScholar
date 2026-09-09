@@ -16,6 +16,7 @@ from autoscholar.agent.records import (
     ToolCallStatus,
 )
 from autoscholar.agent.runner import AgentService, TaskStore
+from autoscholar.coding.workspace import WorkspaceError, WorkspaceFile, WorkspaceManager
 from autoscholar.core.errors import AppError
 from autoscholar.rag.models import RetrievalMode
 
@@ -56,6 +57,9 @@ class AgentMetricsResponse(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    sandbox_runs: int = 0
+    repair_attempts: int = 0
+    files_written: int = 0
 
 
 class EvidenceResponse(BaseModel):
@@ -135,6 +139,23 @@ class EvidenceListResponse(BaseModel):
     offset: int
 
 
+class WorkspaceFileResponse(BaseModel):
+    path: str
+    size_bytes: int
+    sha256: str
+    updated_at: datetime
+
+
+class WorkspaceManifestResponse(BaseModel):
+    task_id: str
+    files: list[WorkspaceFileResponse]
+    total_bytes: int
+
+
+class WorkspaceFileContentResponse(WorkspaceFileResponse):
+    content: str
+
+
 def _tool_calls(task: AgentTaskRecord) -> list[ToolCallResponse]:
     return [
         ToolCallResponse(
@@ -191,6 +212,15 @@ def _warnings(items: list[ResearchWarningRecord]) -> list[ResearchWarningRespons
         ResearchWarningResponse(code=item.code, message=item.message, provider=item.provider)
         for item in items
     ]
+
+
+def _workspace_file(item: WorkspaceFile) -> WorkspaceFileResponse:
+    return WorkspaceFileResponse(
+        path=item.path,
+        size_bytes=item.size_bytes,
+        sha256=item.sha256,
+        updated_at=item.updated_at,
+    )
 
 
 def _run_response(task: AgentTaskRecord, request_id: str) -> AgentRunResponse:
@@ -297,4 +327,85 @@ async def get_agent_evidence(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+async def _coding_task(task_id: str, request: Request) -> AgentTaskRecord:
+    repository: TaskStore | None = request.app.state.agent_repository
+    if repository is None:
+        raise AppError(
+            status_code=503,
+            code="agent_store_not_available",
+            message="Agent task storage is unavailable",
+        )
+    task = await repository.get_task(task_id)
+    if task is None or task.mode != "coding":
+        raise AppError(
+            status_code=404,
+            code="coding_workspace_not_found",
+            message="Coding task workspace was not found",
+        )
+    return task
+
+
+def _workspace_error(exc: WorkspaceError) -> AppError:
+    status = 404 if exc.code in {"workspace_not_found", "workspace_file_not_found"} else 400
+    if exc.code == "workspace_file_not_text":
+        status = 415
+    return AppError(status_code=status, code=exc.code, message=exc.message)
+
+
+@router.get(
+    "/tasks/{task_id}/workspace",
+    response_model=WorkspaceManifestResponse,
+)
+async def get_agent_workspace(task_id: str, request: Request) -> WorkspaceManifestResponse:
+    await _coding_task(task_id, request)
+    manager: WorkspaceManager = request.app.state.workspace_manager
+    try:
+        files = manager.list_files(task_id)
+    except WorkspaceError as exc:
+        raise _workspace_error(exc) from exc
+    items = [_workspace_file(item) for item in files]
+    return WorkspaceManifestResponse(
+        task_id=task_id,
+        files=items,
+        total_bytes=sum(item.size_bytes for item in items),
+    )
+
+
+@router.get(
+    "/tasks/{task_id}/workspace/files/{file_path:path}",
+    response_model=WorkspaceFileContentResponse,
+)
+async def get_agent_workspace_file(
+    task_id: str, file_path: str, request: Request
+) -> WorkspaceFileContentResponse:
+    await _coding_task(task_id, request)
+    manager: WorkspaceManager = request.app.state.workspace_manager
+    normalized = file_path.replace("\\", "/")
+    area, separator, relative = normalized.partition("/")
+    if not separator or area not in manager.directories:
+        raise AppError(
+            status_code=400,
+            code="workspace_path_invalid",
+            message="Path must include a valid workspace area",
+        )
+    try:
+        content = manager.read_text(task_id, relative, area=area)
+        item = next(entry for entry in manager.list_files(task_id) if entry.path == normalized)
+    except WorkspaceError as exc:
+        raise _workspace_error(exc) from exc
+    except StopIteration as exc:
+        raise AppError(
+            status_code=404,
+            code="workspace_file_not_found",
+            message="Workspace file was not found",
+        ) from exc
+    return WorkspaceFileContentResponse(
+        content=content,
+        path=item.path,
+        size_bytes=item.size_bytes,
+        sha256=item.sha256,
+        updated_at=item.updated_at,
     )

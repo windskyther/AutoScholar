@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from autoscholar.coding.sandbox import SandboxHealth, SandboxRunRequest, SandboxRunResult
 from autoscholar.core.config import Settings
 from autoscholar.llm.models import (
     ConversationMessage,
@@ -41,6 +42,27 @@ class FakeLLMProvider:
         return None
 
 
+class FakeSandbox:
+    def __init__(self, *, healthy: bool = True, mnist: bool = True) -> None:
+        self.healthy = healthy
+        self.mnist = mnist
+
+    async def run(self, request: SandboxRunRequest) -> SandboxRunResult:
+        del request
+        raise NotImplementedError
+
+    async def health(self) -> SandboxHealth:
+        return SandboxHealth(
+            status="ok" if self.healthy else "error",
+            engine=self.healthy,
+            image=self.healthy,
+            mnist_dataset=self.mnist,
+        )
+
+    async def close(self) -> None:
+        return None
+
+
 def create_test_client(
     *,
     database_healthy: bool = True,
@@ -54,6 +76,7 @@ def create_test_client(
             redis=FakeDependency(healthy=redis_healthy),
             qdrant=FakeDependency(healthy=qdrant_healthy),
             llm_provider=FakeLLMProvider(),
+            sandbox_executor=FakeSandbox(),
         )
     )
 
@@ -98,6 +121,8 @@ def test_readiness_when_dependencies_are_healthy() -> None:
             "web_search": {"status": "not_configured"},
             "paper_search": {"status": "ok"},
             "rag": {"status": "ok"},
+            "sandbox": {"status": "ok"},
+            "mnist_dataset": {"status": "ok"},
         },
     }
 
@@ -119,6 +144,8 @@ def test_readiness_when_a_dependency_is_unavailable() -> None:
             "web_search": {"status": "not_configured"},
             "paper_search": {"status": "ok"},
             "rag": {"status": "ok"},
+            "sandbox": {"status": "ok"},
+            "mnist_dataset": {"status": "ok"},
         },
     }
 
@@ -129,6 +156,7 @@ def test_readiness_reports_unconfigured_llm_without_failing_infrastructure() -> 
         database=FakeDependency(),
         redis=FakeDependency(),
         qdrant=FakeDependency(),
+        sandbox_executor=FakeSandbox(),
     )
 
     with TestClient(app) as client:

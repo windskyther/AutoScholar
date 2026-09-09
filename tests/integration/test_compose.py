@@ -28,6 +28,11 @@ def test_compose_stack_is_ready() -> None:
     }
     assert readiness["capabilities"]["rag"] == {"status": "ok"}
     assert readiness["capabilities"]["paper_search"] == {"status": "ok"}
+    assert readiness["capabilities"]["sandbox"] == {"status": "ok"}
+    assert readiness["capabilities"]["mnist_dataset"]["status"] in {
+        "ok",
+        "not_configured",
+    }
     assert readiness["capabilities"]["web_search"]["status"] in {
         "ok",
         "not_configured",
@@ -44,3 +49,9 @@ def test_compose_stack_is_ready() -> None:
     )
     assert missing_evidence_response.status_code == 404
     assert missing_evidence_response.json()["error"]["code"] == "agent_task_not_found"
+
+    missing_workspace_response = httpx.get(
+        "http://localhost:8000/agent/tasks/integration-missing/workspace", timeout=5
+    )
+    assert missing_workspace_response.status_code == 404
+    assert missing_workspace_response.json()["error"]["code"] == "coding_workspace_not_found"

@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -13,6 +14,7 @@ from autoscholar.agent.records import (
     ToolTraceRecord,
 )
 from autoscholar.agent.runner import AgentRunError, AgentRunResult
+from autoscholar.coding.workspace import WorkspaceManager
 from autoscholar.core.config import Settings
 from autoscholar.main import create_app
 from autoscholar.rag.models import RetrievalMode
@@ -266,6 +268,19 @@ def test_post_agent_run_passes_explicit_mode_to_runner() -> None:
     assert backend.research_sources == ["web"]
 
 
+def test_post_agent_run_accepts_coding_mode() -> None:
+    backend = FakeAgentBackend(replace(completed_task(), mode="coding"))
+    with client_with_backend(backend) as client:
+        response = client.post(
+            "/agent/run",
+            json={"objective": "Create a tested Python module", "mode": "coding"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "coding"
+    assert backend.mode == "coding"
+
+
 def test_post_agent_run_rejects_duplicate_or_empty_research_sources() -> None:
     with client_with_backend(FakeAgentBackend(completed_task())) as client:
         duplicate = client.post(
@@ -360,3 +375,35 @@ def test_agent_response_explicitly_declares_utf8_and_preserves_chinese() -> None
     decoded = response.content.decode("utf-8")
     assert "求导数" in decoded
     assert "函数严格递增" in decoded
+
+
+def test_coding_workspace_manifest_and_utf8_file_api(tmp_path: Path) -> None:
+    task = replace(completed_task(), id="coding-task", mode="coding")
+    backend = FakeAgentBackend(task)
+    manager = WorkspaceManager(tmp_path)
+    manager.initialize(task.id)
+    created = manager.write_text(task.id, "模型.py", "print('训练完成')\n")
+    app = create_app(
+        Settings(llm_api_key=None, llm_model=None),
+        database=FakeDependency(),
+        redis=FakeDependency(),
+        llm_provider=SuccessfulProvider(),
+        agent_repository=backend,
+        agent_runner=backend,
+        workspace_manager=manager,
+    )
+
+    with TestClient(app) as client:
+        manifest = client.get(f"/agent/tasks/{task.id}/workspace")
+        content = client.get(
+            f"/agent/tasks/{task.id}/workspace/files/source/%E6%A8%A1%E5%9E%8B.py"
+        )
+        escaped = client.get(
+            f"/agent/tasks/{task.id}/workspace/files/source/%2E%2E/%2E%2E/.env"
+        )
+
+    assert manifest.status_code == 200
+    assert manifest.json()["files"][0]["sha256"] == created.sha256
+    assert content.status_code == 200
+    assert content.json()["content"] == "print('训练完成')\n"
+    assert escaped.status_code in {400, 404}

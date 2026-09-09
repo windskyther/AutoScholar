@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from autoscholar import __version__
+from autoscholar.coding.sandbox import SandboxExecutor
 from autoscholar.infrastructure.base import ManagedDependency
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -49,10 +50,12 @@ async def ready(request: Request) -> ReadyResponse | JSONResponse:
     database: ManagedDependency = request.app.state.database
     redis: ManagedDependency = request.app.state.redis
     qdrant: ManagedDependency = request.app.state.qdrant
-    database_status, redis_status, qdrant_status = await asyncio.gather(
+    sandbox: SandboxExecutor = request.app.state.sandbox_executor
+    database_status, redis_status, qdrant_status, sandbox_health = await asyncio.gather(
         _check_dependency(database),
         _check_dependency(redis),
         _check_dependency(qdrant),
+        sandbox.health(),
     )
     dependencies = {
         "postgres": database_status,
@@ -73,6 +76,10 @@ async def ready(request: Request) -> ReadyResponse | JSONResponse:
         "llm": DependencyStatus(status=llm_status),
         "rag": DependencyStatus(
             status="ok" if request.app.state.settings.rag_configured else "not_configured"
+        ),
+        "sandbox": DependencyStatus(status=sandbox_health.status),
+        "mnist_dataset": DependencyStatus(
+            status="ok" if sandbox_health.mnist_dataset else "not_configured"
         ),
         **research_capabilities,
     }

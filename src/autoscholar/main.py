@@ -12,6 +12,13 @@ from autoscholar.api.routes.chat import router as chat_router
 from autoscholar.api.routes.health import router as health_router
 from autoscholar.api.routes.projects import router as projects_router
 from autoscholar.api.routes.rag import router as rag_router
+from autoscholar.coding import (
+    CodingAgent,
+    CodingLimits,
+    SandboxClient,
+    SandboxExecutor,
+    WorkspaceManager,
+)
 from autoscholar.core.config import Settings, get_settings
 from autoscholar.core.errors import register_exception_handlers
 from autoscholar.core.logging import configure_logging
@@ -61,6 +68,9 @@ def create_app(
     reranker: Reranker | None = None,
     chunk_index: ChunkIndex | None = None,
     rag_query_service: RAGQueryServiceProtocol | None = None,
+    workspace_manager: WorkspaceManager | None = None,
+    sandbox_executor: SandboxExecutor | None = None,
+    coding_agent: CodingAgent | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings.log_level)
@@ -81,6 +91,16 @@ def create_app(
         resolved_knowledge_repository = KnowledgeRepository(resolved_database.session_factory)
     resolved_document_storage = document_storage or LocalDocumentStorage(
         resolved_settings.document_storage_path
+    )
+    resolved_workspace_manager = workspace_manager or WorkspaceManager(
+        resolved_settings.workspace_root,
+        max_files=resolved_settings.workspace_max_files,
+        max_file_bytes=resolved_settings.workspace_max_file_bytes,
+        max_source_bytes=resolved_settings.workspace_max_source_bytes,
+    )
+    resolved_sandbox_executor = sandbox_executor or SandboxClient(
+        resolved_settings.sandbox_manager_url,
+        timeout_seconds=resolved_settings.sandbox_timeout_seconds + 10,
     )
     resolved_embedding_provider = embedding_provider
     resolved_sparse_embedding_provider = sparse_embedding_provider
@@ -163,6 +183,18 @@ def create_app(
             reranker=resolved_reranker,
             candidate_limit=resolved_settings.rag_candidate_limit,
         )
+    resolved_coding_agent = coding_agent
+    if resolved_coding_agent is None and resolved_agent_repository is not None:
+        resolved_coding_agent = CodingAgent(
+            provider=resolved_llm_provider,
+            repository=resolved_agent_repository,
+            workspaces=resolved_workspace_manager,
+            sandbox=resolved_sandbox_executor,
+            limits=CodingLimits(
+                max_repairs=resolved_settings.sandbox_max_repairs,
+                timeout_seconds=resolved_settings.sandbox_timeout_seconds,
+            ),
+        )
     resolved_agent_runner = agent_runner
     if resolved_agent_runner is None and resolved_agent_repository is not None:
         resolved_agent_runner = AgentRunner(
@@ -171,6 +203,7 @@ def create_app(
             tools=[CalculatorTool(), RestrictedPythonTool()],
             research_services=resolved_research_services,
             knowledge_service=resolved_rag_query_service,
+            coding_service=resolved_coding_agent,
         )
 
     @asynccontextmanager
@@ -189,6 +222,8 @@ def create_app(
         application.state.reranker = resolved_reranker
         application.state.chunk_index = resolved_chunk_index
         application.state.rag_query_service = resolved_rag_query_service
+        application.state.workspace_manager = resolved_workspace_manager
+        application.state.sandbox_executor = resolved_sandbox_executor
         yield
         for service in resolved_research_services:
             await service.close()
@@ -199,6 +234,7 @@ def create_app(
             await resolved_sparse_embedding_provider.close()
         if resolved_reranker is not None:
             await resolved_reranker.close()
+        await resolved_sandbox_executor.close()
         await resolved_redis.close()
         await resolved_qdrant.close()
         await resolved_database.close()
@@ -225,6 +261,8 @@ def create_app(
     application.state.reranker = resolved_reranker
     application.state.chunk_index = resolved_chunk_index
     application.state.rag_query_service = resolved_rag_query_service
+    application.state.workspace_manager = resolved_workspace_manager
+    application.state.sandbox_executor = resolved_sandbox_executor
     application.middleware("http")(request_context_middleware)
     register_exception_handlers(application)
     application.include_router(health_router)

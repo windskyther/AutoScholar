@@ -22,6 +22,7 @@ from autoscholar.agent.records import (
     ToolTraceRecord,
 )
 from autoscholar.agent.tools import AgentTool
+from autoscholar.coding.agent import CodingResult
 from autoscholar.core.errors import AppError
 from autoscholar.llm import (
     AssistantToolCallMessage,
@@ -120,6 +121,10 @@ class ResearchSearch(Protocol):
     async def search(self, query: str, *, limit: int = 5) -> SearchResponse: ...
 
     async def close(self) -> None: ...
+
+
+class CodingService(Protocol):
+    async def run(self, *, task_id: str, objective: str, plan: list[str]) -> CodingResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +241,9 @@ class AgentState(TypedDict):
     document_ids: list[str] | None
     retrieval_mode: RetrievalMode
     research_sources: list[ResearchSource]
+    sandbox_runs: int
+    repair_attempts: int
+    files_written: int
 
 
 class AgentRunner:
@@ -249,6 +257,7 @@ class AgentRunner:
         knowledge_service: RAGQueryServiceProtocol | None = None,
         limits: AgentLimits | None = None,
         research_limits: ResearchLimits | None = None,
+        coding_service: CodingService | None = None,
     ) -> None:
         self._provider = provider
         self._repository = repository
@@ -260,6 +269,7 @@ class AgentRunner:
             service.source_type: service for service in (research_services or [])
         }
         self._knowledge_service = knowledge_service
+        self._coding_service = coding_service
         self._graph = self._build_graph()
 
     async def run(
@@ -304,6 +314,12 @@ class AgentRunner:
                 code="rag_not_available",
                 message="Knowledge-base querying is unavailable",
             )
+        if mode == "coding" and self._coding_service is None:
+            raise AppError(
+                status_code=503,
+                code="coding_not_available",
+                message="The isolated coding agent is unavailable",
+            )
         resolved_task_id = task_id or str(uuid4())
         await self._repository.create_task(
             task_id=resolved_task_id,
@@ -341,6 +357,9 @@ class AgentRunner:
             "document_ids": document_ids,
             "retrieval_mode": retrieval_mode,
             "research_sources": cast(list[ResearchSource], resolved_research_sources),
+            "sandbox_runs": 0,
+            "repair_attempts": 0,
+            "files_written": 0,
         }
         try:
             final = cast(AgentState, await self._graph.ainvoke(initial))
@@ -374,7 +393,11 @@ class AgentRunner:
                 else (
                     "research"
                     if mode == "research"
-                    else ("knowledge" if mode == "knowledge" else "compute")
+                    else (
+                        "knowledge"
+                        if mode == "knowledge"
+                        else ("coding" if mode == "coding" else "compute")
+                    )
                 )
             )
             await self._repository.update_task(
@@ -393,6 +416,7 @@ class AgentRunner:
                 task_id=resolved_task_id,
                 code=str(code),
                 message=str(public_message),
+                status_code=int(getattr(exc, "status_code", 502)),
             ) from exc
 
     def _build_graph(self) -> Any:
@@ -405,6 +429,7 @@ class AgentRunner:
         graph.add_node("evidence_extractor", self._evidence_extractor)
         graph.add_node("writer", self._writer)
         graph.add_node("knowledge", self._knowledge)
+        graph.add_node("coding", self._coding)
         graph.add_edge(START, "planner")
         graph.add_conditional_edges(
             "planner",
@@ -413,6 +438,7 @@ class AgentRunner:
                 "executor": "executor",
                 "query_planner": "query_planner",
                 "knowledge": "knowledge",
+                "coding": "coding",
             },
         )
         graph.add_conditional_edges(
@@ -430,12 +456,15 @@ class AgentRunner:
         graph.add_edge("evidence_extractor", "writer")
         graph.add_edge("writer", END)
         graph.add_edge("knowledge", END)
+        graph.add_edge("coding", END)
         return graph.compile()
 
     async def _planner(self, state: AgentState) -> dict[str, Any]:
         available_modes = ["research", "compute"]
         if state["project_id"] is not None and self._knowledge_service is not None:
             available_modes.append("knowledge")
+        if self._coding_service is not None:
+            available_modes.append("coding")
         submit_plan = ToolDefinition(
             name="submit_plan",
             description="Submit the execution mode and ordered plan.",
@@ -457,8 +486,9 @@ class AgentRunner:
         requested = state["requested_mode"]
         mode_instruction = (
             "Classify literature reviews, comparisons of published methods, current facts, and "
-            "requests for external sources as research. Classify deterministic calculations as "
-            "compute. Classify questions whose answer should come from the supplied project "
+            "requests for external sources as research. Classify requests to create, edit, test, "
+            "or repair software as coding. Classify deterministic calculations as compute. "
+            "Classify questions whose answer should come from the supplied project "
             "documents as knowledge when that mode is available."
             if requested == "auto"
             else f"The caller explicitly requires {requested} mode; return that exact mode."
@@ -519,6 +549,28 @@ class AgentRunner:
             mode=resolved_mode,
         )
         return {"plan": steps, "resolved_mode": resolved_mode, **updates}
+
+    async def _coding(self, state: AgentState) -> dict[str, Any]:
+        if self._coding_service is None:
+            raise AgentProtocolError(
+                code="coding_not_available",
+                message="The isolated coding agent is unavailable",
+            )
+        result = await self._coding_service.run(
+            task_id=state["task_id"], objective=state["objective"], plan=state["plan"]
+        )
+        return {
+            "answer": result.answer,
+            "model": result.model,
+            "traces": result.traces,
+            "model_calls": state["model_calls"] + result.model_calls,
+            "input_tokens": state["input_tokens"] + result.input_tokens,
+            "output_tokens": state["output_tokens"] + result.output_tokens,
+            "total_tokens": state["total_tokens"] + result.total_tokens,
+            "sandbox_runs": result.sandbox_runs,
+            "repair_attempts": result.repair_attempts,
+            "files_written": result.files_written,
+        }
 
     async def _knowledge(self, state: AgentState) -> dict[str, Any]:
         if self._knowledge_service is None or state["project_id"] is None:
@@ -1540,6 +1592,8 @@ class AgentRunner:
             return "query_planner"
         if state["resolved_mode"] == "knowledge":
             return "knowledge"
+        if state["resolved_mode"] == "coding":
+            return "coding"
         return "executor"
 
     @staticmethod
@@ -1570,13 +1624,20 @@ class AgentRunner:
 
     @staticmethod
     def _metrics(state: AgentState) -> dict[str, int]:
-        return {
+        metrics = {
             "iterations": state["iterations"],
             "model_calls": state["model_calls"],
             "input_tokens": state["input_tokens"],
             "output_tokens": state["output_tokens"],
             "total_tokens": state["total_tokens"],
         }
+        if state["resolved_mode"] == "coding":
+            metrics.update(
+                sandbox_runs=state["sandbox_runs"],
+                repair_attempts=state["repair_attempts"],
+                files_written=state["files_written"],
+            )
+        return metrics
 
     @staticmethod
     def _canonical_url(url: str) -> str:
