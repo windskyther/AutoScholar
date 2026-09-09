@@ -41,9 +41,17 @@ services:
       RAG_WORKER_POLL_SECONDS: ${RAG_WORKER_POLL_SECONDS:-2}
       RAG_JOB_LEASE_SECONDS: ${RAG_JOB_LEASE_SECONDS:-600}
       RAG_JOB_MAX_ATTEMPTS: ${RAG_JOB_MAX_ATTEMPTS:-3}
+      WORKSPACE_ROOT: /data/workspaces
+      WORKSPACE_MAX_FILES: ${WORKSPACE_MAX_FILES:-100}
+      WORKSPACE_MAX_FILE_BYTES: ${WORKSPACE_MAX_FILE_BYTES:-1048576}
+      WORKSPACE_MAX_SOURCE_BYTES: ${WORKSPACE_MAX_SOURCE_BYTES:-10485760}
+      SANDBOX_MANAGER_URL: http://sandbox-manager:8090
+      SANDBOX_TIMEOUT_SECONDS: ${SANDBOX_TIMEOUT_SECONDS:-300}
+      SANDBOX_MAX_REPAIRS: ${SANDBOX_MAX_REPAIRS:-3}
     volumes:
       - document_data:/data/documents
       - model_cache:/models
+      - workspace_data:/data/workspaces
     ports:
       - "8000:8000"
     depends_on:
@@ -55,6 +63,11 @@ services:
         condition: service_completed_successfully
       qdrant:
         condition: service_healthy
+      sandbox-manager:
+        condition: service_healthy
+    networks:
+      - default
+      - sandbox_control
     healthcheck:
       test:
         - CMD
@@ -115,6 +128,66 @@ services:
     restart: unless-stopped
     mem_limit: 3g
 
+  sandbox-image:
+    image: autoscholar-python-sandbox:phase4
+    build:
+      context: .
+      dockerfile: docker/sandbox/Dockerfile
+    command: ["python", "-c", "import torch, torchvision; print('sandbox image ready')"]
+    network_mode: none
+    restart: "no"
+
+  sandbox-manager:
+    build:
+      context: .
+    command:
+      - uvicorn
+      - autoscholar.sandbox.manager:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8090"
+    environment:
+      SANDBOX_IMAGE: autoscholar-python-sandbox:phase4
+      SANDBOX_DATASET_VOLUME: autoscholar_mnist_data
+      SANDBOX_DATASET_READY_FILE: /datasets/mnist/.autoscholar-ready
+      SANDBOX_MEMORY_BYTES: ${SANDBOX_MEMORY_BYTES:-4294967296}
+      SANDBOX_NANO_CPUS: ${SANDBOX_NANO_CPUS:-2000000000}
+      SANDBOX_PIDS_LIMIT: ${SANDBOX_PIDS_LIMIT:-256}
+      SANDBOX_MAX_OUTPUT_BYTES: ${SANDBOX_MAX_OUTPUT_BYTES:-65536}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - mnist_data:/datasets/mnist:ro
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+    networks:
+      - sandbox_control
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:8090/internal/health', timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  mnist-init:
+    profiles: ["datasets"]
+    image: autoscholar-python-sandbox:phase4
+    user: "0:0"
+    command: ["python", "/opt/autoscholar/prepare_mnist.py"]
+    environment:
+      MNIST_ROOT: /datasets/mnist
+    volumes:
+      - mnist_data:/datasets/mnist
+    restart: "no"
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -161,3 +234,10 @@ volumes:
   qdrant_data:
   document_data:
   model_cache:
+  workspace_data:
+  mnist_data:
+    name: autoscholar_mnist_data
+
+networks:
+  sandbox_control:
+    internal: true

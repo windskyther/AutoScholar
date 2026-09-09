@@ -16,6 +16,10 @@ def test_settings_use_safe_defaults() -> None:
     assert settings.qdrant_collection == "autoscholar_chunks_v1"
     assert settings.research_timeout_seconds == 20
     assert settings.research_cache_ttl_seconds == 86_400
+    assert settings.workspace_max_files == 100
+    assert settings.workspace_max_file_bytes == 1_048_576
+    assert settings.sandbox_timeout_seconds == 300
+    assert settings.sandbox_max_repairs == 3
 
 
 def test_llm_is_configured_only_with_key_and_model() -> None:

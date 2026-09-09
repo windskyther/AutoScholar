@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     rag_job_lease_seconds: int = Field(default=600, ge=30, le=7_200)
     rag_job_max_attempts: int = Field(default=3, ge=1, le=10)
 
+    workspace_root: Path = Path("data/workspaces")
+    workspace_max_files: int = Field(default=100, ge=1, le=1_000)
+    workspace_max_file_bytes: int = Field(default=1_048_576, ge=1, le=10_485_760)
+    workspace_max_source_bytes: int = Field(default=10_485_760, ge=1, le=104_857_600)
+    sandbox_manager_url: str = "http://sandbox-manager:8090"
+    sandbox_timeout_seconds: int = Field(default=300, ge=1, le=600)
+    sandbox_max_repairs: int = Field(default=3, ge=0, le=10)
+
     @property
     def llm_configured(self) -> bool:
         return bool(self.llm_api_key and self.llm_api_key.get_secret_value() and self.llm_model)
