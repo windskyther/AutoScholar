@@ -105,7 +105,19 @@ def test_container_config_has_required_isolation_controls() -> None:
     assert config["HostConfig"]["SecurityOpt"] == ["no-new-privileges"]
     assert config["HostConfig"]["Memory"] == 4 * 1024**3
     assert config["HostConfig"]["PidsLimit"] == 256
-    assert config["HostConfig"]["Mounts"][0]["ReadOnly"] is True
+    assert config["HostConfig"]["Mounts"][0] == {
+        "Type": "volume",
+        "Source": "autoscholar-test-workspace",
+        "Target": "/workspace",
+        "ReadOnly": False,
+    }
+    assert config["HostConfig"]["Mounts"][1]["ReadOnly"] is True
+
+    loader = executor._loader_config("temporary-workspace")
+    assert loader["NetworkDisabled"] is True
+    assert loader["HostConfig"]["ReadonlyRootfs"] is False
+    assert loader["HostConfig"]["PidsLimit"] == 32
+    assert loader["Cmd"] == ["python", "-c", "import time; time.sleep(30)"]
 
 
 def test_source_archive_contains_only_workspace_source(tmp_path: Path) -> None:
@@ -114,4 +126,5 @@ def test_source_archive_contains_only_workspace_source(tmp_path: Path) -> None:
         {"pkg/model.py": "class Model:\n    pass\n"}
     )
     assert b".env" not in archive
+    assert b".autoscholar-source-ready" not in archive
     assert b"source/pkg/model.py" in archive

@@ -160,25 +160,46 @@ class DockerSandboxExecutor:
     async def run(self, request: SandboxRunRequest) -> SandboxRunResult:
         started = asyncio.get_running_loop().time()
         container_id: str | None = None
+        loader_id: str | None = None
+        volume_name = f"autoscholar-workspace-{uuid4().hex}"
         timed_out = False
         try:
-            response = await self._client.post(
-                "/containers/create",
-                params={"name": f"autoscholar-{request.task_id[:24]}-{uuid4().hex[:8]}"},
-                json=self._container_config(request),
+            volume_response = await self._client.post(
+                "/volumes/create",
+                json={"Name": volume_name, "Labels": {"autoscholar.temporary": "true"}},
             )
-            self._raise_engine_error(response)
-            container_id = str(response.json()["Id"])
-            start_response = await self._client.post(f"/containers/{container_id}/start")
-            self._raise_engine_error(start_response)
+            self._raise_engine_error(volume_response)
+            loader_response = await self._client.post(
+                "/containers/create",
+                params={"name": f"autoscholar-loader-{uuid4().hex[:12]}"},
+                json=self._loader_config(volume_name),
+            )
+            self._raise_engine_error(loader_response)
+            loader_id = str(loader_response.json()["Id"])
+            loader_start = await self._client.post(f"/containers/{loader_id}/start")
+            self._raise_engine_error(loader_start)
             archive = self._source_archive(request.files)
             archive_response = await self._client.put(
-                f"/containers/{container_id}/archive",
+                f"/containers/{loader_id}/archive",
                 params={"path": "/workspace"},
                 content=archive,
                 headers={"Content-Type": "application/x-tar"},
             )
             self._raise_engine_error(archive_response)
+            loader_delete = await self._client.delete(
+                f"/containers/{loader_id}", params={"force": "true", "v": "false"}
+            )
+            self._raise_engine_error(loader_delete)
+            loader_id = None
+            response = await self._client.post(
+                "/containers/create",
+                params={"name": f"autoscholar-{request.task_id[:24]}-{uuid4().hex[:8]}"},
+                json=self._container_config(request, volume_name),
+            )
+            self._raise_engine_error(response)
+            container_id = str(response.json()["Id"])
+            start_response = await self._client.post(f"/containers/{container_id}/start")
+            self._raise_engine_error(start_response)
             try:
                 wait_response = await asyncio.wait_for(
                     self._client.post(
@@ -211,11 +232,21 @@ class DockerSandboxExecutor:
                 "sandbox_execution_failed", "The Docker sandbox could not execute the task"
             ) from exc
         finally:
+            if loader_id is not None:
+                with suppress(httpx.HTTPError):
+                    await self._client.delete(
+                        f"/containers/{loader_id}",
+                        params={"force": "true", "v": "false"},
+                    )
             if container_id is not None:
                 with suppress(httpx.HTTPError):
                     await self._client.delete(
                         f"/containers/{container_id}", params={"force": "true", "v": "true"}
                     )
+            with suppress(httpx.HTTPError):
+                await self._client.delete(
+                    f"/volumes/{volume_name}", params={"force": "true"}
+                )
 
     async def health(self) -> SandboxHealth:
         engine = image = False
@@ -238,10 +269,12 @@ class DockerSandboxExecutor:
     async def close(self) -> None:
         await self._client.aclose()
 
-    def _container_config(self, request: SandboxRunRequest) -> dict[str, Any]:
+    def _container_config(
+        self, request: SandboxRunRequest, workspace_volume: str = "autoscholar-test-workspace"
+    ) -> dict[str, Any]:
         return {
             "Image": self._image,
-            "Cmd": ["python", "/opt/autoscholar/launch.py", *self._command(request)],
+            "Cmd": self._command(request),
             "WorkingDir": "/workspace/source",
             "User": "65532:65532",
             "Env": [
@@ -260,14 +293,45 @@ class DockerSandboxExecutor:
                 "PidsLimit": self._limits.pids_limit,
                 "Tmpfs": {
                     "/tmp": "rw,noexec,nosuid,size=67108864,mode=1777",
-                    "/workspace": "rw,nosuid,size=16777216,mode=1777",
                 },
                 "Mounts": [
+                    {
+                        "Type": "volume",
+                        "Source": workspace_volume,
+                        "Target": "/workspace",
+                        "ReadOnly": False,
+                    },
                     {
                         "Type": "volume",
                         "Source": self._dataset_volume,
                         "Target": "/datasets/mnist",
                         "ReadOnly": True,
+                    }
+                ],
+            },
+        }
+
+    def _loader_config(self, workspace_volume: str) -> dict[str, Any]:
+        return {
+            "Image": self._image,
+            "Cmd": ["python", "-c", "import time; time.sleep(30)"],
+            "WorkingDir": "/",
+            "User": "65532:65532",
+            "Env": ["HOME=/tmp", "PYTHONIOENCODING=utf-8"],
+            "NetworkDisabled": True,
+            "HostConfig": {
+                "ReadonlyRootfs": False,
+                "CapDrop": ["ALL"],
+                "SecurityOpt": ["no-new-privileges"],
+                "Memory": 268_435_456,
+                "NanoCpus": 500_000_000,
+                "PidsLimit": 32,
+                "Mounts": [
+                    {
+                        "Type": "volume",
+                        "Source": workspace_volume,
+                        "Target": "/workspace",
+                        "ReadOnly": False,
                     }
                 ],
             },
@@ -313,12 +377,6 @@ class DockerSandboxExecutor:
                 info.mode = 0o644
                 info.uid = info.gid = 65532
                 archive.addfile(info, io.BytesIO(data))
-            marker = b"ready\n"
-            info = tarfile.TarInfo(".autoscholar-source-ready")
-            info.size = len(marker)
-            info.mode = 0o644
-            info.uid = info.gid = 65532
-            archive.addfile(info, io.BytesIO(marker))
         return buffer.getvalue()
 
     async def _logs(self, container_id: str) -> tuple[str, str, bool]:

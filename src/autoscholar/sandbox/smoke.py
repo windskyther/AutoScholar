@@ -18,6 +18,7 @@ async def main() -> None:
                         "import os\n"
                         "import socket\n"
                         "import torch\n"
+                        "from torchvision.datasets import MNIST\n"
                         "assert not any('API_KEY' in key or 'TOKEN' in key for key in os.environ)\n"
                         "try:\n"
                         "    open('/autoscholar-write-test', 'w').close()\n"
@@ -31,7 +32,13 @@ async def main() -> None:
                         "    print('network-blocked')\n"
                         "else:\n"
                         "    raise AssertionError('network is available')\n"
+                        "dataset = MNIST(\n"
+                        "    root=os.environ['MNIST_ROOT'], train=True, download=False\n"
+                        ")\n"
+                        "assert len(dataset) == 60000\n"
+                        "assert tuple(dataset[0][0].size) == (28, 28)\n"
                         "print('torch', torch.__version__)\n"
+                        "print('mnist', len(dataset))\n"
                     )
                 },
                 timeout_seconds=15,

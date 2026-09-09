@@ -11,7 +11,6 @@ RUN python -m pip install --no-cache-dir \
 
 COPY docker/sandbox/static_check.py /opt/autoscholar/static_check.py
 COPY docker/sandbox/prepare_mnist.py /opt/autoscholar/prepare_mnist.py
-COPY docker/sandbox/launch.py /opt/autoscholar/launch.py
 
 RUN useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin sandbox \
     && mkdir -p /workspace/source /datasets/mnist \
