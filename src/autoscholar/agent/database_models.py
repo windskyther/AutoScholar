@@ -3,6 +3,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     DateTime,
     Float,
     ForeignKey,
@@ -54,6 +55,11 @@ class AgentTaskRow(Base):
         back_populates="task",
         cascade="all, delete-orphan",
         order_by=lambda: (func.length(EvidenceRow.citation_key), EvidenceRow.citation_key),
+    )
+    experiments: Mapped[list["ExperimentRow"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+        order_by="ExperimentRow.created_at",
     )
 
 
@@ -109,3 +115,57 @@ class EvidenceRow(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     task: Mapped[AgentTaskRow] = relationship(back_populates="evidence")
+
+
+class ExperimentRow(Base):
+    __tablename__ = "experiments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_tasks.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    specification: Mapped[dict[str, Any]] = mapped_column(JSON)
+    source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    dataset_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    dataset_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    task: Mapped[AgentTaskRow] = relationship(back_populates="experiments")
+    artifacts: Mapped[list["ArtifactRow"]] = relationship(
+        back_populates="experiment",
+        cascade="all, delete-orphan",
+        order_by="ArtifactRow.created_at",
+    )
+
+
+class ArtifactRow(Base):
+    __tablename__ = "artifacts"
+    __table_args__ = (UniqueConstraint("experiment_id", "path"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_tasks.id", ondelete="CASCADE"), index=True
+    )
+    experiment_id: Mapped[str] = mapped_column(
+        ForeignKey("experiments.id", ondelete="CASCADE"), index=True
+    )
+    type: Mapped[str] = mapped_column(String(32))
+    path: Mapped[str] = mapped_column(String(500))
+    media_type: Mapped[str] = mapped_column(String(100))
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    experiment: Mapped[ExperimentRow] = relationship(back_populates="artifacts")

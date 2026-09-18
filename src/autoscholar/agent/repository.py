@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import uuid4
 
@@ -6,11 +7,21 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from autoscholar.agent.database_models import AgentTaskRow, EvidenceRow, ToolCallRow
+from autoscholar.agent.database_models import (
+    AgentTaskRow,
+    ArtifactRow,
+    EvidenceRow,
+    ExperimentRow,
+    ToolCallRow,
+)
 from autoscholar.agent.records import (
     AgentTaskRecord,
+    ArtifactRecord,
+    ArtifactType,
     CitationRecord,
     EvidenceRecord,
+    ExperimentRecord,
+    ExperimentStatus,
     ResearchSource,
     ResearchWarningRecord,
     ResolvedAgentMode,
@@ -198,6 +209,119 @@ class AgentTaskRepository:
             )
             return [self._evidence_record(row) for row in result.scalars().all()], total
 
+    async def create_experiment(
+        self,
+        *,
+        task_id: str,
+        name: str,
+        specification: dict[str, Any],
+        dataset_id: str | None = None,
+        dataset_sha256: str | None = None,
+    ) -> ExperimentRecord:
+        async with self._sessions() as session:
+            row = ExperimentRow(
+                id=str(uuid4()),
+                task_id=task_id,
+                name=name,
+                status="pending",
+                specification=specification,
+                metrics={},
+                dataset_id=dataset_id,
+                dataset_sha256=dataset_sha256,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._experiment_record(row)
+
+    async def update_experiment(
+        self,
+        experiment_id: str,
+        *,
+        status: ExperimentStatus,
+        metrics: dict[str, Any] | None = None,
+        source_sha256: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> ExperimentRecord:
+        async with self._sessions() as session:
+            row = await session.get(ExperimentRow, experiment_id)
+            if row is None:
+                raise LookupError(f"Unknown experiment: {experiment_id}")
+            now = datetime.now(UTC)
+            row.status = status
+            if metrics is not None:
+                row.metrics = metrics
+            if source_sha256 is not None:
+                row.source_sha256 = source_sha256
+            row.error_code = error_code
+            row.error_message = error_message
+            if status == "running" and row.started_at is None:
+                row.started_at = now
+            if status in {"succeeded", "failed"}:
+                row.finished_at = now
+            await session.commit()
+            await session.refresh(row)
+            return self._experiment_record(row)
+
+    async def get_experiment(self, experiment_id: str) -> ExperimentRecord | None:
+        async with self._sessions() as session:
+            row = await session.get(ExperimentRow, experiment_id)
+            return self._experiment_record(row) if row is not None else None
+
+    async def list_experiments(self, task_id: str) -> list[ExperimentRecord]:
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(ExperimentRow)
+                .where(ExperimentRow.task_id == task_id)
+                .order_by(ExperimentRow.created_at, ExperimentRow.id)
+            )
+            return [self._experiment_record(row) for row in result.scalars().all()]
+
+    async def add_artifact(
+        self,
+        *,
+        task_id: str,
+        experiment_id: str,
+        artifact_type: ArtifactType,
+        path: str,
+        media_type: str,
+        size_bytes: int,
+        sha256: str,
+    ) -> ArtifactRecord:
+        async with self._sessions() as session:
+            row = ArtifactRow(
+                id=str(uuid4()),
+                task_id=task_id,
+                experiment_id=experiment_id,
+                type=artifact_type,
+                path=path,
+                media_type=media_type,
+                size_bytes=size_bytes,
+                sha256=sha256,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._artifact_record(row)
+
+    async def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
+        async with self._sessions() as session:
+            row = await session.get(ArtifactRow, artifact_id)
+            return self._artifact_record(row) if row is not None else None
+
+    async def list_artifacts(
+        self, task_id: str, *, experiment_id: str | None = None
+    ) -> list[ArtifactRecord]:
+        async with self._sessions() as session:
+            statement = select(ArtifactRow).where(ArtifactRow.task_id == task_id)
+            if experiment_id is not None:
+                statement = statement.where(ArtifactRow.experiment_id == experiment_id)
+            result = await session.execute(
+                statement.order_by(ArtifactRow.created_at, ArtifactRow.id)
+            )
+            return [self._artifact_record(row) for row in result.scalars().all()]
+
     @classmethod
     def _task_record(
         cls,
@@ -276,5 +400,39 @@ class AgentTaskRepository:
             status=cast(ToolCallStatus, row.status),
             error_code=row.error_code,
             duration_ms=row.duration_ms,
+            created_at=row.created_at,
+        )
+
+    @staticmethod
+    def _experiment_record(row: ExperimentRow) -> ExperimentRecord:
+        return ExperimentRecord(
+            id=row.id,
+            task_id=row.task_id,
+            name=row.name,
+            status=cast(ExperimentStatus, row.status),
+            specification=dict(row.specification),
+            source_sha256=row.source_sha256,
+            dataset_id=row.dataset_id,
+            dataset_sha256=row.dataset_sha256,
+            metrics=dict(row.metrics),
+            error_code=row.error_code,
+            error_message=row.error_message,
+            started_at=row.started_at,
+            finished_at=row.finished_at,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    @staticmethod
+    def _artifact_record(row: ArtifactRow) -> ArtifactRecord:
+        return ArtifactRecord(
+            id=row.id,
+            task_id=row.task_id,
+            experiment_id=row.experiment_id,
+            type=cast(ArtifactType, row.type),
+            path=row.path,
+            media_type=row.media_type,
+            size_bytes=row.size_bytes,
+            sha256=row.sha256,
             created_at=row.created_at,
         )
