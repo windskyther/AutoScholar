@@ -42,12 +42,14 @@ class AgentTaskRepository:
         objective: str,
         project_id: str | None = None,
         research_sources: list[ResearchSource] | None = None,
+        mode: ResolvedAgentMode = "compute",
     ) -> AgentTaskRecord:
         async with self._sessions() as session:
             row = AgentTaskRow(
                 id=task_id,
                 project_id=project_id,
                 status="running",
+                mode=mode,
                 objective=objective,
                 plan=[],
                 metrics={},

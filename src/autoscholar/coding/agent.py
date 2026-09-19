@@ -113,7 +113,14 @@ class CodingAgent:
         self._tool_definitions: dict[str, list[ToolDefinition]] = {}
         self._graph = self._build_graph()
 
-    async def run(self, *, task_id: str, objective: str, plan: list[str]) -> CodingResult:
+    async def run(
+        self,
+        *,
+        task_id: str,
+        objective: str,
+        plan: list[str],
+        prior_traces: list[ToolTraceRecord] | None = None,
+    ) -> CodingResult:
         health = await self._sandbox.health()
         if health.status != "ok":
             raise CodingRunError(
@@ -142,7 +149,7 @@ class CodingAgent:
             "plan": plan,
             "messages": [ChatMessage(role="user", content=objective)],
             "pending_tool_calls": [],
-            "traces": [],
+            "traces": list(prior_traces or []),
             "tool_calls": 0,
             "prompt_retries": 0,
             "model": "",
