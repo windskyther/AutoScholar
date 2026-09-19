@@ -290,6 +290,9 @@ class AgentTaskRepository:
         sha256: str,
     ) -> ArtifactRecord:
         async with self._sessions() as session:
+            experiment = await session.get(ExperimentRow, experiment_id)
+            if experiment is None or experiment.task_id != task_id:
+                raise LookupError("Experiment does not belong to this task")
             row = ArtifactRow(
                 id=str(uuid4()),
                 task_id=task_id,

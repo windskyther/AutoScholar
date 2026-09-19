@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import hashlib
 from uuid import uuid4
 
 from autoscholar.coding.sandbox import SandboxClient, SandboxRunRequest
@@ -58,6 +60,29 @@ async def main() -> None:
         if pytest_result.status != "succeeded":
             raise RuntimeError(f"pytest smoke test failed: {pytest_result.stderr}")
 
+        artifact_result = await client.run(
+            SandboxRunRequest(
+                task_id=task_id,
+                action="run_python",
+                path="produce.py",
+                files={
+                    "produce.py": (
+                        "from pathlib import Path\n"
+                        "Path('outputs').mkdir()\n"
+                        "Path('outputs/metrics.json').write_text('42', encoding='utf-8')\n"
+                    )
+                },
+                collect_artifacts=["outputs/metrics.json"],
+                timeout_seconds=15,
+            )
+        )
+        if artifact_result.status != "succeeded" or len(artifact_result.artifacts) != 1:
+            raise RuntimeError("sandbox artifact collection failed")
+        collected = artifact_result.artifacts[0]
+        content = base64.b64decode(collected.data_base64, validate=True)
+        if hashlib.sha256(content).hexdigest() != collected.sha256:
+            raise RuntimeError("sandbox artifact digest mismatch")
+
         timeout = await client.run(
             SandboxRunRequest(
                 task_id=task_id,
@@ -69,9 +94,10 @@ async def main() -> None:
         )
         if timeout.status != "timed_out":
             raise RuntimeError("sandbox timeout was not enforced")
-        print("Phase 4 sandbox smoke test passed")
+        print("Sandbox isolation and artifact smoke test passed")
         print(isolation.stdout.strip())
         print(pytest_result.stdout.strip())
+        print("artifact-collected")
         print("timeout-enforced")
     finally:
         await client.close()

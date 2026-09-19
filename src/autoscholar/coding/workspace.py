@@ -35,11 +35,17 @@ class WorkspaceManager:
         max_files: int = 100,
         max_file_bytes: int = 1_048_576,
         max_source_bytes: int = 10_485_760,
+        max_artifact_files: int = 100,
+        max_artifact_file_bytes: int = 16_777_216,
+        max_artifact_bytes: int = 67_108_864,
     ) -> None:
         self.root = root
         self.max_files = max_files
         self.max_file_bytes = max_file_bytes
         self.max_source_bytes = max_source_bytes
+        self.max_artifact_files = max_artifact_files
+        self.max_artifact_file_bytes = max_artifact_file_bytes
+        self.max_artifact_bytes = max_artifact_bytes
 
     def initialize(self, task_id: str) -> Path:
         task_root = self._task_root(task_id)
@@ -73,7 +79,8 @@ class WorkspaceManager:
 
     def read_text(self, task_id: str, relative_path: str, *, area: str = "source") -> str:
         path = self._resolve_file(task_id, relative_path, area=area, must_exist=True)
-        if path.stat().st_size > self.max_file_bytes:
+        size_limit = self.max_file_bytes if area == "source" else self.max_artifact_file_bytes
+        if path.stat().st_size > size_limit:
             raise WorkspaceError("workspace_file_too_large", "The requested file is too large")
         try:
             return path.read_text(encoding="utf-8")
@@ -94,24 +101,52 @@ class WorkspaceManager:
         if not isinstance(content, str):
             raise WorkspaceError("workspace_content_invalid", "File content must be text")
         encoded = content.encode("utf-8")
-        if len(encoded) > self.max_file_bytes:
+        size_limit = self.max_file_bytes if area == "source" else self.max_artifact_file_bytes
+        if len(encoded) > size_limit:
             raise WorkspaceError("workspace_file_too_large", "File exceeds the size limit")
         path = self._resolve_file(task_id, relative_path, area=area)
         if path.exists() and not overwrite:
             raise WorkspaceError("workspace_file_exists", "File already exists")
-        self._check_source_quota(task_id, path, len(encoded), area=area)
+        self._check_quota(task_id, path, len(encoded), area=area)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_no_symlinks(self._task_root(task_id), path)
-        descriptor, temporary_name = tempfile.mkstemp(prefix=".autoscholar-", dir=path.parent)
-        temporary = Path(temporary_name)
-        try:
-            with os.fdopen(descriptor, "wb") as handle:
-                handle.write(encoded)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        self._write_atomic(path, encoded)
+        return self._file_record(self._task_root(task_id), path)
+
+    def read_bytes(self, task_id: str, relative_path: str, *, area: str) -> bytes:
+        if area == "source":
+            raise WorkspaceError(
+                "workspace_path_invalid", "Binary access is not allowed in the source area"
+            )
+        path = self._resolve_file(task_id, relative_path, area=area, must_exist=True)
+        if path.stat().st_size > self.max_artifact_file_bytes:
+            raise WorkspaceError("workspace_file_too_large", "The requested file is too large")
+        return path.read_bytes()
+
+    def write_bytes(
+        self,
+        task_id: str,
+        relative_path: str,
+        content: bytes,
+        *,
+        area: str,
+        overwrite: bool = False,
+    ) -> WorkspaceFile:
+        if area == "source":
+            raise WorkspaceError(
+                "workspace_path_invalid", "Binary artifacts cannot be written to source"
+            )
+        if not isinstance(content, bytes):
+            raise WorkspaceError("workspace_content_invalid", "Artifact content must be bytes")
+        if len(content) > self.max_artifact_file_bytes:
+            raise WorkspaceError("workspace_file_too_large", "Artifact exceeds the size limit")
+        path = self._resolve_file(task_id, relative_path, area=area)
+        if path.exists() and not overwrite:
+            raise WorkspaceError("workspace_file_exists", "File already exists")
+        self._check_quota(task_id, path, len(content), area=area)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_no_symlinks(self._task_root(task_id), path)
+        self._write_atomic(path, content)
         return self._file_record(self._task_root(task_id), path)
 
     def edit_text(
@@ -212,16 +247,33 @@ class WorkspaceManager:
             raise WorkspaceError("workspace_path_invalid", "Path does not identify a file")
         return candidate
 
-    def _check_source_quota(self, task_id: str, target: Path, new_size: int, *, area: str) -> None:
-        if area != "source":
-            return
-        files = self.list_source_files(task_id)
+    def _check_quota(self, task_id: str, target: Path, new_size: int, *, area: str) -> None:
+        files = (
+            self.list_source_files(task_id)
+            if area == "source"
+            else [item for item in self.list_files(task_id) if not item.path.startswith("source/")]
+        )
         existing_size = target.stat().st_size if target.is_file() else 0
-        if not target.exists() and len(files) >= self.max_files:
+        file_limit = self.max_files if area == "source" else self.max_artifact_files
+        byte_limit = self.max_source_bytes if area == "source" else self.max_artifact_bytes
+        if not target.exists() and len(files) >= file_limit:
             raise WorkspaceError("workspace_file_limit", "Workspace file-count limit reached")
         total = sum(item.size_bytes for item in files) - existing_size + new_size
-        if total > self.max_source_bytes:
-            raise WorkspaceError("workspace_size_limit", "Workspace source-size limit reached")
+        if total > byte_limit:
+            raise WorkspaceError("workspace_size_limit", "Workspace size limit reached")
+
+    @staticmethod
+    def _write_atomic(path: Path, content: bytes) -> None:
+        descriptor, temporary_name = tempfile.mkstemp(prefix=".autoscholar-", dir=path.parent)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     @staticmethod
     def _ensure_no_symlinks(task_root: Path, target: Path) -> None:

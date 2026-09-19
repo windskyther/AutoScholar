@@ -66,6 +66,30 @@ def test_workspace_enforces_file_and_total_quotas(tmp_path: Path) -> None:
     assert too_many.value.code == "workspace_file_limit"
 
 
+def test_workspace_manages_binary_artifacts_with_separate_quotas(tmp_path: Path) -> None:
+    manager = WorkspaceManager(
+        tmp_path,
+        max_artifact_files=1,
+        max_artifact_file_bytes=8,
+        max_artifact_bytes=8,
+    )
+    manager.initialize("task-1")
+    artifact = manager.write_bytes(
+        "task-1", "chart.png", b"12345678", area="outputs"
+    )
+
+    assert artifact.path == "outputs/chart.png"
+    assert manager.read_bytes("task-1", "chart.png", area="outputs") == b"12345678"
+
+    with pytest.raises(WorkspaceError) as too_many:
+        manager.write_bytes("task-1", "other.png", b"1", area="outputs")
+    assert too_many.value.code == "workspace_file_limit"
+
+    with pytest.raises(WorkspaceError) as source_binary:
+        manager.write_bytes("task-1", "bad.py", b"print(1)", area="source")
+    assert source_binary.value.code == "workspace_path_invalid"
+
+
 def test_workspace_edit_requires_an_exact_single_match(tmp_path: Path) -> None:
     manager = WorkspaceManager(tmp_path)
     manager.initialize("task-1")

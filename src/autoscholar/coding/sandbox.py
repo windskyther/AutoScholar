@@ -1,5 +1,8 @@
 import asyncio
+import base64
+import hashlib
 import io
+import json
 import struct
 import tarfile
 from contextlib import suppress
@@ -27,6 +30,7 @@ class SandboxRunRequest(BaseModel):
     path: str | None = Field(default=None, max_length=500)
     args: list[str] = Field(default_factory=list, max_length=30)
     files: dict[str, str] = Field(max_length=100)
+    collect_artifacts: list[str] = Field(default_factory=list, max_length=20)
     timeout_seconds: int = Field(default=300, ge=1, le=600)
 
     @field_validator("args")
@@ -50,6 +54,15 @@ class SandboxRunRequest(BaseModel):
             raise ValueError("sandbox source snapshot exceeds 10 MiB")
         return files
 
+    @field_validator("collect_artifacts")
+    @classmethod
+    def validate_artifacts(cls, paths: list[str]) -> list[str]:
+        if len(paths) != len(set(paths)):
+            raise ValueError("artifact paths must not contain duplicates")
+        for path in paths:
+            cls._validate_relative_path(path)
+        return paths
+
     @model_validator(mode="after")
     def validate_action(self) -> "SandboxRunRequest":
         if self.action in {"run_python", "run_shell"} and self.path is None:
@@ -60,6 +73,8 @@ class SandboxRunRequest(BaseModel):
                     raise ValueError("shell executable is not allowed")
             else:
                 self._validate_relative_path(self.path)
+        if self.collect_artifacts and self.action != "run_python":
+            raise ValueError("artifacts can only be collected from Python experiment runs")
         return self
 
     @staticmethod
@@ -76,6 +91,13 @@ class SandboxRunRequest(BaseModel):
             raise ValueError("sandbox path must be a safe relative path")
 
 
+class SandboxArtifact(BaseModel):
+    path: str
+    size_bytes: int
+    sha256: str
+    data_base64: str
+
+
 class SandboxRunResult(BaseModel):
     status: Literal["succeeded", "failed", "timed_out"]
     exit_code: int | None
@@ -83,6 +105,7 @@ class SandboxRunResult(BaseModel):
     stderr: str
     duration_ms: float
     truncated: bool = False
+    artifacts: list[SandboxArtifact] = Field(default_factory=list)
 
 
 class SandboxHealth(BaseModel):
@@ -90,6 +113,8 @@ class SandboxHealth(BaseModel):
     engine: bool
     image: bool
     mnist_dataset: bool
+    dataset_id: str | None = None
+    dataset_sha256: str | None = None
 
 
 class SandboxExecutor(Protocol):
@@ -134,6 +159,8 @@ class DockerLimits:
     nano_cpus: int = 2_000_000_000
     pids_limit: int = 256
     max_output_bytes: int = 65_536
+    max_artifact_file_bytes: int = 16_777_216
+    max_artifact_bytes: int = 67_108_864
 
 
 class DockerSandboxExecutor:
@@ -219,6 +246,15 @@ class DockerSandboxExecutor:
             status: Literal["succeeded", "failed", "timed_out"] = (
                 "timed_out" if timed_out else ("succeeded" if exit_code == 0 else "failed")
             )
+            artifacts: list[SandboxArtifact] = []
+            if status == "succeeded" and request.collect_artifacts:
+                artifacts, missing = await self._collect_artifacts(
+                    container_id, request.collect_artifacts
+                )
+                if missing:
+                    status = "failed"
+                    missing_text = ", ".join(missing)
+                    stderr = f"{stderr}\nMissing required artifacts: {missing_text}".strip()
             return SandboxRunResult(
                 status=status,
                 exit_code=exit_code,
@@ -226,6 +262,7 @@ class DockerSandboxExecutor:
                 stderr=stderr,
                 duration_ms=round((asyncio.get_running_loop().time() - started) * 1_000, 3),
                 truncated=truncated,
+                artifacts=artifacts,
             )
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             raise SandboxError(
@@ -258,12 +295,33 @@ class DockerSandboxExecutor:
         except httpx.HTTPError:
             pass
         dataset = PurePosixPath(self._dataset_ready_file)
+        dataset_ready = (
+            dataset.as_posix().startswith("/datasets/mnist/")
+            and Path(self._dataset_ready_file).is_file()
+        )
+        dataset_id: str | None = None
+        dataset_sha256: str | None = None
+        if dataset_ready:
+            try:
+                manifest = json.loads(Path(self._dataset_ready_file).read_text(encoding="utf-8"))
+                candidate_id = manifest.get("dataset_id")
+                candidate_sha = manifest.get("dataset_sha256")
+                if (
+                    candidate_id == "mnist"
+                    and isinstance(candidate_sha, str)
+                    and len(candidate_sha) == 64
+                ):
+                    dataset_id = candidate_id
+                    dataset_sha256 = candidate_sha
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+                pass
         return SandboxHealth(
             status="ok" if engine and image else "error",
             engine=engine,
             image=image,
-            mnist_dataset=dataset.as_posix().startswith("/datasets/mnist/")
-            and Path(self._dataset_ready_file).is_file(),
+            mnist_dataset=dataset_ready,
+            dataset_id=dataset_id,
+            dataset_sha256=dataset_sha256,
         )
 
     async def close(self) -> None:
@@ -393,6 +451,90 @@ class DockerSandboxExecutor:
             stderr[:maximum].decode("utf-8", errors="replace"),
             truncated,
         )
+
+    async def _collect_artifacts(
+        self, container_id: str, paths: list[str]
+    ) -> tuple[list[SandboxArtifact], list[str]]:
+        artifacts: list[SandboxArtifact] = []
+        missing: list[str] = []
+        total = 0
+        for path in paths:
+            async with self._client.stream(
+                "GET",
+                f"/containers/{container_id}/archive",
+                params={"path": f"/workspace/source/{path}"},
+                timeout=30,
+            ) as response:
+                if response.status_code == 404:
+                    missing.append(path)
+                    continue
+                if response.status_code >= 400:
+                    raise SandboxError(
+                        "sandbox_engine_error", "Docker could not return an artifact"
+                    )
+                archive_buffer = bytearray()
+                archive_limit = self._limits.max_artifact_file_bytes + 1_048_576
+                async for chunk in response.aiter_bytes():
+                    archive_buffer.extend(chunk)
+                    if len(archive_buffer) > archive_limit:
+                        raise SandboxError(
+                            "sandbox_artifact_too_large",
+                            f"Artifact archive exceeds size limit: {path}",
+                        )
+            data = self._read_archive_file(
+                bytes(archive_buffer), path, self._limits.max_artifact_file_bytes
+            )
+            if len(data) > self._limits.max_artifact_file_bytes:
+                raise SandboxError(
+                    "sandbox_artifact_too_large", f"Artifact exceeds size limit: {path}"
+                )
+            total += len(data)
+            if total > self._limits.max_artifact_bytes:
+                raise SandboxError(
+                    "sandbox_artifacts_too_large", "Collected artifacts exceed total size limit"
+                )
+            artifacts.append(
+                SandboxArtifact(
+                    path=path,
+                    size_bytes=len(data),
+                    sha256=hashlib.sha256(data).hexdigest(),
+                    data_base64=base64.b64encode(data).decode("ascii"),
+                )
+            )
+        return artifacts, missing
+
+    @staticmethod
+    def _read_archive_file(
+        archive_data: bytes, expected_path: str, max_bytes: int = 16_777_216
+    ) -> bytes:
+        try:
+            with tarfile.open(fileobj=io.BytesIO(archive_data), mode="r:*") as archive:
+                members = archive.getmembers()
+                regular = [member for member in members if member.isfile()]
+                if len(regular) != 1 or any(member.issym() or member.islnk() for member in members):
+                    raise SandboxError(
+                        "sandbox_artifact_invalid", f"Invalid artifact archive: {expected_path}"
+                    )
+                if PurePosixPath(regular[0].name).name != PurePosixPath(expected_path).name:
+                    raise SandboxError(
+                        "sandbox_artifact_invalid",
+                        f"Artifact archive path mismatch: {expected_path}",
+                    )
+                if regular[0].size > max_bytes:
+                    raise SandboxError(
+                        "sandbox_artifact_too_large",
+                        f"Artifact exceeds size limit: {expected_path}",
+                    )
+                extracted = archive.extractfile(regular[0])
+                if extracted is None:
+                    raise SandboxError(
+                        "sandbox_artifact_invalid", f"Artifact could not be read: {expected_path}"
+                    )
+                return extracted.read(max_bytes + 1)
+        except tarfile.TarError as exc:
+            raise SandboxError(
+                "sandbox_artifact_invalid", f"Invalid artifact archive: {expected_path}"
+            ) from exc
 
     @staticmethod
     def _decode_docker_stream(data: bytes) -> tuple[bytes, bytes]:

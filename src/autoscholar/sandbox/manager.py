@@ -28,6 +28,10 @@ def create_manager_app(executor: SandboxExecutor | None = None) -> FastAPI:
             nano_cpus=int(os.getenv("SANDBOX_NANO_CPUS", "2000000000")),
             pids_limit=int(os.getenv("SANDBOX_PIDS_LIMIT", "256")),
             max_output_bytes=int(os.getenv("SANDBOX_MAX_OUTPUT_BYTES", "65536")),
+            max_artifact_file_bytes=int(
+                os.getenv("SANDBOX_MAX_ARTIFACT_FILE_BYTES", "16777216")
+            ),
+            max_artifact_bytes=int(os.getenv("SANDBOX_MAX_ARTIFACT_BYTES", "67108864")),
         ),
     )
 

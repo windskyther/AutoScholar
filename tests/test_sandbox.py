@@ -1,3 +1,5 @@
+import io
+import tarfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -53,6 +55,18 @@ def test_sandbox_request_rejects_paths_and_shell_injection() -> None:
         pass
     else:
         raise AssertionError("unapproved executable accepted")
+
+    try:
+        SandboxRunRequest(
+            task_id="task-1",
+            action="run_pytest",
+            files={"test_ok.py": ""},
+            collect_artifacts=["metrics.json"],
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("artifact collection accepted for a non-experiment action")
 
 
 def test_manager_exposes_only_validated_internal_execution() -> None:
@@ -128,3 +142,16 @@ def test_source_archive_contains_only_workspace_source(tmp_path: Path) -> None:
     assert b".env" not in archive
     assert b".autoscholar-source-ready" not in archive
     assert b"source/pkg/model.py" in archive
+
+
+def test_artifact_archive_requires_one_regular_file() -> None:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as archive:
+        data = b'{"accuracy": 0.9}\n'
+        info = tarfile.TarInfo("metrics.json")
+        info.size = len(data)
+        archive.addfile(info, io.BytesIO(data))
+
+    assert DockerSandboxExecutor._read_archive_file(
+        buffer.getvalue(), "metrics.json"
+    ) == b'{"accuracy": 0.9}\n'
