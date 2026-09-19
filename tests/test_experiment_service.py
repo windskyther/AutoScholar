@@ -117,6 +117,21 @@ class FailOnceSandbox(FakeExperimentSandbox):
         return await super().run(request)
 
 
+class BadMetricsSandbox(FakeExperimentSandbox):
+    async def run(self, request: SandboxRunRequest) -> SandboxRunResult:
+        result = await super().run(request)
+        if request.action == "run_python":
+            return result.model_copy(
+                update={
+                    "artifacts": [
+                        _artifact("outputs/raw_metrics.json", b'{"bad": true}'),
+                        *result.artifacts[1:],
+                    ]
+                }
+            )
+        return result
+
+
 class FakeRepair:
     def __init__(self, workspace: WorkspaceManager) -> None:
         self.workspace = workspace
@@ -269,4 +284,38 @@ async def test_experiment_service_persists_failed_validation(tmp_path: Path) -> 
     assert experiment.status == "failed"
     assert experiment.error_code
     assert await repository.list_artifacts("failed-task") == []
+    await engine.dispose()
+
+
+async def test_experiment_service_rejects_invalid_measured_metrics(tmp_path: Path) -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    repository = AgentTaskRepository(async_sessionmaker(engine, expire_on_commit=False))
+    await repository.create_task(
+        task_id="bad-metrics-task", objective="Compare MLP and CNN", mode="experiment"
+    )
+    workspace = WorkspaceManager(tmp_path)
+    service = ExperimentService(
+        repository=repository,
+        workspace=workspace,
+        sandbox=BadMetricsSandbox(),
+        artifacts=ArtifactManager(workspace, repository),
+        repair=None,
+    )
+
+    with pytest.raises(ExperimentRunError) as raised:
+        await service.run(
+            task_id="bad-metrics-task",
+            objective="Compare MLP and CNN",
+            plan=["Train", "Analyze"],
+            specification=ExperimentSpecification(
+                epochs=1, train_samples=128, test_samples=128
+            ),
+        )
+    assert raised.value.code == "experiment_metrics_invalid"
+    experiment = (await repository.list_experiments("bad-metrics-task"))[0]
+    assert experiment.status == "failed"
+    assert experiment.error_code == "experiment_metrics_invalid"
+    assert await repository.list_artifacts("bad-metrics-task") == []
     await engine.dispose()

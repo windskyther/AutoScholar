@@ -1,10 +1,13 @@
 import base64
+import binascii
 import hashlib
 import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+
+from pydantic import ValidationError
 
 from autoscholar.agent.records import (
     ArtifactRecord,
@@ -255,7 +258,13 @@ class ExperimentService:
                 item for item in result.artifacts if item.path == "outputs/raw_metrics.json"
             )
             raw_data = self._decode(raw_artifact)
-            raw_metrics = RawExperimentMetrics.model_validate_json(raw_data)
+            try:
+                raw_metrics = RawExperimentMetrics.model_validate_json(raw_data)
+            except ValidationError as exc:
+                raise ExperimentRunError(
+                    "experiment_metrics_invalid",
+                    "Raw metrics artifact does not match the expected schema",
+                ) from exc
             analysis = analyze_experiment(spec, raw_metrics)
             await self._repository.update_experiment(
                 experiment.id, status="analyzing", metrics=analysis.metrics
@@ -351,7 +360,12 @@ class ExperimentService:
 
     @staticmethod
     def _decode(artifact: SandboxArtifact) -> bytes:
-        content = base64.b64decode(artifact.data_base64, validate=True)
+        try:
+            content = base64.b64decode(artifact.data_base64, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ExperimentRunError(
+                "experiment_metrics_invalid", "Raw metrics artifact encoding is invalid"
+            ) from exc
         if (
             len(content) != artifact.size_bytes
             or hashlib.sha256(content).hexdigest() != artifact.sha256

@@ -24,6 +24,8 @@ from autoscholar.agent.records import (
 from autoscholar.agent.tools import AgentTool
 from autoscholar.coding.agent import CodingResult
 from autoscholar.core.errors import AppError
+from autoscholar.experiment.models import ExperimentSpecification
+from autoscholar.experiment.service import ExperimentResult
 from autoscholar.llm import (
     AssistantToolCallMessage,
     ChatMessage,
@@ -47,6 +49,7 @@ class TaskStore(Protocol):
         objective: str,
         project_id: str | None = None,
         research_sources: list[ResearchSource] | None = None,
+        mode: ResolvedAgentMode = "compute",
     ) -> AgentTaskRecord: ...
 
     async def update_task(
@@ -127,6 +130,17 @@ class CodingService(Protocol):
     async def run(self, *, task_id: str, objective: str, plan: list[str]) -> CodingResult: ...
 
 
+class ExperimentAgentService(Protocol):
+    async def run(
+        self,
+        *,
+        task_id: str,
+        objective: str,
+        plan: list[str],
+        specification: ExperimentSpecification | None = None,
+    ) -> ExperimentResult: ...
+
+
 @dataclass(frozen=True, slots=True)
 class AgentLimits:
     max_iterations: int = 6
@@ -159,6 +173,7 @@ class AgentService(Protocol):
         document_ids: list[str] | None = None,
         retrieval_mode: RetrievalMode = "hybrid_rerank",
         research_sources: list[ResearchSource] | None = None,
+        experiment_specification: ExperimentSpecification | None = None,
     ) -> AgentRunResult: ...
 
 
@@ -244,6 +259,13 @@ class AgentState(TypedDict):
     sandbox_runs: int
     repair_attempts: int
     files_written: int
+    experiment_specification: ExperimentSpecification | None
+    experiments_started: int
+    experiments_succeeded: int
+    training_runs: int
+    artifact_count: int
+    artifact_bytes: int
+    experiment_duration_ms: int
 
 
 class AgentRunner:
@@ -258,6 +280,7 @@ class AgentRunner:
         limits: AgentLimits | None = None,
         research_limits: ResearchLimits | None = None,
         coding_service: CodingService | None = None,
+        experiment_service: ExperimentAgentService | None = None,
     ) -> None:
         self._provider = provider
         self._repository = repository
@@ -270,6 +293,7 @@ class AgentRunner:
         }
         self._knowledge_service = knowledge_service
         self._coding_service = coding_service
+        self._experiment_service = experiment_service
         self._graph = self._build_graph()
 
     async def run(
@@ -282,7 +306,14 @@ class AgentRunner:
         document_ids: list[str] | None = None,
         retrieval_mode: RetrievalMode = "hybrid_rerank",
         research_sources: list[ResearchSource] | None = None,
+        experiment_specification: ExperimentSpecification | None = None,
     ) -> AgentRunResult:
+        if experiment_specification is not None and mode != "experiment":
+            raise AppError(
+                status_code=422,
+                code="experiment_mode_required",
+                message="experiment_specification requires experiment mode",
+            )
         resolved_research_sources = (
             ["web", "paper"] if research_sources is None else list(research_sources)
         )
@@ -320,12 +351,19 @@ class AgentRunner:
                 code="coding_not_available",
                 message="The isolated coding agent is unavailable",
             )
+        if mode == "experiment" and self._experiment_service is None:
+            raise AppError(
+                status_code=503,
+                code="experiment_not_available",
+                message="The isolated experiment agent is unavailable",
+            )
         resolved_task_id = task_id or str(uuid4())
         await self._repository.create_task(
             task_id=resolved_task_id,
             objective=objective,
             project_id=project_id,
             research_sources=cast(list[ResearchSource], resolved_research_sources),
+            mode="experiment" if mode == "experiment" else "compute",
         )
         initial: AgentState = {
             "task_id": resolved_task_id,
@@ -360,6 +398,13 @@ class AgentRunner:
             "sandbox_runs": 0,
             "repair_attempts": 0,
             "files_written": 0,
+            "experiment_specification": experiment_specification,
+            "experiments_started": 0,
+            "experiments_succeeded": 0,
+            "training_runs": 0,
+            "artifact_count": 0,
+            "artifact_bytes": 0,
+            "experiment_duration_ms": 0,
         }
         try:
             final = cast(AgentState, await self._graph.ainvoke(initial))
@@ -396,7 +441,11 @@ class AgentRunner:
                     else (
                         "knowledge"
                         if mode == "knowledge"
-                        else ("coding" if mode == "coding" else "compute")
+                        else (
+                            "coding"
+                            if mode == "coding"
+                            else ("experiment" if mode == "experiment" else "compute")
+                        )
                     )
                 )
             )
@@ -430,6 +479,7 @@ class AgentRunner:
         graph.add_node("writer", self._writer)
         graph.add_node("knowledge", self._knowledge)
         graph.add_node("coding", self._coding)
+        graph.add_node("experiment", self._experiment)
         graph.add_edge(START, "planner")
         graph.add_conditional_edges(
             "planner",
@@ -439,6 +489,7 @@ class AgentRunner:
                 "query_planner": "query_planner",
                 "knowledge": "knowledge",
                 "coding": "coding",
+                "experiment": "experiment",
             },
         )
         graph.add_conditional_edges(
@@ -457,6 +508,7 @@ class AgentRunner:
         graph.add_edge("writer", END)
         graph.add_edge("knowledge", END)
         graph.add_edge("coding", END)
+        graph.add_edge("experiment", END)
         return graph.compile()
 
     async def _planner(self, state: AgentState) -> dict[str, Any]:
@@ -465,6 +517,8 @@ class AgentRunner:
             available_modes.append("knowledge")
         if self._coding_service is not None:
             available_modes.append("coding")
+        if self._experiment_service is not None and state["requested_mode"] == "experiment":
+            available_modes.append("experiment")
         submit_plan = ToolDefinition(
             name="submit_plan",
             description="Submit the execution mode and ordered plan.",
@@ -488,6 +542,7 @@ class AgentRunner:
             "Classify literature reviews, comparisons of published methods, current facts, and "
             "requests for external sources as research. Classify requests to create, edit, test, "
             "or repair software as coding. Classify deterministic calculations as compute. "
+            "Classify requests to train and compare MLP and CNN on MNIST as experiment. "
             "Classify questions whose answer should come from the supplied project "
             "documents as knowledge when that mode is available."
             if requested == "auto"
@@ -570,6 +625,37 @@ class AgentRunner:
             "sandbox_runs": result.sandbox_runs,
             "repair_attempts": result.repair_attempts,
             "files_written": result.files_written,
+        }
+
+    async def _experiment(self, state: AgentState) -> dict[str, Any]:
+        if self._experiment_service is None:
+            raise AgentProtocolError(
+                code="experiment_not_available",
+                message="The isolated experiment agent is unavailable",
+            )
+        result = await self._experiment_service.run(
+            task_id=state["task_id"],
+            objective=state["objective"],
+            plan=state["plan"],
+            specification=state["experiment_specification"],
+        )
+        return {
+            "answer": result.answer,
+            "model": result.model,
+            "traces": result.traces,
+            "model_calls": state["model_calls"] + result.model_calls,
+            "input_tokens": state["input_tokens"] + result.input_tokens,
+            "output_tokens": state["output_tokens"] + result.output_tokens,
+            "total_tokens": state["total_tokens"] + result.total_tokens,
+            "sandbox_runs": result.sandbox_runs,
+            "repair_attempts": result.repair_attempts,
+            "files_written": result.files_written,
+            "experiments_started": result.experiments_started,
+            "experiments_succeeded": result.experiments_succeeded,
+            "training_runs": result.training_runs,
+            "artifact_count": result.artifact_count,
+            "artifact_bytes": result.artifact_bytes,
+            "experiment_duration_ms": result.experiment_duration_ms,
         }
 
     async def _knowledge(self, state: AgentState) -> dict[str, Any]:
@@ -1594,6 +1680,8 @@ class AgentRunner:
             return "knowledge"
         if state["resolved_mode"] == "coding":
             return "coding"
+        if state["resolved_mode"] == "experiment":
+            return "experiment"
         return "executor"
 
     @staticmethod
@@ -1631,11 +1719,20 @@ class AgentRunner:
             "output_tokens": state["output_tokens"],
             "total_tokens": state["total_tokens"],
         }
-        if state["resolved_mode"] == "coding":
+        if state["resolved_mode"] in {"coding", "experiment"}:
             metrics.update(
                 sandbox_runs=state["sandbox_runs"],
                 repair_attempts=state["repair_attempts"],
                 files_written=state["files_written"],
+            )
+        if state["resolved_mode"] == "experiment":
+            metrics.update(
+                experiments_started=state["experiments_started"],
+                experiments_succeeded=state["experiments_succeeded"],
+                training_runs=state["training_runs"],
+                artifact_count=state["artifact_count"],
+                artifact_bytes=state["artifact_bytes"],
+                experiment_duration_ms=state["experiment_duration_ms"],
             )
         return metrics
 

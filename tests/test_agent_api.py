@@ -16,6 +16,7 @@ from autoscholar.agent.records import (
 from autoscholar.agent.runner import AgentRunError, AgentRunResult
 from autoscholar.coding.workspace import WorkspaceManager
 from autoscholar.core.config import Settings
+from autoscholar.experiment.models import ExperimentSpecification
 from autoscholar.main import create_app
 from autoscholar.rag.models import RetrievalMode
 from tests.test_chat import SuccessfulProvider
@@ -110,8 +111,9 @@ class FakeAgentBackend:
         document_ids: list[str] | None = None,
         retrieval_mode: RetrievalMode = "dense",
         research_sources: list[ResearchSource] | None = None,
+        experiment_specification: ExperimentSpecification | None = None,
     ) -> AgentRunResult:
-        del task_id, project_id, document_ids, retrieval_mode
+        del task_id, project_id, document_ids, retrieval_mode, experiment_specification
         self.objective = objective
         self.mode = mode
         self.research_sources = research_sources
@@ -125,8 +127,9 @@ class FakeAgentBackend:
         objective: str,
         project_id: str | None = None,
         research_sources: list[ResearchSource] | None = None,
+        mode: str = "compute",
     ) -> AgentTaskRecord:
-        del task_id, objective, project_id, research_sources
+        del task_id, objective, project_id, research_sources, mode
         raise NotImplementedError
 
     async def update_task(self, *args: object, **kwargs: object) -> AgentTaskRecord:
@@ -204,8 +207,10 @@ class FailingAgentBackend(FakeAgentBackend):
         document_ids: list[str] | None = None,
         retrieval_mode: RetrievalMode = "dense",
         research_sources: list[ResearchSource] | None = None,
+        experiment_specification: ExperimentSpecification | None = None,
     ) -> AgentRunResult:
-        del objective, task_id, mode, project_id, document_ids, retrieval_mode, research_sources
+        del objective, task_id, mode, project_id, document_ids, retrieval_mode
+        del research_sources, experiment_specification
         raise AgentRunError(
             task_id="failed-task",
             code="native_tool_calling_required",

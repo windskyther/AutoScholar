@@ -16,8 +16,10 @@ from autoscholar.agent.records import (
     ToolCallStatus,
 )
 from autoscholar.agent.runner import AgentService, TaskStore
+from autoscholar.api.experiment_auth import require_experiment_token
 from autoscholar.coding.workspace import WorkspaceError, WorkspaceFile, WorkspaceManager
 from autoscholar.core.errors import AppError
+from autoscholar.experiment.models import ExperimentSpecification
 from autoscholar.rag.models import RetrievalMode
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -37,6 +39,7 @@ class AgentRunRequest(BaseModel):
     project_id: str | None = None
     document_ids: list[str] | None = None
     retrieval_mode: RetrievalMode = "hybrid_rerank"
+    experiment_specification: ExperimentSpecification | None = None
     research_sources: list[ResearchSource] = Field(
         default_factory=_default_research_sources, min_length=1, max_length=2
     )
@@ -60,6 +63,12 @@ class AgentMetricsResponse(BaseModel):
     sandbox_runs: int = 0
     repair_attempts: int = 0
     files_written: int = 0
+    experiments_started: int = 0
+    experiments_succeeded: int = 0
+    training_runs: int = 0
+    artifact_count: int = 0
+    artifact_bytes: int = 0
+    experiment_duration_ms: int = 0
 
 
 class EvidenceResponse(BaseModel):
@@ -250,14 +259,32 @@ async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunRespo
             code="agent_not_available",
             message="Agent execution is unavailable without database and LLM configuration",
         )
-    result = await runner.run(
-        payload.objective,
-        mode=payload.mode,
-        project_id=payload.project_id,
-        document_ids=payload.document_ids,
-        retrieval_mode=payload.retrieval_mode,
-        research_sources=payload.research_sources,
-    )
+    if payload.mode == "experiment":
+        require_experiment_token(request)
+        result = await runner.run(
+            payload.objective,
+            mode=payload.mode,
+            project_id=payload.project_id,
+            document_ids=payload.document_ids,
+            retrieval_mode=payload.retrieval_mode,
+            research_sources=payload.research_sources,
+            experiment_specification=payload.experiment_specification,
+        )
+    else:
+        if payload.experiment_specification is not None:
+            raise AppError(
+                status_code=422,
+                code="experiment_mode_required",
+                message="experiment_specification requires experiment mode",
+            )
+        result = await runner.run(
+            payload.objective,
+            mode=payload.mode,
+            project_id=payload.project_id,
+            document_ids=payload.document_ids,
+            retrieval_mode=payload.retrieval_mode,
+            research_sources=payload.research_sources,
+        )
     return _run_response(result.task, request.state.request_id)
 
 
@@ -277,6 +304,8 @@ async def get_agent_task(task_id: str, request: Request) -> AgentTaskResponse:
             code="agent_task_not_found",
             message="Agent task was not found",
         )
+    if task.mode == "experiment":
+        require_experiment_token(request)
     return AgentTaskResponse(
         task_id=task.id,
         status=task.status,
@@ -320,6 +349,8 @@ async def get_agent_evidence(
             code="agent_task_not_found",
             message="Agent task was not found",
         )
+    if task.mode == "experiment":
+        require_experiment_token(request)
     items, total = await repository.list_evidence(task_id, limit=limit, offset=offset)
     return EvidenceListResponse(
         task_id=task_id,

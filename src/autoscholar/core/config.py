@@ -63,9 +63,25 @@ class Settings(BaseSettings):
     workspace_max_files: int = Field(default=100, ge=1, le=1_000)
     workspace_max_file_bytes: int = Field(default=1_048_576, ge=1, le=10_485_760)
     workspace_max_source_bytes: int = Field(default=10_485_760, ge=1, le=104_857_600)
+    workspace_max_artifact_files: int = Field(default=100, ge=1, le=1_000)
+    workspace_max_artifact_file_bytes: int = Field(
+        default=16_777_216, ge=1, le=104_857_600
+    )
+    workspace_max_artifact_bytes: int = Field(
+        default=67_108_864, ge=1, le=1_073_741_824
+    )
     sandbox_manager_url: str = "http://sandbox-manager:8090"
     sandbox_timeout_seconds: int = Field(default=300, ge=1, le=600)
     sandbox_max_repairs: int = Field(default=3, ge=0, le=10)
+    experiment_timeout_seconds: int = Field(default=600, ge=30, le=600)
+    experiment_api_token: SecretStr | None = None
+
+    @property
+    def experiment_api_configured(self) -> bool:
+        return bool(
+            self.experiment_api_token
+            and self.experiment_api_token.get_secret_value()
+        )
 
     @property
     def llm_configured(self) -> bool:

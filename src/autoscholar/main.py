@@ -5,10 +5,17 @@ from fastapi import FastAPI
 
 from autoscholar import __version__
 from autoscholar.agent.repository import AgentTaskRepository
-from autoscholar.agent.runner import AgentRunner, AgentService, ResearchSearch, TaskStore
+from autoscholar.agent.runner import (
+    AgentRunner,
+    AgentService,
+    ExperimentAgentService,
+    ResearchSearch,
+    TaskStore,
+)
 from autoscholar.agent.tools import CalculatorTool, RestrictedPythonTool
 from autoscholar.api.routes.agent import router as agent_router
 from autoscholar.api.routes.chat import router as chat_router
+from autoscholar.api.routes.experiments import router as experiment_router
 from autoscholar.api.routes.health import router as health_router
 from autoscholar.api.routes.projects import router as projects_router
 from autoscholar.api.routes.rag import router as rag_router
@@ -24,6 +31,8 @@ from autoscholar.core.errors import register_exception_handlers
 from autoscholar.core.logging import configure_logging
 from autoscholar.core.middleware import request_context_middleware
 from autoscholar.core.responses import UTF8JSONResponse
+from autoscholar.experiment.artifacts import ArtifactManager
+from autoscholar.experiment.service import ExperimentService
 from autoscholar.infrastructure import Database, Qdrant, RedisClient
 from autoscholar.infrastructure.base import ManagedDependency
 from autoscholar.llm import LLMProvider, create_llm_provider
@@ -71,6 +80,8 @@ def create_app(
     workspace_manager: WorkspaceManager | None = None,
     sandbox_executor: SandboxExecutor | None = None,
     coding_agent: CodingAgent | None = None,
+    artifact_manager: ArtifactManager | None = None,
+    experiment_service: ExperimentAgentService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings.log_level)
@@ -97,10 +108,17 @@ def create_app(
         max_files=resolved_settings.workspace_max_files,
         max_file_bytes=resolved_settings.workspace_max_file_bytes,
         max_source_bytes=resolved_settings.workspace_max_source_bytes,
+        max_artifact_files=resolved_settings.workspace_max_artifact_files,
+        max_artifact_file_bytes=resolved_settings.workspace_max_artifact_file_bytes,
+        max_artifact_bytes=resolved_settings.workspace_max_artifact_bytes,
     )
     resolved_sandbox_executor = sandbox_executor or SandboxClient(
         resolved_settings.sandbox_manager_url,
-        timeout_seconds=resolved_settings.sandbox_timeout_seconds + 10,
+        timeout_seconds=max(
+            resolved_settings.sandbox_timeout_seconds,
+            resolved_settings.experiment_timeout_seconds,
+        )
+        + 10,
     )
     resolved_embedding_provider = embedding_provider
     resolved_sparse_embedding_provider = sparse_embedding_provider
@@ -195,6 +213,28 @@ def create_app(
                 timeout_seconds=resolved_settings.sandbox_timeout_seconds,
             ),
         )
+    resolved_artifact_manager = artifact_manager
+    if resolved_artifact_manager is None and isinstance(
+        resolved_agent_repository, AgentTaskRepository
+    ):
+        resolved_artifact_manager = ArtifactManager(
+            resolved_workspace_manager, resolved_agent_repository
+        )
+    resolved_experiment_service = experiment_service
+    if (
+        resolved_experiment_service is None
+        and isinstance(resolved_agent_repository, AgentTaskRepository)
+        and resolved_artifact_manager is not None
+    ):
+        resolved_experiment_service = ExperimentService(
+            repository=resolved_agent_repository,
+            workspace=resolved_workspace_manager,
+            sandbox=resolved_sandbox_executor,
+            artifacts=resolved_artifact_manager,
+            repair=resolved_coding_agent,
+            timeout_seconds=resolved_settings.experiment_timeout_seconds,
+            max_repairs=resolved_settings.sandbox_max_repairs,
+        )
     resolved_agent_runner = agent_runner
     if resolved_agent_runner is None and resolved_agent_repository is not None:
         resolved_agent_runner = AgentRunner(
@@ -204,6 +244,7 @@ def create_app(
             research_services=resolved_research_services,
             knowledge_service=resolved_rag_query_service,
             coding_service=resolved_coding_agent,
+            experiment_service=resolved_experiment_service,
         )
 
     @asynccontextmanager
@@ -223,6 +264,7 @@ def create_app(
         application.state.chunk_index = resolved_chunk_index
         application.state.rag_query_service = resolved_rag_query_service
         application.state.workspace_manager = resolved_workspace_manager
+        application.state.artifact_manager = resolved_artifact_manager
         application.state.sandbox_executor = resolved_sandbox_executor
         yield
         for service in resolved_research_services:
@@ -262,12 +304,14 @@ def create_app(
     application.state.chunk_index = resolved_chunk_index
     application.state.rag_query_service = resolved_rag_query_service
     application.state.workspace_manager = resolved_workspace_manager
+    application.state.artifact_manager = resolved_artifact_manager
     application.state.sandbox_executor = resolved_sandbox_executor
     application.middleware("http")(request_context_middleware)
     register_exception_handlers(application)
     application.include_router(health_router)
     application.include_router(chat_router)
     application.include_router(agent_router)
+    application.include_router(experiment_router)
     application.include_router(projects_router)
     application.include_router(rag_router)
     return application

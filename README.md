@@ -443,6 +443,61 @@ uv run pytest tests/test_coding_agent.py tests/test_coding_workspace.py tests/te
 
 Phase 4 验收标准是：工作区不能越界，沙箱看不到密钥且不能联网，超时会终止并清理容器，真实 MNIST 项目静态检查和 pytest 通过，强制故障用例至少完成一次修复。模型检查点、图表、实验指标和通用 Artifact 生命周期留到 Phase 5。
 
+## Phase 5 本地验收
+
+实验模式会在断网、只读根文件系统的 Docker 沙箱中，用固定种子的 MNIST 子集训练 MLP 与 CNN，并保存实测指标、曲线、模型 checkpoint 和报告。默认配置为每个模型训练 2 轮；最小验收可使用每模型 1 轮、128 条训练样本和 128 条测试样本。小样本结果仅用于工程验收，不代表完整 MNIST 基准性能。
+
+首次使用前，先按上文准备 MNIST 数据集。启动服务后，可运行无需 LLM 密钥的真实训练验收：
+
+```powershell
+$docker = "D:\Applications\Docker\resources\bin\docker.exe"
+& $docker compose up -d --build
+& $docker compose exec -T api python -m autoscholar.experiment.smoke
+```
+
+成功时输出 `status: succeeded`、两种模型的实测准确率、数据集 SHA-256 和 `artifacts: 10`。该命令会在本地数据库和工作区留下一个验收任务。请勿将固定子集的单次结果解读为模型优劣结论。
+
+对外开放实验 API 前，在本地 `.env` 中设置足够长的随机 `EXPERIMENT_API_TOKEN`，并重新创建 API 容器：
+
+```powershell
+& $docker compose up -d --force-recreate api
+$token = Read-Host "EXPERIMENT_API_TOKEN"
+$headers = @{ Authorization = "Bearer $token" }
+$body = @{
+  objective = "Compare MLP and CNN on MNIST"
+  mode = "experiment"
+  experiment_specification = @{
+    epochs = 1
+    train_samples = 128
+    test_samples = 128
+  }
+} | ConvertTo-Json -Depth 5 -Compress
+$result = Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8000/agent/run" `
+  -Headers $headers `
+  -ContentType "application/json; charset=utf-8" `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) `
+  -TimeoutSec 900
+$result | ConvertTo-Json -Depth 10
+```
+
+实验 API 默认关闭；未配置 token 时返回 503，缺少或错误的 token 返回 401。`/agent/run` 的实验模式会调用已配置的 LLM 生成计划，内部 smoke 验收则不消耗 LLM 配额。查询、下载也必须带相同的 `$headers`：
+
+```powershell
+$taskId = $result.task_id
+$experiments = Invoke-RestMethod -Headers $headers `
+  "http://127.0.0.1:8000/agent/tasks/$taskId/experiments"
+$artifacts = Invoke-RestMethod -Headers $headers `
+  "http://127.0.0.1:8000/agent/tasks/$taskId/artifacts"
+$artifacts.items | Format-Table id,path,size_bytes,sha256
+$report = $artifacts.items | Where-Object path -eq "reports/report.md" | Select-Object -First 1
+Invoke-WebRequest -Headers $headers `
+  "http://127.0.0.1:8000/agent/tasks/$taskId/artifacts/$($report.id)" `
+  -OutFile "data/phase5-report.md"
+```
+
+还可通过 `/agent/tasks/{task_id}` 查看状态与执行轨迹，通过 `/agent/tasks/{task_id}/experiments/{experiment_id}` 查看实验详情。实验产物按任务隔离、下载前校验 SHA-256；`.env`、设计文档、数据集和训练产物都不得提交到 Git。
+
 ## 开发路线
 
 | 阶段 | 重点 |
