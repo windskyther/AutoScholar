@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from autoscholar.agent.records import (
     AgentMode,
@@ -284,6 +285,45 @@ def test_post_agent_run_accepts_coding_mode() -> None:
     assert response.status_code == 200
     assert response.json()["mode"] == "coding"
     assert backend.mode == "coding"
+
+
+def test_post_agent_run_requires_token_for_experiment_mode() -> None:
+    backend = FakeAgentBackend(replace(completed_task(), mode="experiment"))
+    app = create_app(
+        Settings(experiment_api_token=SecretStr("long-test-token")),
+        database=FakeDependency(),
+        redis=FakeDependency(),
+        llm_provider=SuccessfulProvider(),
+        agent_repository=backend,
+        agent_runner=backend,
+    )
+    payload = {
+        "objective": "Compare MNIST models",
+        "mode": "experiment",
+        "experiment_specification": {
+            "epochs": 1,
+            "train_samples": 128,
+            "test_samples": 128,
+        },
+    }
+    with TestClient(app) as client:
+        unauthorized = client.post("/agent/run", json=payload)
+        assert backend.mode is None
+        authorized = client.post(
+            "/agent/run",
+            json=payload,
+            headers={"Authorization": "Bearer long-test-token"},
+        )
+        invalid_mode = client.post(
+            "/agent/run",
+            json={**payload, "mode": "compute"},
+        )
+
+    assert unauthorized.status_code == 401
+    assert authorized.status_code == 200
+    assert authorized.json()["mode"] == "experiment"
+    assert backend.mode == "experiment"
+    assert invalid_mode.status_code == 422
 
 
 def test_post_agent_run_rejects_duplicate_or_empty_research_sources() -> None:
