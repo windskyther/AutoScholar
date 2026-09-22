@@ -164,6 +164,9 @@ async def test_rules_override_llm_pass_and_replan_only_affected_step(tmp_path: P
         assert result.task.status == "succeeded", result.task.error_message
         assert result.task.metrics["replans"] == 1
         assert result.task.metrics["training_runs"] == 2
+        assert result.task.metrics["experiments_started"] == 2
+        assert result.task.metrics["experiments_succeeded"] == 1
+        assert result.task.metrics["artifact_count"] == 10
         steps = await service.workflows.history(result.task.id, "steps")
         assert len([item for item in steps if item["step_id"] == "code"]) == 1
         runs = [item for item in steps if item["step_id"] == "train"]

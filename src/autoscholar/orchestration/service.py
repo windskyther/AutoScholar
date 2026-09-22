@@ -172,13 +172,37 @@ class AutonomousService:
         message: str | None,
     ) -> AgentTaskRecord:
         run.budget.used["wall_seconds"] = round(time.monotonic() - run.budget.started)
+        metrics = dict(run.budget.used)
+        metrics.update(
+            experiments_started=0,
+            experiments_succeeded=0,
+            artifact_count=0,
+            artifact_bytes=0,
+            files_written=0,
+            experiment_duration_ms=0,
+        )
+        for step in await self.workflows.history(run.task_id, "steps"):
+            child_id = step["child_task_id"]
+            experiments = await self.tasks.list_experiments(child_id)
+            artifacts = await self.tasks.list_artifacts(child_id)
+            metrics["experiments_started"] += len(experiments)
+            metrics["experiments_succeeded"] += sum(
+                experiment.status == "succeeded" for experiment in experiments
+            )
+            metrics["artifact_count"] += len(artifacts)
+            metrics["artifact_bytes"] += sum(artifact.size_bytes for artifact in artifacts)
+            child = await self.tasks.get_task(child_id)
+            if child is not None:
+                for key in ("files_written", "experiment_duration_ms"):
+                    metrics[key] += child.metrics.get(key, 0)
+        metrics["repair_attempts"] = metrics.get("code_repairs", 0)
         return await self.tasks.update_task(
             run.task_id,
             status=status,
             mode="autonomous",
             plan=[step.description for step in run.plan.steps] if run.plan else [],
             answer=run.answer,
-            metrics=dict(run.budget.used),
+            metrics=metrics,
             error_code=code,
             error_message=message,
         )

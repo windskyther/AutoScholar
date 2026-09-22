@@ -53,6 +53,7 @@ services:
       SANDBOX_MAX_REPAIRS: ${SANDBOX_MAX_REPAIRS:-3}
       EXPERIMENT_TIMEOUT_SECONDS: ${EXPERIMENT_TIMEOUT_SECONDS:-600}
       EXPERIMENT_API_TOKEN: ${EXPERIMENT_API_TOKEN:-}
+      AUTONOMOUS_BUDGET: '${AUTONOMOUS_BUDGET:-{}}'
     volumes:
       - document_data:/data/documents
       - model_cache:/models

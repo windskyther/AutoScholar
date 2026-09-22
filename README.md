@@ -3,7 +3,7 @@
 > 面向 AI/ML 研究与实验的自主智能体平台  
 > Autonomous AI/ML Research & Experiment Agent Platform
 
-AutoScholar 的目标是把复杂研究目标转化为可追踪、可恢复、可评测、可复现的研究流程。项目当前已完成 Phase 4：除 Web/论文研究与项目知识库外，还支持任务级代码工作区、代码生成与修复，以及真正隔离的 Docker 执行环境。
+AutoScholar 的目标是把复杂研究目标转化为可追踪、可恢复、可评测、可复现的研究流程。当前支持 Web/论文研究、项目知识库、隔离代码执行与 MNIST 实验；Phase 6 新增带预算和版本历史的自主规划、审查与重规划闭环。
 
 ## 当前能力
 
@@ -498,6 +498,56 @@ Invoke-WebRequest -Headers $headers `
 
 还可通过 `/agent/tasks/{task_id}` 查看状态与执行轨迹，通过 `/agent/tasks/{task_id}/experiments/{experiment_id}` 查看实验详情。实验产物按任务隔离、下载前校验 SHA-256；`.env`、设计文档、数据集和训练产物都不得提交到 Git。
 
+## Phase 6 本地验收
+
+显式使用 `mode: autonomous` 才会启动完整工作流；`auto` 不会升级到自主实验。入口、父任务、子任务、历史和产物均使用现有 `EXPERIMENT_API_TOKEN` 鉴权。执行范围仍为 CPU / MNIST / MLP 与 CNN 对比，不支持任意数据集或 GPU。
+
+流程为结构化 DAG 计划 → 研究/代码/实验 → 规则与 LLM 双重审查 → 必要时重规划 → 报告。只有受影响的步骤及其下游会重跑；每轮子任务、代码快照和实验产物独立保留。低准确率或 CNN 不如 MLP 不是自动失败理由。
+
+先启动服务并应用迁移，再运行真实联测（需要配置 LLM；第二条额外需要 Tavily）：
+
+```powershell
+$docker = "D:\Applications\Docker\resources\bin\docker.exe"
+& $docker compose up -d --build
+& $docker compose exec -T api python -m autoscholar.orchestration.smoke
+& $docker compose exec -T api python -m autoscholar.orchestration.smoke --research --inject-invalid-metrics
+```
+
+smoke 在进程内临时生成鉴权 token，不修改 `.env` 或正在运行的 API token。会消耗真实模型/检索配额，并保留数据库记录与产物。故障参数只在独立测试命令中启用：第一次真实训练完成后模拟指标产物丢失，验证 REPLAN → 新子任务重试 → PASS。成功输出 `acceptance: passed`、版本数和下载后通过 SHA-256 校验的产物数；不要将“有输出”当成验收成功。
+
+不想调用外部 API 时，可运行 `python -m autoscholar.orchestration.smoke --offline --inject-invalid-metrics`（同样在 API 容器内）。此模式使用明确标记的脚本化模型替身，但实际执行 Docker 训练、数据库持久化、规则审查、重规划调度与下载校验；它不能替代真实 LLM / Tavily 验收，也不能与 `--research` 同用。
+
+手动调用（先按 Phase 5 配置 token；PowerShell 用 UTF-8 字节发送请求）：
+
+```powershell
+$token = Read-Host "EXPERIMENT_API_TOKEN"
+$headers = @{ Authorization = "Bearer $token" }
+$body = @{
+  objective = "先检索 MLP 与 CNN 的区别，再基于 MNIST 小样本实现、验证并运行对比，报告实测结果。"
+  mode = "autonomous"
+  research_sources = @("web")
+  experiment_specification = @{ epochs = 1; train_samples = 128; test_samples = 128 }
+  budget = @{ replans = 2; training_runs = 3; model_calls = 60; wall_seconds = 1800 }
+} | ConvertTo-Json -Depth 8 -Compress
+$result = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/agent/run" `
+  -Headers $headers -ContentType "application/json; charset=utf-8" `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 1900
+$result | ConvertTo-Json -Depth 15
+$taskId = $result.task_id
+$task = Invoke-RestMethod -Headers $headers "http://127.0.0.1:8000/agent/tasks/$taskId"
+$plans = Invoke-RestMethod -Headers $headers "http://127.0.0.1:8000/agent/tasks/$taskId/workflow/plans"
+$steps = Invoke-RestMethod -Headers $headers "http://127.0.0.1:8000/agent/tasks/$taskId/workflow/steps"
+$reviews = Invoke-RestMethod -Headers $headers "http://127.0.0.1:8000/agent/tasks/$taskId/workflow/reviews"
+$steps.items | Format-Table plan_version,step_id,status,child_task_id
+$reviews.items | ConvertTo-Json -Depth 12
+```
+
+用步骤记录的 `child_task_id` 查询代码工作区、实验与下载产物，方法同 Phase 4/5；父任务 ID 不直接包含实验文件。研究引用使用 `子任务ID:引用键`，避免多次研究都产生 `E1` 时串引用。报告仅使用最终通过审查的结果，早期尝试保留在历史中。
+
+预算对整项父任务共享，重规划不会清零。默认上限：20 个执行步骤、3 次重规划、60 次模型调用、50 次工具调用、20 次搜索、3 次代码修复、4 次训练、40 次沙箱运行、120000 tokens、1800 秒。请求只能降低服务端上限；可在 `.env` 设置 JSON 格式的 `AUTONOMOUS_BUDGET` 调整服务端配置，重建 API 生效。tokens 按模型返回 usage 计量，单次响应可能越过阈值；超过后立即停止后续调用，缺少 usage 也会停止，不能作为精确费用上限。
+
+验收要求：最终任务 `succeeded`、最终 review 为 `PASS`、代码交接 SHA-256 一致、所有产物校验成功；故障测试还须至少一次 `REPLAN` 且旧记录未覆盖。达到预算时应为 `budget_exceeded` 并停止继续调用；失败详情见 `$task.error_code` / `error_message`。任务仍是同步执行，进程重启续跑、Memory 和人工审批留待后续阶段。
+
 ## 开发路线
 
 | 阶段 | 重点 |
@@ -507,7 +557,8 @@ Invoke-WebRequest -Headers $headers `
 | Phase 2 | Web/论文检索、Evidence/Citation、Research Agent |
 | Phase 3 | PDF 文档处理、Qdrant、RAG 知识库 |
 | Phase 4 | 任务工作区、代码生成与修复、隔离 Docker 沙箱 |
-| Phase 5–6 | 实验指标与产物、Reviewer/Replanning |
+| Phase 5 | 实验指标、隔离产物、可复现实验报告 |
+| Phase 6 | 结构化 DAG、Reviewer/Replanning、共享预算、版本历史 |
 | Phase 7–9 | Checkpoint、Memory、Human-in-the-loop、MCP、Web 工作台 |
 | Phase 10–11 | 全链路评测、安全加固、CI/CD 与部署 |
 
