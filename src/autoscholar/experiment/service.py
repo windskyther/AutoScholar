@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import binascii
 import hashlib
@@ -25,6 +26,7 @@ from autoscholar.coding.sandbox import (
     SandboxRunResult,
 )
 from autoscholar.coding.workspace import WorkspaceManager
+from autoscholar.core.budget import consume
 from autoscholar.experiment.analysis import analyze_experiment
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.models import ExperimentSpecification, RawExperimentMetrics
@@ -143,6 +145,7 @@ class ExperimentService:
         objective: str,
         plan: list[str],
         specification: ExperimentSpecification | None = None,
+        source_files: dict[str, str] | None = None,
     ) -> ExperimentResult:
         started = time.perf_counter()
         spec = specification or ExperimentSpecification()
@@ -186,6 +189,16 @@ class ExperimentService:
                     spec.model_dump(), ensure_ascii=False, indent=2
                 ),
             }
+            if source_files is not None:
+                if not {"train.py", "test_models.py"} <= source_files.keys():
+                    raise ExperimentRunError(
+                        "experiment_source_invalid",
+                        "Validated train.py and test_models.py required",
+                    )
+                templates = {
+                    **source_files,
+                    "experiment_config.json": json.dumps(spec.model_dump(), indent=2),
+                }
             for path, content in templates.items():
                 self._workspace.write_text(task_id, path, content)
             files_written += len(templates)
@@ -196,6 +209,7 @@ class ExperimentService:
             for action in ("static_check", "run_pytest", "run_python"):
                 while True:
                     if action == "run_python":
+                        consume("training_runs")
                         await self._repository.update_experiment(
                             experiment.id, status="running", source_sha256=source_sha
                         )
@@ -224,6 +238,7 @@ class ExperimentService:
                             f"Experiment {action} failed; see persisted tool trace",
                         )
                     repair_attempts += 1
+                    consume("code_repairs")
                     repaired = await self._repair.run(
                         task_id=task_id,
                         objective=(
@@ -319,6 +334,12 @@ class ExperimentService:
                 artifact_bytes=sum(item.size_bytes for item in saved),
                 experiment_duration_ms=round((time.perf_counter() - started) * 1000),
             )
+        except asyncio.CancelledError:
+            await self._repository.update_experiment(
+                experiment.id, status="failed", error_code="experiment_cancelled",
+                error_message="Experiment was cancelled or exceeded the workflow time budget",
+            )
+            raise
         except Exception as exc:
             code = str(getattr(exc, "code", "experiment_run_failed"))
             message = str(getattr(exc, "message", "Experiment execution failed"))

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field, StringConstraints, field_validator
@@ -18,8 +18,10 @@ from autoscholar.agent.records import (
 from autoscholar.agent.runner import AgentService, TaskStore
 from autoscholar.api.experiment_auth import require_experiment_token
 from autoscholar.coding.workspace import WorkspaceError, WorkspaceFile, WorkspaceManager
+from autoscholar.core.budget import BudgetLimits
 from autoscholar.core.errors import AppError
 from autoscholar.experiment.models import ExperimentSpecification
+from autoscholar.orchestration.service import AutonomousService
 from autoscholar.rag.models import RetrievalMode
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -40,21 +42,26 @@ class AgentRunRequest(BaseModel):
     document_ids: list[str] | None = None
     retrieval_mode: RetrievalMode = "hybrid_rerank"
     experiment_specification: ExperimentSpecification | None = None
+    budget: BudgetLimits | None = None
     research_sources: list[ResearchSource] = Field(
         default_factory=_default_research_sources, min_length=1, max_length=2
     )
 
     @field_validator("research_sources")
     @classmethod
-    def validate_research_sources(
-        cls, sources: list[ResearchSource]
-    ) -> list[ResearchSource]:
+    def validate_research_sources(cls, sources: list[ResearchSource]) -> list[ResearchSource]:
         if len(sources) != len(set(sources)):
             raise ValueError("research_sources must not contain duplicates")
         return sources
 
 
 class AgentMetricsResponse(BaseModel):
+    steps: int = 0
+    replans: int = 0
+    tool_calls: int = 0
+    search_queries: int = 0
+    code_repairs: int = 0
+    wall_seconds: int = 0
     iterations: int = 0
     model_calls: int = 0
     input_tokens: int = 0
@@ -117,6 +124,7 @@ class ToolCallResponse(BaseModel):
 
 
 class AgentRunResponse(BaseModel):
+    parent_task_id: str | None = None
     task_id: str
     status: TaskStatus
     plan: list[str]
@@ -234,6 +242,7 @@ def _workspace_file(item: WorkspaceFile) -> WorkspaceFileResponse:
 
 def _run_response(task: AgentTaskRecord, request_id: str) -> AgentRunResponse:
     return AgentRunResponse(
+        parent_task_id=task.parent_task_id,
         task_id=task.id,
         status=task.status,
         plan=task.plan,
@@ -252,6 +261,31 @@ def _run_response(task: AgentTaskRecord, request_id: str) -> AgentRunResponse:
 
 @router.post("/run", response_model=AgentRunResponse)
 async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunResponse:
+    if payload.mode == "autonomous":
+        require_experiment_token(request)
+        service: AutonomousService | None = request.app.state.autonomous_service
+        if service is None:
+            raise AppError(
+                status_code=503,
+                code="autonomous_not_available",
+                message="Autonomous workflow is unavailable",
+            )
+        result = await service.run(
+            payload.objective,
+            project_id=payload.project_id,
+            document_ids=payload.document_ids,
+            retrieval_mode=payload.retrieval_mode,
+            research_sources=payload.research_sources,
+            experiment_specification=payload.experiment_specification,
+            budget=payload.budget,
+        )
+        return _run_response(result.task, request.state.request_id)
+    if payload.budget is not None:
+        raise AppError(
+            status_code=422,
+            code="autonomous_mode_required",
+            message="budget requires explicit autonomous mode",
+        )
     runner: AgentService | None = request.app.state.agent_runner
     if runner is None:
         raise AppError(
@@ -304,9 +338,10 @@ async def get_agent_task(task_id: str, request: Request) -> AgentTaskResponse:
             code="agent_task_not_found",
             message="Agent task was not found",
         )
-    if task.mode == "experiment":
+    if task.mode in {"experiment", "autonomous"} or task.parent_task_id is not None:
         require_experiment_token(request)
     return AgentTaskResponse(
+        parent_task_id=task.parent_task_id,
         task_id=task.id,
         status=task.status,
         objective=task.objective,
@@ -349,7 +384,7 @@ async def get_agent_evidence(
             code="agent_task_not_found",
             message="Agent task was not found",
         )
-    if task.mode == "experiment":
+    if task.mode in {"experiment", "autonomous"} or task.parent_task_id is not None:
         require_experiment_token(request)
     items, total = await repository.list_evidence(task_id, limit=limit, offset=offset)
     return EvidenceListResponse(
@@ -376,6 +411,8 @@ async def _coding_task(task_id: str, request: Request) -> AgentTaskRecord:
             code="coding_workspace_not_found",
             message="Coding task workspace was not found",
         )
+    if task.parent_task_id is not None:
+        require_experiment_token(request)
     return task
 
 
@@ -384,6 +421,31 @@ def _workspace_error(exc: WorkspaceError) -> AppError:
     if exc.code == "workspace_file_not_text":
         status = 415
     return AppError(status_code=status, code=exc.code, message=exc.message)
+
+
+@router.get("/tasks/{task_id}/workflow/{kind}")
+async def get_workflow_history(
+    task_id: str,
+    kind: Literal["plans", "steps", "reviews"],
+    request: Request,
+) -> dict[str, Any]:
+    require_experiment_token(request)
+    service: AutonomousService | None = request.app.state.autonomous_service
+    if service is None:
+        raise AppError(
+            status_code=503,
+            code="autonomous_not_available",
+            message="Autonomous workflow is unavailable",
+        )
+    task = await service.tasks.get_task(task_id)
+    if task is None or task.mode != "autonomous":
+        raise AppError(
+            status_code=404,
+            code="autonomous_task_not_found",
+            message="Autonomous task was not found",
+        )
+    items = await service.workflows.history(task_id, kind)
+    return {"task_id": task_id, "items": items, "total": len(items)}
 
 
 @router.get(

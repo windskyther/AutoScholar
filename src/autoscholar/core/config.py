@@ -5,6 +5,8 @@ from typing import Literal
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from autoscholar.core.budget import BudgetLimits
+
 
 class Settings(BaseSettings):
     """Runtime configuration loaded from environment variables and an optional .env file."""
@@ -75,6 +77,7 @@ class Settings(BaseSettings):
     sandbox_max_repairs: int = Field(default=3, ge=0, le=10)
     experiment_timeout_seconds: int = Field(default=600, ge=30, le=600)
     experiment_api_token: SecretStr | None = None
+    autonomous_budget: BudgetLimits = Field(default_factory=BudgetLimits)
 
     @property
     def experiment_api_configured(self) -> bool:

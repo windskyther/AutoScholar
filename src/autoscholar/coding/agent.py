@@ -14,6 +14,7 @@ from autoscholar.coding.sandbox import (
 )
 from autoscholar.coding.tools import SandboxToolset, WorkspaceToolset
 from autoscholar.coding.workspace import WorkspaceManager
+from autoscholar.core.budget import consume
 from autoscholar.llm import (
     AssistantToolCallMessage,
     ChatMessage,
@@ -288,6 +289,8 @@ class CodingAgent:
                 "coding_tool_budget_exceeded", "The coding file-operation budget was exhausted"
             )
         call = calls[0]
+        if call.name not in {"run_python", "run_pytest", "run_shell", "static_check"}:
+            consume("tool_calls")
         tool = self._task_tools[state["task_id"]].get(call.name)
         error_code: str | None
         if tool is None:
@@ -369,6 +372,7 @@ class CodingAgent:
                 "code_repair_exhausted",
                 f"Code validation still failed after {self._limits.max_repairs} repair attempts",
             )
+        consume("code_repairs")
         return {
             "validation_succeeded": False,
             "diagnostic": ErrorParser.parse(validation),

@@ -23,6 +23,7 @@ from autoscholar.agent.records import (
 )
 from autoscholar.agent.tools import AgentTool
 from autoscholar.coding.agent import CodingResult
+from autoscholar.core.budget import BudgetExceeded, consume
 from autoscholar.core.errors import AppError
 from autoscholar.experiment.models import ExperimentSpecification
 from autoscholar.experiment.service import ExperimentResult
@@ -308,6 +309,11 @@ class AgentRunner:
         research_sources: list[ResearchSource] | None = None,
         experiment_specification: ExperimentSpecification | None = None,
     ) -> AgentRunResult:
+        if mode == "autonomous":
+            raise AppError(
+                status_code=422, code="autonomous_dispatch_required",
+                message="Use the authorized autonomous workflow entry point",
+            )
         if experiment_specification is not None and mode != "experiment":
             raise AppError(
                 status_code=422,
@@ -426,7 +432,7 @@ class AgentRunner:
                 warnings=final["warnings"],
             )
             return AgentRunResult(task=task, model=final["model"])
-        except AgentRunError:
+        except (AgentRunError, BudgetExceeded):
             raise
         except Exception as exc:
             code = getattr(exc, "code", "agent_run_failed")
@@ -664,6 +670,7 @@ class AgentRunner:
                 code="rag_not_available",
                 message="Knowledge-base querying is unavailable",
             )
+        consume("tool_calls")
         result = await self._knowledge_service.query(
             state["objective"],
             project_id=state["project_id"],
@@ -837,6 +844,8 @@ class AgentRunner:
                 "limit": self._research_limits.max_results_per_query,
             }
             try:
+                consume("tool_calls")
+                consume("search_queries")
                 response = await service.search(
                     query.query,
                     limit=self._research_limits.max_results_per_query,
@@ -886,6 +895,8 @@ class AgentRunner:
                         provider=service.name,
                     )
                 )
+            except BudgetExceeded:
+                raise
             except Exception:
                 trace = await self._repository.add_tool_call(
                     task_id=state["task_id"],
@@ -922,6 +933,7 @@ class AgentRunner:
                         code="rag_not_available",
                         message="Knowledge-base querying is unavailable",
                     )
+                consume("tool_calls")
                 chunks = await self._knowledge_service.retrieve(
                     state["objective"],
                     project_id=state["project_id"],
@@ -1457,6 +1469,7 @@ class AgentRunner:
             error_code = "unknown_tool"
             duration_ms = 0.0
         else:
+            consume("tool_calls")
             result = await tool.execute(call.arguments)
             succeeded = result.succeeded
             output = result.output

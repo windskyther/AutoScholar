@@ -26,6 +26,7 @@ from autoscholar.coding import (
     SandboxExecutor,
     WorkspaceManager,
 )
+from autoscholar.core.budget import BudgetedLLM
 from autoscholar.core.config import Settings, get_settings
 from autoscholar.core.errors import register_exception_handlers
 from autoscholar.core.logging import configure_logging
@@ -36,6 +37,9 @@ from autoscholar.experiment.service import ExperimentService
 from autoscholar.infrastructure import Database, Qdrant, RedisClient
 from autoscholar.infrastructure.base import ManagedDependency
 from autoscholar.llm import LLMProvider, create_llm_provider
+from autoscholar.orchestration.repository import WorkflowRepository
+from autoscholar.orchestration.sandbox import BudgetedSandbox
+from autoscholar.orchestration.service import AutonomousService
 from autoscholar.rag import (
     ChunkIndex,
     DocumentStorage,
@@ -93,7 +97,7 @@ def create_app(
         else None
     )
     resolved_qdrant = qdrant or Qdrant(resolved_settings.qdrant_url, api_key=qdrant_key)
-    resolved_llm_provider = llm_provider or create_llm_provider(resolved_settings)
+    resolved_llm_provider = BudgetedLLM(llm_provider or create_llm_provider(resolved_settings))
     resolved_agent_repository = agent_repository
     resolved_knowledge_repository = knowledge_repository
     if resolved_agent_repository is None and isinstance(resolved_database, Database):
@@ -112,13 +116,16 @@ def create_app(
         max_artifact_file_bytes=resolved_settings.workspace_max_artifact_file_bytes,
         max_artifact_bytes=resolved_settings.workspace_max_artifact_bytes,
     )
-    resolved_sandbox_executor = sandbox_executor or SandboxClient(
-        resolved_settings.sandbox_manager_url,
-        timeout_seconds=max(
-            resolved_settings.sandbox_timeout_seconds,
-            resolved_settings.experiment_timeout_seconds,
+    resolved_sandbox_executor = BudgetedSandbox(
+        sandbox_executor
+        or SandboxClient(
+            resolved_settings.sandbox_manager_url,
+            timeout_seconds=max(
+                resolved_settings.sandbox_timeout_seconds,
+                resolved_settings.experiment_timeout_seconds,
+            )
+            + 10,
         )
-        + 10,
     )
     resolved_embedding_provider = embedding_provider
     resolved_sparse_embedding_provider = sparse_embedding_provider
@@ -247,6 +254,34 @@ def create_app(
             experiment_service=resolved_experiment_service,
         )
 
+    resolved_autonomous_service = None
+    if (
+        isinstance(resolved_agent_repository, AgentTaskRepository)
+        and resolved_agent_runner is not None
+        and resolved_coding_agent is not None
+        and resolved_artifact_manager is not None
+    ):
+        # Autonomous repairs must go through a new coding step, never mutate handed-off code.
+        workflow_experiments = ExperimentService(
+            repository=resolved_agent_repository,
+            workspace=resolved_workspace_manager,
+            sandbox=resolved_sandbox_executor,
+            artifacts=resolved_artifact_manager,
+            timeout_seconds=resolved_settings.experiment_timeout_seconds,
+            max_repairs=0,
+        )
+        resolved_autonomous_service = AutonomousService(
+            provider=resolved_llm_provider,
+            tasks=resolved_agent_repository,
+            workflows=WorkflowRepository(resolved_agent_repository.session_factory),
+            runner=resolved_agent_runner,
+            coding=resolved_coding_agent,
+            experiments=workflow_experiments,
+            workspace=resolved_workspace_manager,
+            artifacts=resolved_artifact_manager,
+            limits=resolved_settings.autonomous_budget,
+        )
+
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.database = resolved_database
@@ -289,6 +324,7 @@ def create_app(
         default_response_class=UTF8JSONResponse,
     )
     application.state.settings = resolved_settings
+    application.state.autonomous_service = resolved_autonomous_service
     application.state.database = resolved_database
     application.state.redis = resolved_redis
     application.state.qdrant = resolved_qdrant
