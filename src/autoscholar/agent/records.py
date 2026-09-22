@@ -4,15 +4,15 @@ from typing import Any, Literal
 
 TaskStatus = Literal["running", "succeeded", "partial", "failed", "budget_exceeded"]
 ToolCallStatus = Literal["succeeded", "failed"]
-AgentMode = Literal["auto", "research", "compute", "knowledge", "coding", "experiment"]
-ResolvedAgentMode = Literal["research", "compute", "knowledge", "coding", "experiment"]
+AgentMode = Literal[
+    "auto", "research", "compute", "knowledge", "coding", "experiment", "autonomous"
+]
+ResolvedAgentMode = Literal[
+    "research", "compute", "knowledge", "coding", "experiment", "autonomous"
+]
 ResearchSource = Literal["web", "paper"]
-ExperimentStatus = Literal[
-    "pending", "preparing", "running", "analyzing", "succeeded", "failed"
-]
-ArtifactType = Literal[
-    "experiment", "metrics", "plot", "report", "checkpoint", "stdout", "stderr"
-]
+ExperimentStatus = Literal["pending", "preparing", "running", "analyzing", "succeeded", "failed"]
+ArtifactType = Literal["experiment", "metrics", "plot", "report", "checkpoint", "stdout", "stderr"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +117,5 @@ class AgentTaskRecord:
     evidence: list[EvidenceRecord] = field(default_factory=list)
     tool_calls: list[ToolTraceRecord] = field(default_factory=list)
     project_id: str | None = None
-    research_sources: list[ResearchSource] = field(
-        default_factory=lambda: ["web", "paper"]
-    )
+    parent_task_id: str | None = None
+    research_sources: list[ResearchSource] = field(default_factory=lambda: ["web", "paper"])

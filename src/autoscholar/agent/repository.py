@@ -29,11 +29,16 @@ from autoscholar.agent.records import (
     ToolCallStatus,
     ToolTraceRecord,
 )
+from autoscholar.core.budget import current_parent
 
 
 class AgentTaskRepository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = session_factory
+
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession]:
+        return self._sessions
 
     async def create_task(
         self,
@@ -50,6 +55,7 @@ class AgentTaskRepository:
                 project_id=project_id,
                 status="running",
                 mode=mode,
+                parent_task_id=current_parent.get(),
                 objective=objective,
                 plan=[],
                 metrics={},
@@ -364,6 +370,7 @@ class AgentTaskRepository:
             updated_at=row.updated_at,
             tool_calls=[cls._tool_record(call) for call in tool_calls],
             project_id=row.project_id,
+            parent_task_id=row.parent_task_id,
             research_sources=[cast(ResearchSource, item) for item in row.research_sources],
         )
 
