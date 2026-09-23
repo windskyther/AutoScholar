@@ -1,8 +1,10 @@
 import base64
 import binascii
 import hashlib
+import io
 import json
 import struct
+import zipfile
 import zlib
 from typing import ClassVar, Protocol
 
@@ -137,11 +139,45 @@ class ArtifactManager:
                 raise ArtifactError(
                     "artifact_png_invalid", "PNG dimensions or header checksum invalid"
                 )
+            offset = 8
+            saw_data = False
+            while offset + 12 <= len(content):
+                length = struct.unpack(">I", content[offset : offset + 4])[0]
+                kind = content[offset + 4 : offset + 8]
+                end = offset + 12 + length
+                if end > len(content):
+                    break
+                checksum = struct.unpack(">I", content[end - 4 : end])[0]
+                if zlib.crc32(content[offset + 4 : end - 4]) & 0xFFFFFFFF != checksum:
+                    break
+                saw_data |= kind == b"IDAT" and length > 0
+                if kind == b"IEND":
+                    if length == 0 and end == len(content) and saw_data:
+                        return
+                    break
+                offset = end
+            raise ArtifactError("artifact_png_invalid", "PNG chunks are truncated or invalid")
         elif path.endswith(".pt"):
             if not content.startswith(b"PK\x03\x04"):
                 raise ArtifactError(
                     "artifact_checkpoint_invalid", "Checkpoint is not a torch archive"
                 )
+            # Check archive completeness/CRC without extracting or unpickling tensors.
+            try:
+                with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                    entries = archive.infolist()
+                    if (
+                        not entries
+                        or len(entries) > 2048
+                        or sum(item.file_size for item in entries) > 64 * 1024**2
+                        or any(item.flag_bits & 1 for item in entries)
+                        or archive.testzip() is not None
+                    ):
+                        raise ValueError("invalid archive")
+            except (ValueError, OSError, RuntimeError, zipfile.BadZipFile, zlib.error) as exc:
+                raise ArtifactError(
+                    "artifact_checkpoint_invalid", "Checkpoint archive is incomplete or invalid"
+                ) from exc
         else:
             try:
                 content.decode("utf-8")

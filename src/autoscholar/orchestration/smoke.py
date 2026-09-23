@@ -95,17 +95,24 @@ class OfflineCoordinator:
 class FaultOnceSandbox:
     """Never installed in the server; used only by this explicit acceptance command."""
 
-    def __init__(self, inner: SandboxExecutor) -> None:
+    def __init__(self, inner: SandboxExecutor, *, repeat: bool = False) -> None:
         self.inner = inner
         self.injected = False
+        self.repeat = repeat
+        self.injections = 0
 
     async def health(self) -> SandboxHealth:
         return await self.inner.health()
 
     async def run(self, request: SandboxRunRequest) -> SandboxRunResult:
         result = await self.inner.run(request)
-        if request.collect_artifacts and result.status == "succeeded" and not self.injected:
+        if (
+            request.collect_artifacts
+            and result.status == "succeeded"
+            and (self.repeat or not self.injected)
+        ):
             self.injected = True
+            self.injections += 1
             # Keep actual execution real; simulate loss of the required metric output.
             # No fake measurement or fake successful review is ever created.
             return result.model_copy(
@@ -121,9 +128,17 @@ class FaultOnceSandbox:
         await self.inner.close()
 
 
-async def run_smoke(*, inject_fault: bool, research: bool, offline: bool = False) -> None:
+async def run_smoke(
+    *,
+    inject_fault: bool,
+    research: bool,
+    offline: bool = False,
+    persistent_fault: bool = False,
+) -> None:
     if offline and research:
         raise ValueError("--offline cannot be combined with external --research")
+    if persistent_fault and not offline:
+        raise ValueError("Persistent fault acceptance requires --offline")
     settings = Settings()
     token = secrets.token_urlsafe(32)
     settings = settings.model_copy(update={"experiment_api_token": SecretStr(token)})
@@ -131,7 +146,11 @@ async def run_smoke(*, inject_fault: bool, research: bool, offline: bool = False
         settings.sandbox_manager_url,
         timeout_seconds=settings.experiment_timeout_seconds + 10,
     )
-    fault = FaultOnceSandbox(client) if inject_fault else None
+    fault = (
+        FaultOnceSandbox(client, repeat=persistent_fault)
+        if (inject_fault or persistent_fault)
+        else None
+    )
     app = create_app(
         settings,
         sandbox_executor=fault or client,
@@ -166,6 +185,8 @@ async def run_smoke(*, inject_fault: bool, research: bool, offline: bool = False
             "research_sources": ["web"],
             "experiment_specification": {"epochs": 1, "train_samples": 128, "test_samples": 128},
         }
+        if persistent_fault:
+            payload["budget"] = {"training_runs": 2, "replans": 2}
         assert (await api.post("/agent/run", json=payload)).status_code == 401
         response = await api.post("/agent/run", json=payload, headers=auth)
         response.raise_for_status()
@@ -186,7 +207,8 @@ async def run_smoke(*, inject_fault: bool, research: bool, offline: bool = False
             ),
             flush=True,
         )
-        assert task["status"] == "succeeded", "Workflow failed; inspect persisted histories"
+        expected_status = "budget_exceeded" if persistent_fault else "succeeded"
+        assert task["status"] == expected_status, "Unexpected status; inspect persisted histories"
         histories = {}
         for kind in ("plans", "steps", "reviews"):
             path = f"/agent/tasks/{task_id}/workflow/{kind}"
@@ -195,6 +217,37 @@ async def run_smoke(*, inject_fault: bool, research: bool, offline: bool = False
             result.raise_for_status()
             histories[kind] = result.json()["items"]
         latest = max(histories["reviews"], key=lambda item: item["plan_version"])
+        if persistent_fault:
+            assert fault and fault.injections == 2
+            assert task["metrics"]["training_runs"] == 2
+            assert task["metrics"]["replans"] == 2
+            assert task.get("answer") is None
+            assert detail["error_code"] == "autonomous_budget_exceeded"
+            assert len(histories["plans"]) == 3
+            assert all(row["payload"]["status"] == "REPLAN" for row in histories["reviews"])
+            assert all(row["status"] != "running" for row in histories["steps"])
+            for row in histories["steps"]:
+                child = (await api.get(f"/agent/tasks/{row['child_task_id']}", headers=auth)).json()
+                assert child["status"] != "running"
+                if child["mode"] == "experiment":
+                    records = (
+                        await api.get(f"/agent/tasks/{child['task_id']}/experiments", headers=auth)
+                    ).json()["items"]
+                    assert records and all(item["status"] == "failed" for item in records)
+            print(
+                json.dumps(
+                    {
+                        "acceptance": "passed",
+                        "scenario": "persistent-fault-budget-stop",
+                        "task_id": task_id,
+                        "training_runs": 2,
+                        "injections": fault.injections,
+                        "plan_versions": len(histories["plans"]),
+                    }
+                ),
+                flush=True,
+            )
+            return
         assert latest["payload"]["status"] == "PASS"
         assert len({row["child_task_id"] for row in histories["steps"]}) == len(histories["steps"])
         web_evidence_count = 0
@@ -267,6 +320,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inject-invalid-metrics", action="store_true")
     parser.add_argument("--research", action="store_true")
+    parser.add_argument("--persistent-invalid-metrics", action="store_true")
     parser.add_argument(
         "--offline", action="store_true", help="Scripted coordinator; no external API"
     )
@@ -276,6 +330,7 @@ def main() -> None:
             inject_fault=args.inject_invalid_metrics,
             research=args.research,
             offline=args.offline,
+            persistent_fault=args.persistent_invalid_metrics,
         )
     )
 

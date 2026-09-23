@@ -7,8 +7,10 @@ from typing import Any
 import httpx
 import pytest
 from pydantic import SecretStr
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
+from autoscholar.agent.database_models import Base
+from autoscholar.agent.repository import AgentTaskRepository
 from autoscholar.agent.runner import AgentRunner
 from autoscholar.coding.agent import CodingAgent
 from autoscholar.coding.sandbox import SandboxRunRequest, SandboxRunResult
@@ -17,7 +19,7 @@ from autoscholar.coding.workspace import WorkspaceManager
 from autoscholar.core.budget import BudgetedLLM, BudgetLimits
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.service import ExperimentService
-from autoscholar.llm import LLMResult, ToolCall
+from autoscholar.llm import LLMProvider, LLMResult, ToolCall
 from autoscholar.main import create_app
 from autoscholar.orchestration.models import ReviewResult, TaskPlan
 from autoscholar.orchestration.repository import WorkflowRepository
@@ -100,10 +102,18 @@ class NegativeResultSandbox(FakeExperimentSandbox):
 
 async def workflow(
     tmp_path: Path,
-    provider: ScriptedProvider,
+    provider: LLMProvider,
     sandbox: FakeExperimentSandbox,
+    *,
+    database_url: str | None = None,
 ) -> tuple[AutonomousService, AsyncEngine]:
-    tasks, engine = await repository()
+    if database_url is None:
+        tasks, engine = await repository()
+    else:
+        engine = create_async_engine(database_url)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        tasks = AgentTaskRepository(async_sessionmaker(engine, expire_on_commit=False))
     workspace = WorkspaceManager(tmp_path)
     artifacts = ArtifactManager(workspace, tasks)
     metered = BudgetedLLM(provider)

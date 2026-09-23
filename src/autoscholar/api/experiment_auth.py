@@ -19,7 +19,9 @@ def require_experiment_token(request: Request) -> None:
     if (
         not separator
         or scheme.casefold() != "bearer"
-        or not secrets.compare_digest(supplied, expected)
+        # HTTP header bytes may decode to non-ASCII text. Compare bytes so malformed
+        # credentials receive 401 rather than compare_digest raising TypeError.
+        or not secrets.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
     ):
         raise AppError(
             status_code=401,

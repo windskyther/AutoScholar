@@ -48,8 +48,10 @@ def test_workspace_rejects_symlink_escape(tmp_path: Path) -> None:
     except OSError:
         pytest.skip("symbolic links are unavailable for this account")
 
-    with pytest.raises(WorkspaceError, match="Symbolic links"):
+    with pytest.raises(WorkspaceError) as rejected:
         manager.write_text("task-1", "link/escape.py", "unsafe")
+    assert rejected.value.code == "workspace_path_invalid"
+    assert not list(outside.iterdir())
 
 
 def test_workspace_enforces_file_and_total_quotas(tmp_path: Path) -> None:
