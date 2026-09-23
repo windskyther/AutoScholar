@@ -41,9 +41,13 @@ class OfflineCoordinator:
         tools: list[ToolDefinition] | None = None,
         tool_choice: ToolChoice = "none",
     ) -> LLMResult:
-        del tools
-        payload = json.loads(messages[-1].content) if tool_choice != "auto" else {}
-        name = tool_choice
+        del tool_choice
+        structured = {"submit_task_plan", "submit_review", "submit_plan_revision"}
+        name = next(
+            (tool.name for tool in (tools or []) if tool.name in structured),
+            "submit_code_ready",
+        )
+        payload = json.loads(messages[-1].content) if name in structured else {}
         args: dict[str, Any]
         if name == "submit_task_plan":
             args = {
@@ -140,8 +144,10 @@ async def run_smoke(*, inject_fault: bool, research: bool, offline: bool = False
         "acceptance, not a benchmark. Preserve the config and output contracts. "
     )
     objective += (
-        "First collect a small amount of web evidence about the MLP/CNN distinction "
-        "using one research step, and pass it to coding."
+        "Use exactly three steps: one research, one coding (including validation), and one "
+        "experiment. First use three focused web queries about the architectural "
+        "distinction between MLP and CNN, and pass the evidence to coding. Do not conduct "
+        "an extended survey, historical review, or search for benchmark accuracies."
         if research
         else "No external research is needed; use exactly one coding step and one experiment step."
     )
@@ -190,10 +196,29 @@ async def run_smoke(*, inject_fault: bool, research: bool, offline: bool = False
             histories[kind] = result.json()["items"]
         latest = max(histories["reviews"], key=lambda item: item["plan_version"])
         assert latest["payload"]["status"] == "PASS"
+        assert len({row["child_task_id"] for row in histories["steps"]}) == len(histories["steps"])
+        web_evidence_count = 0
+        if research:
+            for row in histories["steps"]:
+                child = await api.get(
+                    f"/agent/tasks/{row['child_task_id']}",
+                    headers=auth,
+                )
+                child.raise_for_status()
+                if child.json()["mode"] == "research" and row["status"] == "succeeded":
+                    web_evidence_count += sum(
+                        evidence["provider"] == "tavily" and evidence["source_type"] == "web"
+                        for evidence in child.json()["evidence"]
+                    )
+            assert web_evidence_count > 0, "Research acceptance requires real Tavily evidence"
         if inject_fault:
             assert fault and fault.injected
             assert task["metrics"]["replans"] >= 1
             assert any(row["payload"]["status"] == "REPLAN" for row in histories["reviews"])
+            assert any(
+                row["result"].get("error_code") == "experiment_artifacts_missing"
+                for row in histories["steps"]
+            )
         verified = 0
         experiments = []
         for step in histories["steps"]:
@@ -201,6 +226,7 @@ async def run_smoke(*, inject_fault: bool, research: bool, offline: bool = False
             if "experiment_id" not in output or step["status"] != "succeeded":
                 continue
             child_id = step["child_task_id"]
+            assert output["source_sha256"] == output["expected_source_sha256"]
             assert (await api.get(f"/agent/tasks/{child_id}")).status_code == 401
             manifest = await api.get(f"/agent/tasks/{child_id}/artifacts", headers=auth)
             manifest.raise_for_status()
@@ -229,6 +255,7 @@ async def run_smoke(*, inject_fault: bool, research: bool, offline: bool = False
                     "plan_versions": len(histories["plans"]),
                     "reviews": len(histories["reviews"]),
                     "verified_artifacts": verified,
+                    "web_evidence_count": web_evidence_count,
                     "experiments": experiments,
                 }
             ),

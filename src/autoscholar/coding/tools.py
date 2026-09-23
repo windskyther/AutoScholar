@@ -83,7 +83,10 @@ class WorkspaceToolset:
                     {"query": {"type": "string", "minLength": 1, "maxLength": 500}},
                     ["query"],
                 ),
-                handler=lambda args: self._manager.search(self._task_id, args["query"]),
+                handler=lambda args: [
+                    {**match, "path": str(match["path"]).removeprefix("source/")}
+                    for match in self._manager.search(self._task_id, args["query"])
+                ],
             ),
             WorkspaceTool(
                 name="create_file",
@@ -130,7 +133,7 @@ class WorkspaceToolset:
     @staticmethod
     def _record(item: WorkspaceFile) -> dict[str, object]:
         return {
-            "path": item.path,
+            "path": item.path.removeprefix("source/"),
             "size_bytes": item.size_bytes,
             "sha256": item.sha256,
         }

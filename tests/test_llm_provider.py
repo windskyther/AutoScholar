@@ -4,8 +4,15 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
+from autoscholar.core.budget import (
+    Budget,
+    BudgetedLLM,
+    BudgetExceeded,
+    BudgetLimits,
+    current_budget,
+)
 from autoscholar.core.config import Settings
-from autoscholar.llm.errors import LLMNotConfiguredError, LLMUnavailableError
+from autoscholar.llm.errors import LLMNotConfiguredError, LLMResponseError, LLMUnavailableError
 from autoscholar.llm.factory import create_llm_provider
 from autoscholar.llm.models import (
     AssistantToolCallMessage,
@@ -168,9 +175,7 @@ async def test_provider_serializes_tool_results() -> None:
     messages: list[ChatMessage | AssistantToolCallMessage | ToolResultMessage] = [
         ChatMessage(role="user", content="calculate 2+2"),
         AssistantToolCallMessage(
-            tool_calls=(
-                ToolCall(id="call-1", name="calculator", arguments={"expression": "2+2"}),
-            ),
+            tool_calls=(ToolCall(id="call-1", name="calculator", arguments={"expression": "2+2"}),),
             reasoning_content="I used the calculator.",
         ),
         ToolResultMessage(tool_call_id="call-1", content="4"),
@@ -180,6 +185,60 @@ async def test_provider_serializes_tool_results() -> None:
         result = await provider.generate(messages)
 
     assert result.text == "The answer is 4."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", ["{invalid", "[]"])
+@pytest.mark.parametrize("has_usage", [True, False])
+async def test_invalid_response_is_metered_or_stops_without_usage(
+    arguments: str, has_usage: bool
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "bad-tool",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "test",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "bad",
+                                    "type": "function",
+                                    "function": {"name": "submit_review", "arguments": arguments},
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "usage": (
+                    {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}
+                    if has_usage
+                    else None
+                ),
+            },
+        )
+
+    budget = Budget(BudgetLimits())
+    token = current_budget.set(budget)
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            provider = BudgetedLLM(
+                OpenAICompatibleProvider(configured_settings(), http_client=client)
+            )
+            with pytest.raises(LLMResponseError if has_usage else BudgetExceeded):
+                await provider.generate([ChatMessage(role="user", content="review")])
+        assert budget.used["model_calls"] == 1
+        assert budget.used["total_tokens"] == (3 if has_usage else budget.limits.total_tokens)
+    finally:
+        current_budget.reset(token)
 
 
 @pytest.mark.asyncio

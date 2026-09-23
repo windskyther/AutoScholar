@@ -13,7 +13,7 @@ from openai import (
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
 from autoscholar.core.config import Settings
-from autoscholar.llm.errors import LLMUnavailableError, LLMUpstreamError
+from autoscholar.llm.errors import LLMResponseError, LLMUnavailableError, LLMUpstreamError
 from autoscholar.llm.models import (
     ChatMessage,
     ConversationMessage,
@@ -90,6 +90,13 @@ class OpenAICompatibleProvider:
         except APIStatusError as exc:
             raise LLMUpstreamError(message="The language model provider returned an error") from exc
 
+        usage = None
+        if response.usage is not None:
+            usage = TokenUsage(
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+            )
         message = response.choices[0].message if response.choices else None
         content = message.content if message is not None else None
         raw_message: Any = message
@@ -105,14 +112,16 @@ class OpenAICompatibleProvider:
                 try:
                     arguments = json.loads(raw_call.function.arguments)
                 except (json.JSONDecodeError, TypeError) as exc:
-                    raise LLMUpstreamError(
+                    raise LLMResponseError(
                         code="llm_invalid_tool_call",
                         message="The language model returned invalid tool arguments",
+                        usage=usage,
                     ) from exc
                 if not isinstance(arguments, dict):
-                    raise LLMUpstreamError(
+                    raise LLMResponseError(
                         code="llm_invalid_tool_call",
                         message="The language model returned invalid tool arguments",
+                        usage=usage,
                     )
                 tool_calls.append(
                     ToolCall(
@@ -123,17 +132,10 @@ class OpenAICompatibleProvider:
                 )
 
         if not content and not tool_calls:
-            raise LLMUpstreamError(
+            raise LLMResponseError(
                 code="llm_empty_response",
                 message="The language model provider returned no text or tool calls",
-            )
-
-        usage = None
-        if response.usage is not None:
-            usage = TokenUsage(
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens,
+                usage=usage,
             )
 
         return LLMResult(

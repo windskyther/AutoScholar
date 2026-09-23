@@ -43,6 +43,11 @@ class TaskPlan(StrictModel):
             done |= ready
             pending -= ready
         for step in self.steps:
+            if (
+                step.type == "coding"
+                and sum(by_id[key].type == "coding" for key in step.dependencies) > 1
+            ):
+                raise ValueError("a coding step can inherit at most one coding predecessor")
             if step.type == "experiment":
                 coding = [key for key in step.dependencies if by_id[key].type == "coding"]
                 if len(coding) != 1:
@@ -59,7 +64,11 @@ class ReviewIssue(StrictModel):
 class ReviewResult(StrictModel):
     status: Literal["PASS", "REPLAN"]
     issues: list[ReviewIssue] = Field(default_factory=list, max_length=30)
-    suggested_steps: list[str] = Field(default_factory=list, max_length=20)
+    suggested_steps: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Existing plan step IDs to rerun, never new IDs or textual instructions",
+    )
 
     @model_validator(mode="after")
     def validate_verdict(self) -> "ReviewResult":

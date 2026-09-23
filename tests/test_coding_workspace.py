@@ -111,6 +111,6 @@ async def test_workspace_tools_are_scoped_and_return_structured_results(tmp_path
     escaped = await tools["read_file"].execute({"path": "../../.env"})
 
     assert created.succeeded is True
-    assert json.loads(listed.output)[0]["path"] == "source/main.py"
+    assert json.loads(listed.output)[0]["path"] == "main.py"
     assert escaped.succeeded is False
     assert escaped.error_code == "workspace_path_invalid"

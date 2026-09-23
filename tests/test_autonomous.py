@@ -12,16 +12,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from autoscholar.agent.runner import AgentRunner
 from autoscholar.coding.agent import CodingAgent
 from autoscholar.coding.sandbox import SandboxRunRequest, SandboxRunResult
+from autoscholar.coding.tools import WorkspaceToolset
 from autoscholar.coding.workspace import WorkspaceManager
 from autoscholar.core.budget import BudgetedLLM, BudgetLimits
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.service import ExperimentService
 from autoscholar.llm import LLMResult, ToolCall
 from autoscholar.main import create_app
-from autoscholar.orchestration.models import ReviewResult
+from autoscholar.orchestration.models import ReviewResult, TaskPlan
 from autoscholar.orchestration.repository import WorkflowRepository
 from autoscholar.orchestration.sandbox import BudgetedSandbox
-from autoscholar.orchestration.service import AutonomousService
+from autoscholar.orchestration.service import (
+    AutonomousService,
+    dependency_context,
+    experiment_contract,
+)
 from tests.test_agent_runner import ScriptedProvider, repository, response
 from tests.test_experiment_service import FakeExperimentSandbox, _artifact
 from tests.test_workflow_foundation import plan
@@ -152,6 +157,7 @@ async def test_autonomous_passes_with_negative_results_and_real_source_handoff(
         training = next(item for item in sandbox.requests if item.action == "run_python")
         assert training.files["train.py"] == service.workspace.read_text(child.id, "train.py")
         assert len(await service.workflows.history(result.task.id, "reviews")) == 1
+        assert all(item["tool_choice"] == "auto" for item in provider.calls)
     finally:
         await engine.dispose()
 
@@ -422,3 +428,302 @@ async def test_replanner_cannot_drop_unresolved_original_work(tmp_path: Path) ->
         assert len(provider.calls) == 4
     finally:
         await engine.dispose()
+
+
+async def test_auto_tool_choice_still_rejects_plain_text_plan(tmp_path: Path) -> None:
+    provider = ScriptedProvider([response(text=plan().model_dump_json()) for _ in range(2)])
+    sandbox = FakeExperimentSandbox()
+    service, engine = await workflow(tmp_path, provider, sandbox)
+    try:
+        result = await service.run("Compare models")
+        assert result.task.status == "failed"
+        assert result.task.error_code == "autonomous_protocol_invalid"
+        assert len(provider.calls) == 2
+        assert provider.calls[0]["tool_choice"] == "auto"
+        assert not sandbox.requests
+    finally:
+        await engine.dispose()
+
+
+async def test_workspace_tool_paths_round_trip_for_list_search_and_create(tmp_path: Path) -> None:
+    workspace = WorkspaceManager(tmp_path)
+    workspace.initialize("path-test")
+    tools = {
+        tool.definition.name: tool for tool in WorkspaceToolset(workspace, "path-test").tools()
+    }
+    created = await tools["create_file"].execute({"path": "nested/main.py", "content": "x = 1\n"})
+    listed = await tools["list_files"].execute({})
+    searched = await tools["search_code"].execute({"query": "x = 1"})
+    paths = [
+        json.loads(created.output)["path"],
+        json.loads(listed.output)[0]["path"],
+        json.loads(searched.output)[0]["path"],
+    ]
+    assert paths == ["nested/main.py"] * 3
+    for path in paths:
+        read = await tools["read_file"].execute({"path": path})
+        assert read.succeeded
+        assert json.loads(read.output)["content"] == "x = 1\n"
+
+
+def test_dependency_context_is_bounded_without_mutating_authoritative_evidence() -> None:
+    evidence = [
+        {
+            "reference": f"research-task:E{i}",
+            "id": str(i),
+            "claim": "c" * 2000,
+            "excerpt": "e" * 8000,
+        }
+        for i in range(12)
+    ]
+    results: dict[str, dict[str, Any]] = {
+        "research": {
+            "child_task_id": "research-task",
+            "status": "succeeded",
+            "answer": "answer" * 10000,
+            "evidence": evidence,
+        },
+        "code": {"child_task_id": "coding-task", "status": "succeeded", "source_sha256": "digest"},
+    }
+    compact = dependency_context(results)
+    assert len(json.dumps(compact)) < 5000
+    assert compact["research"]["evidence_total"] == 12
+    assert compact["research"]["evidence"][0]["reference"] == "research-task:E0"
+    assert compact["code"]["source_sha256"] == "digest"
+    assert len(results["research"]["evidence"]) == 12
+    assert len(evidence[0]["excerpt"]) == 8000
+
+
+async def test_structured_protocol_retry_is_bounded_and_metered(tmp_path: Path) -> None:
+    provider = ScriptedProvider([response(text="I will plan next."), *script()])
+    service, engine = await workflow(tmp_path, provider, FakeExperimentSandbox())
+    try:
+        result = await service.run("Compare models")
+        assert result.task.status == "succeeded"
+        assert result.task.metrics["model_calls"] == 4
+        assert "Protocol correction:" in provider.calls[1]["messages"][-1].content
+    finally:
+        await engine.dispose()
+
+
+async def test_artifact_contract_reaches_every_coordinator_and_coding_node(tmp_path: Path) -> None:
+    provider = ScriptedProvider(script(replan=True))
+    service, engine = await workflow(tmp_path, provider, InvalidOnceSandbox())
+    try:
+        result = await service.run("Compare models")
+        assert result.task.status == "succeeded", result.task.error_message
+        for index in (0, 2, 3, 4):
+            payload = json.loads(provider.calls[index]["messages"][1].content)
+            assert payload["experiment_contract"] == experiment_contract()
+        coding = json.loads(provider.calls[1]["messages"][1].content)
+        assert json.dumps(experiment_contract(), ensure_ascii=False) in coding["objective"]
+        schema = experiment_contract()["raw_metrics_schema"]
+        assert schema["additionalProperties"] is False
+        assert "primary_metric" not in schema["properties"]
+    finally:
+        await engine.dispose()
+
+
+async def test_schema_correction_identifies_field_without_echoing_invalid_input(
+    tmp_path: Path,
+) -> None:
+    provider = ScriptedProvider(
+        [
+            call("submit_task_plan", {"goal": "Compare", "steps": "private-invalid-marker"}),
+            *script(),
+        ]
+    )
+    service, engine = await workflow(tmp_path, provider, FakeExperimentSandbox())
+    try:
+        result = await service.run("Compare models")
+        assert result.task.status == "succeeded", result.task.error_message
+        correction = provider.calls[1]["messages"][-1].content
+        assert "steps" in correction and "list_type" in correction
+        assert "private-invalid-marker" not in correction
+    finally:
+        await engine.dispose()
+
+
+async def test_malformed_native_arguments_retry_once_and_charge_usage(tmp_path: Path) -> None:
+    from autoscholar.llm.errors import LLMResponseError
+    from autoscholar.llm.models import TokenUsage
+
+    class InvalidOnceProvider(ScriptedProvider):
+        async def generate(self, messages: Any, **kwargs: Any) -> LLMResult:
+            if not self.calls:
+                self.calls.append({"messages": messages, **kwargs})
+                raise LLMResponseError(
+                    code="llm_invalid_tool_call",
+                    message="Invalid arguments",
+                    usage=TokenUsage(2, 5, 7),
+                )
+            return await super().generate(messages, **kwargs)
+
+    provider = InvalidOnceProvider(script())
+    service, engine = await workflow(tmp_path, provider, FakeExperimentSandbox())
+    try:
+        result = await service.run("Compare models")
+        assert result.task.status == "succeeded", result.task.error_message
+        assert result.task.metrics["model_calls"] == 4
+        assert result.task.metrics["total_tokens"] == 16
+        assert "Protocol correction:" in provider.calls[1]["messages"][-1].content
+    finally:
+        await engine.dispose()
+
+
+async def test_coding_successor_inherits_upstream_source_not_fresh_templates(
+    tmp_path: Path,
+) -> None:
+    task_plan = plan().model_dump()
+    task_plan["steps"].insert(
+        1,
+        {
+            "id": "validate",
+            "type": "coding",
+            "description": "Validate upstream implementation",
+            "expected_output": "Validated upstream source",
+            "dependencies": ["code"],
+        },
+    )
+    task_plan["steps"][-1]["dependencies"] = ["validate"]
+    responses = [
+        call("submit_task_plan", task_plan),
+        call("create_file", {"path": "lineage.txt", "content": "upstream implementation"}),
+        call("submit_code_ready", {"summary": "Implemented"}),
+        call("submit_code_ready", {"summary": "Validated"}),
+        call("submit_review", {"status": "PASS"}),
+    ]
+    service, engine = await workflow(
+        tmp_path,
+        ScriptedProvider(responses),
+        FakeExperimentSandbox(),
+    )
+    try:
+        result = await service.run("Compare models")
+        assert result.task.status == "succeeded", result.task.error_message
+        for step in await service.workflows.history(result.task.id, "steps"):
+            assert (
+                service.workspace.read_text(
+                    step["child_task_id"],
+                    "lineage.txt",
+                )
+                == "upstream implementation"
+            )
+    finally:
+        await engine.dispose()
+
+
+async def test_seeded_coding_uses_refreshed_snapshot_without_replaying_history(
+    tmp_path: Path,
+) -> None:
+    provider = ScriptedProvider(
+        [
+            call("submit_task_plan", plan().model_dump()),
+            call("create_file", {"path": "marker.txt", "content": "before"}),
+            call("edit_file", {"path": "marker.txt", "old_text": "before", "new_text": "after"}),
+            call("submit_code_ready", {"summary": "Inspected current source"}),
+            call("submit_review", {"status": "PASS"}),
+        ]
+    )
+    sandbox = FakeExperimentSandbox()
+    service, engine = await workflow(tmp_path, provider, sandbox)
+    try:
+        result = await service.run("Compare models")
+        assert result.task.status == "succeeded", result.task.error_message
+        coding_calls = provider.calls[1:4]
+        assert all(len(item["messages"]) == 2 for item in coding_calls)
+        snapshots = [json.loads(item["messages"][-1].content) for item in coding_calls]
+        assert "marker.txt" not in snapshots[0]["source_files"]
+        assert snapshots[1]["source_files"]["marker.txt"] == "before"
+        assert snapshots[2]["source_files"]["marker.txt"] == "after"
+        assert all(
+            {tool.name for tool in item["tools"]}
+            == {"create_file", "edit_file", "submit_code_ready"}
+            for item in coding_calls
+        )
+        assert [request.action for request in sandbox.requests[:2]] == [
+            "static_check",
+            "run_pytest",
+        ]
+    finally:
+        await engine.dispose()
+
+
+async def test_seeded_coding_edit_limit_never_auto_approves_unfinished_source(
+    tmp_path: Path,
+) -> None:
+    provider = ScriptedProvider(
+        [
+            call("submit_task_plan", plan().model_dump()),
+            *[
+                call("create_file", {"path": f"note{i}.txt", "content": "pending"})
+                for i in range(8)
+            ],
+            call("submit_review", {"status": "PASS"}),
+        ]
+    )
+    sandbox = FakeExperimentSandbox()
+    service, engine = await workflow(tmp_path, provider, sandbox)
+    try:
+        result = await service.run("Compare models", budget=BudgetLimits(replans=0))
+        assert result.task.status == "budget_exceeded"
+        steps = await service.workflows.history(result.task.id, "steps")
+        code = next(item for item in steps if item["step_id"] == "code")
+        assert code["status"] == "failed"
+        assert code["result"]["error_code"] == "coding_tool_budget_exceeded"
+        assert not sandbox.requests
+        assert len(provider.calls) == 10
+    finally:
+        await engine.dispose()
+
+
+async def test_seeded_coding_batch_cannot_bypass_edit_limit(tmp_path: Path) -> None:
+    provider = ScriptedProvider(
+        [
+            call("submit_task_plan", plan().model_dump()),
+            LLMResult(
+                text="",
+                model="batched",
+                usage=response().usage,
+                tool_calls=tuple(
+                    ToolCall(
+                        id=f"call{i}",
+                        name="create_file",
+                        arguments={"path": f"note{i}.txt", "content": "pending"},
+                    )
+                    for i in range(9)
+                ),
+            ),
+            call("submit_review", {"status": "PASS"}),
+        ]
+    )
+    service, engine = await workflow(tmp_path, provider, FakeExperimentSandbox())
+    try:
+        result = await service.run("Compare models", budget=BudgetLimits(replans=0))
+        steps = await service.workflows.history(result.task.id, "steps")
+        code = next(item for item in steps if item["step_id"] == "code")
+        assert code["result"]["error_code"] == "coding_tool_budget_exceeded"
+        snapshot = service.workspace.source_snapshot(code["child_task_id"])
+        assert "note7.txt" in snapshot
+        assert "note8.txt" not in snapshot
+        assert len(provider.calls) == 3
+    finally:
+        await engine.dispose()
+
+
+def test_plan_rejects_ambiguous_coding_source_merge() -> None:
+    task_plan = plan().model_dump()
+    task_plan["steps"].extend(
+        [
+            {"id": "other", "type": "coding", "description": "Other", "expected_output": "Code"},
+            {
+                "id": "merge",
+                "type": "coding",
+                "description": "Merge",
+                "expected_output": "Code",
+                "dependencies": ["code", "other"],
+            },
+        ]
+    )
+    with pytest.raises(ValueError, match="at most one coding predecessor"):
+        TaskPlan.model_validate(task_plan)

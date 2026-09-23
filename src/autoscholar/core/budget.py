@@ -11,7 +11,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from autoscholar.llm.base import LLMProvider
-    from autoscholar.llm.models import ConversationMessage, LLMResult, ToolChoice, ToolDefinition
+    from autoscholar.llm.models import (
+        ConversationMessage,
+        LLMResult,
+        TokenUsage,
+        ToolChoice,
+        ToolDefinition,
+    )
 
 
 class BudgetLimits(BaseModel):
@@ -87,18 +93,29 @@ class BudgetedLLM:
         tools: list[ToolDefinition] | None = None,
         tool_choice: ToolChoice = "none",
     ) -> LLMResult:
+        # Config imports BudgetLimits before the provider package can be initialized.
+        from autoscholar.llm.errors import LLMResponseError
+
         consume("model_calls")
-        result = await self.provider.generate(messages, tools=tools, tool_choice=tool_choice)
+        try:
+            result = await self.provider.generate(messages, tools=tools, tool_choice=tool_choice)
+        except LLMResponseError as exc:
+            self._account(exc.usage)
+            raise
+        self._account(result.usage)
+        return result
+
+    @staticmethod
+    def _account(usage: TokenUsage | None) -> None:
         budget = current_budget.get()
         if budget is not None:
-            if result.usage is None:
+            if usage is None:
                 # Never permit unmetered repeated calls when a provider omits usage.
                 budget.used["total_tokens"] = budget.limits.total_tokens
                 raise BudgetExceeded("provider_usage_missing")
             for key in ("input_tokens", "output_tokens", "total_tokens"):
-                budget.used[key] = budget.used.get(key, 0) + max(0, getattr(result.usage, key))
+                budget.used[key] = budget.used.get(key, 0) + max(0, getattr(usage, key))
             budget.check()
-        return result
 
     async def close(self) -> None:
         await self.provider.close()
