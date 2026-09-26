@@ -4,6 +4,7 @@ from typing import Any, Protocol
 
 import structlog
 
+from autoscholar.core.journal import external_operation
 from autoscholar.research.models import SearchResponse, SearchResult, SourceType
 from autoscholar.research.providers import BaseHTTPResearchProvider
 
@@ -88,7 +89,8 @@ class ResearchSearchService:
                     results=tuple(cached),
                     cache_hit=True,
                 )
-        results = await self.provider.search(normalized, limit=bounded_limit)
+        async with external_operation("search:" + self.name):
+            results = await self.provider.search(normalized, limit=bounded_limit)
         if self._cache is not None:
             await self._cache.set(cache_key, results)
         return SearchResponse(

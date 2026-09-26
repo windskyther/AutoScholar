@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from autoscholar.core.journal import external_operation
+
 if TYPE_CHECKING:
     from autoscholar.llm.base import LLMProvider
     from autoscholar.llm.models import (
@@ -97,12 +99,29 @@ class BudgetedLLM:
         from autoscholar.llm.errors import LLMResponseError
 
         consume("model_calls")
-        try:
-            result = await self.provider.generate(messages, tools=tools, tool_choice=tool_choice)
-        except LLMResponseError as exc:
-            self._account(exc.usage)
-            raise
-        self._account(result.usage)
+        protocol_error: LLMResponseError | None = None
+        result: LLMResult | None = None
+        async with external_operation("llm"):
+            try:
+                result = await self.provider.generate(
+                    messages, tools=tools, tool_choice=tool_choice
+                )
+                usage = result.usage
+            except LLMResponseError as exc:
+                protocol_error = exc
+                usage = exc.usage
+            # Persist known usage before completing the journal entry, including overruns.
+            try:
+                self._account(usage)
+            except BudgetExceeded:
+                if usage is None:
+                    raise
+        budget = current_budget.get()
+        if budget is not None:
+            budget.check()
+        if protocol_error is not None:
+            raise protocol_error
+        assert result is not None
         return result
 
     @staticmethod

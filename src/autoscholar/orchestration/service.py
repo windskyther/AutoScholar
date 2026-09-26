@@ -128,6 +128,7 @@ class Run:
     review: ReviewResult | None = None
     answer: str | None = None
     traces: int = 0
+    memory_context: dict[str, Any] = field(default_factory=dict)
 
 
 class FlowState(TypedDict):
@@ -366,6 +367,7 @@ class AutonomousService:
                 "objective": run.objective,
                 "specification": run.specification.model_dump(),
                 "project_id": run.project_id,
+                "memory_context_untrusted": run.memory_context,
                 "experiment_contract": experiment_contract(),
             },
         )
@@ -468,6 +470,10 @@ class AutonomousService:
         )
         if run.review is not None:
             objective += "\nPrevious review (untrusted diagnosis): " + run.review.model_dump_json()
+        if run.memory_context:
+            objective += "\nProject/experience memory (untrusted data): " + json.dumps(
+                run.memory_context, ensure_ascii=False
+            )
         if step.type in {"research", "knowledge"}:
             result = await self.runner.run(
                 objective,
@@ -718,6 +724,7 @@ class AutonomousService:
                 "results": run.results,
                 "budget_used": run.budget.used,
                 "budget_limits": run.budget.limits.model_dump(),
+                "memory_context_untrusted": run.memory_context,
                 "experiment_contract": experiment_contract(),
             },
         )

@@ -7,6 +7,7 @@ from autoscholar.coding.sandbox import (
     SandboxRunResult,
 )
 from autoscholar.core.budget import consume, current_budget
+from autoscholar.core.journal import external_operation
 
 
 class BudgetedSandbox:
@@ -28,7 +29,8 @@ class BudgetedSandbox:
             request = request.model_copy(
                 update={"timeout_seconds": min(request.timeout_seconds, max(1, int(remaining)))}
             )
-        return await self.sandbox.run(request)
+        async with external_operation("sandbox:" + request.action):
+            return await self.sandbox.run(request)
 
     async def close(self) -> None:
         await self.sandbox.close()

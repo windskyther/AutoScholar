@@ -2,7 +2,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-TaskStatus = Literal["running", "succeeded", "partial", "failed", "budget_exceeded"]
+TaskStatus = Literal[
+    "running", "succeeded", "partial", "failed", "budget_exceeded", "queued",
+    "pause_requested", "paused", "awaiting_approval", "cancel_requested", "cancelled",
+    "recovery_required",
+]
 ToolCallStatus = Literal["succeeded", "failed"]
 AgentMode = Literal[
     "auto", "research", "compute", "knowledge", "coding", "experiment", "autonomous"

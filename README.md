@@ -578,6 +578,16 @@ docker compose run --rm --no-deps --pull never --volume "${projectRoot}/tests/in
 
 持续故障用例的预期任务状态是 `budget_exceeded`，不是 `succeeded`；仍需看到脚本输出 `acceptance: passed`。新增边界用例位于 `tests/test_phase6_resilience.py`，覆盖预算阈值、非法重规划、协议错误、审查等待期间篡改、四阶段取消、并发、鉴权和上游服务失败。Linux 检查只核对自己创建的资源，不清理其他任务。恢复记录保留在本地数据库与工作区，不上传 Git。
 
+## Phase 7：持久化任务（建设中）
+
+新增 `workflow-worker` 服务处理持久化自主任务。`POST /agent/tasks` 接受与自主模式相同的请求体，要求 `mode=autonomous`、实验 Bearer Token 和 `Idempotency-Key` 请求头，立即返回 202 与任务 ID。相同 key 和请求只创建一次；相同 key 配不同请求返回 409。
+
+任务控制：`POST /agent/tasks/{id}/pause`、`resume`、`cancel`。暂停在当前步骤完成后生效；恢复沿用已消耗预算。`GET /agent/tasks/{id}/execution` 查看当前节点、预算和未确认调用，`GET /agent/tasks/{id}/durable/checkpoints` 或 `events` 查看历史。所有新增接口均要求实验 Token。
+
+检查点保存在 PostgreSQL，工作区保存在 Docker 数据卷。Worker 重启从最近安全边界继续；已落库的子步骤可核对后复用。未确认的外部调用进入 `recovery_required`，普通 resume 不会重放；可以检查记录后取消任务。当前不支持训练中途从 epoch 恢复。旧 `/agent/run` 同步接口保留。
+
+基础模块离线回归：35 项通过，包含预算连续性、幂等提交、暂停取消、重启复用、过期租约和文件篡改检测。人工审批、Memory 和完整部署验收仍在建设中。
+
 ## 开发路线
 
 | 阶段 | 重点 |

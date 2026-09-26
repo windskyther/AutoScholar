@@ -7,6 +7,7 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from autoscholar.agent.database_models import Base
+from autoscholar.orchestration import durable_models  # noqa: F401
 from autoscholar.rag import database_models as rag_database_models  # noqa: F401
 
 config = context.config

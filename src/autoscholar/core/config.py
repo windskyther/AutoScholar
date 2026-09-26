@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     experiment_timeout_seconds: int = Field(default=600, ge=30, le=600)
     experiment_api_token: SecretStr | None = None
     autonomous_budget: BudgetLimits = Field(default_factory=BudgetLimits)
+    workflow_worker_poll_seconds: float = Field(default=2, gt=0, le=60)
+    workflow_job_lease_seconds: int = Field(default=30, ge=6, le=300)
+    workflow_approval_threshold: int = Field(default=20000, ge=0, le=1200000)
 
     @property
     def experiment_api_configured(self) -> bool:

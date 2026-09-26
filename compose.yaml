@@ -4,7 +4,7 @@ services:
   api:
     build:
       context: .
-    environment:
+    environment: &workflow-environment
       APP_ENV: development
       APP_HOST: 0.0.0.0
       APP_PORT: 8000
@@ -54,6 +54,9 @@ services:
       EXPERIMENT_TIMEOUT_SECONDS: ${EXPERIMENT_TIMEOUT_SECONDS:-600}
       EXPERIMENT_API_TOKEN: ${EXPERIMENT_API_TOKEN:-}
       AUTONOMOUS_BUDGET: '${AUTONOMOUS_BUDGET:-{}}'
+      WORKFLOW_WORKER_POLL_SECONDS: ${WORKFLOW_WORKER_POLL_SECONDS:-2}
+      WORKFLOW_JOB_LEASE_SECONDS: ${WORKFLOW_JOB_LEASE_SECONDS:-30}
+      WORKFLOW_APPROVAL_THRESHOLD: ${WORKFLOW_APPROVAL_THRESHOLD:-20000}
     volumes:
       - document_data:/data/documents
       - model_cache:/models
@@ -87,6 +90,32 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
+
+  workflow-worker:
+    build:
+      context: .
+    command: ["python", "-m", "autoscholar.orchestration.worker"]
+    environment: *workflow-environment
+    volumes:
+      - document_data:/data/documents
+      - model_cache:/models
+      - workspace_data:/data/workspaces
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      sandbox-manager:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    networks:
+      - default
+      - sandbox_control
+    restart: unless-stopped
+    stop_grace_period: 30s
 
   migrate:
     build:

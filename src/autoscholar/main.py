@@ -19,6 +19,7 @@ from autoscholar.api.routes.experiments import router as experiment_router
 from autoscholar.api.routes.health import router as health_router
 from autoscholar.api.routes.projects import router as projects_router
 from autoscholar.api.routes.rag import router as rag_router
+from autoscholar.api.routes.workflows import router as workflows_router
 from autoscholar.coding import (
     CodingAgent,
     CodingLimits,
@@ -37,6 +38,7 @@ from autoscholar.experiment.service import ExperimentService
 from autoscholar.infrastructure import Database, Qdrant, RedisClient
 from autoscholar.infrastructure.base import ManagedDependency
 from autoscholar.llm import LLMProvider, create_llm_provider
+from autoscholar.orchestration.durable import DurableService
 from autoscholar.orchestration.repository import WorkflowRepository
 from autoscholar.orchestration.sandbox import BudgetedSandbox
 from autoscholar.orchestration.service import AutonomousService
@@ -325,6 +327,13 @@ def create_app(
     )
     application.state.settings = resolved_settings
     application.state.autonomous_service = resolved_autonomous_service
+    application.state.durable_service = (
+        DurableService(
+            resolved_autonomous_service,
+            lease_seconds=resolved_settings.workflow_job_lease_seconds,
+            approval_threshold=resolved_settings.workflow_approval_threshold,
+        ) if resolved_autonomous_service is not None else None
+    )
     application.state.database = resolved_database
     application.state.redis = resolved_redis
     application.state.qdrant = resolved_qdrant
@@ -350,6 +359,7 @@ def create_app(
     application.include_router(experiment_router)
     application.include_router(projects_router)
     application.include_router(rag_router)
+    application.include_router(workflows_router)
     return application
 
 
