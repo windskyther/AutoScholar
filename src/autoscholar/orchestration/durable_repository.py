@@ -12,6 +12,7 @@ from autoscholar.agent.database_models import AgentTaskRow
 from autoscholar.core.errors import AppError
 from autoscholar.orchestration.checkpoints import Snapshot, digest
 from autoscholar.orchestration.durable_models import (
+    WorkflowApprovalRow,
     WorkflowCheckpointRow,
     WorkflowEventRow,
     WorkflowJobRow,
@@ -173,10 +174,15 @@ class DurableRepository:
             session.expunge(row)
             return snapshot, row
 
-    async def claim(self, owner: str, lease_seconds: int) -> tuple[str, int] | None:
+    async def claim(
+        self,
+        owner: str,
+        lease_seconds: int,
+        task_id: str | None = None,
+    ) -> tuple[str, int] | None:
         now = datetime.now(UTC)
         async with self.sessions() as session:
-            row = await session.scalar(
+            query = (
                 select(WorkflowJobRow)
                 .where(
                     or_(
@@ -191,6 +197,9 @@ class DurableRepository:
                 .with_for_update(skip_locked=True)
                 .limit(1)
             )
+            if task_id is not None:
+                query = query.where(WorkflowJobRow.task_id == task_id)
+            row = await session.scalar(query)
             if row is None:
                 return None
             prior = row.status
@@ -235,6 +244,21 @@ class DurableRepository:
             if row.active or row.pending_calls:
                 raise conflict("operation_uncertain", "An earlier operation needs reconciliation")
             if row.status == "running":
+                if operation_hash := active.get("operation_sha256"):
+                    approval = await session.scalar(
+                        select(WorkflowApprovalRow).where(
+                            WorkflowApprovalRow.task_id == task_id,
+                            WorkflowApprovalRow.operation_sha256 == operation_hash,
+                        )
+                    )
+                    if (
+                        approval is None
+                        or approval.status != "approved"
+                        or utc(approval.expires_at) <= datetime.now(UTC)
+                    ):
+                        raise conflict("approval_required", "A current approval is required")
+                    approval.status = "consumed"
+                    self.event(session, task_id, "approval_consumed", approval_id=approval.id)
                 row.active = active
                 self.event(session, task_id, "unit_started", **active)
             await session.commit()
@@ -255,7 +279,9 @@ class DurableRepository:
             row = await self.locked(session, task_id)
             self.fence(row, owner, generation)
             pending = dict(row.pending_calls)
-            if starting:
+            if kind == "budget":
+                pass
+            elif starting:
                 if pending:
                     raise conflict("operation_uncertain", "Previous external result is uncertain")
                 if row.status == "cancel_requested":
@@ -270,7 +296,9 @@ class DurableRepository:
             self.event(
                 session,
                 task_id,
-                "call_started" if starting else "call_finished",
+                "budget_saved"
+                if kind == "budget"
+                else ("call_started" if starting else "call_finished"),
                 call_id=call_id,
                 kind_name=kind,
             )

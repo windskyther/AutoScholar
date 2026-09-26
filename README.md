@@ -552,7 +552,7 @@ $reviews.items | ConvertTo-Json -Depth 12
 
 预算对整项父任务共享，重规划不会清零。默认上限：20 个执行步骤、3 次重规划、60 次模型调用、50 次工具调用、20 次搜索、3 次代码修复、4 次训练、40 次沙箱运行、120000 tokens、1800 秒。请求只能降低服务端上限；可在 `.env` 设置 JSON 格式的 `AUTONOMOUS_BUDGET` 调整服务端配置，重建 API 生效。tokens 按模型返回 usage 计量，单次响应可能越过阈值；超过后立即停止后续调用，缺少 usage 也会停止，不能作为精确费用上限。
 
-验收要求：最终任务 `succeeded`、最终 review 为 `PASS`、代码交接 SHA-256 一致、所有产物校验成功；故障测试还须至少一次 `REPLAN` 且旧记录未覆盖。达到预算时应为 `budget_exceeded` 并停止继续调用；失败详情见 `$task.error_code` / `error_message`。任务仍是同步执行，进程重启续跑、Memory 和人工审批留待后续阶段。
+验收要求：最终任务 `succeeded`、最终 review 为 `PASS`、代码交接 SHA-256 一致、所有产物校验成功；故障测试还须至少一次 `REPLAN` 且旧记录未覆盖。达到预算时应为 `budget_exceeded` 并停止继续调用；失败详情见 `$task.error_code` / `error_message`。Phase 6 的 `/agent/run` 保持同步执行；进程重启续跑、Memory 和人工审批使用下文 Phase 7 的持久化接口。
 
 2026-09-23 已通过真实 LLM + Tavily + Docker 故障恢复联测（任务 `31e866b3-f81b-4b4f-b386-f871d060ab0f`）：4 条 Web 证据、2 次真实训练、1 次重规划、2 版计划及审查、10 个下载产物校验通过。该成功任务使用 12 次模型调用、60283 tokens，未提高默认预算；此前失败尝试另有用量并保留原始记录。MNIST 小样本结果为 MLP 33.59%、CNN 20.31%，仅证明工程闭环，不代表完整基准性能或任意目标均能成功。
 
@@ -578,15 +578,105 @@ docker compose run --rm --no-deps --pull never --volume "${projectRoot}/tests/in
 
 持续故障用例的预期任务状态是 `budget_exceeded`，不是 `succeeded`；仍需看到脚本输出 `acceptance: passed`。新增边界用例位于 `tests/test_phase6_resilience.py`，覆盖预算阈值、非法重规划、协议错误、审查等待期间篡改、四阶段取消、并发、鉴权和上游服务失败。Linux 检查只核对自己创建的资源，不清理其他任务。恢复记录保留在本地数据库与工作区，不上传 Git。
 
-## Phase 7：持久化任务（建设中）
+## Phase 7：持久化执行、人工审批与 Memory
 
-新增 `workflow-worker` 服务处理持久化自主任务。`POST /agent/tasks` 接受与自主模式相同的请求体，要求 `mode=autonomous`、实验 Bearer Token 和 `Idempotency-Key` 请求头，立即返回 202 与任务 ID。相同 key 和请求只创建一次；相同 key 配不同请求返回 409。
+`workflow-worker` 独立处理 PostgreSQL 队列，每个 Planner、单个执行步骤、Reviewer、Replanner、Writer 完成后保存版本化 JSON 检查点。任务及预算跨进程保存；外部调用前后记录账本。数据库租约、心跳与执行代次防止多个 Worker 重复领取同一任务。
 
-任务控制：`POST /agent/tasks/{id}/pause`、`resume`、`cancel`。暂停在当前步骤完成后生效；恢复沿用已消耗预算。`GET /agent/tasks/{id}/execution` 查看当前节点、预算和未确认调用，`GET /agent/tasks/{id}/durable/checkpoints` 或 `events` 查看历史。所有新增接口均要求实验 Token。
+任务从 `queued` 进入 `running`，步骤间重新排队。pause 请求在当前有界步骤完成后进入 `paused`，resume 后继续剩余步骤；已使用的 tokens、调用和训练次数不清零，人工等待时间不计入有效执行时长。cancel 终止当前任务，已完成记录和产物保留。
 
-检查点保存在 PostgreSQL，工作区保存在 Docker 数据卷。Worker 重启从最近安全边界继续；已落库的子步骤可核对后复用。未确认的外部调用进入 `recovery_required`，普通 resume 不会重放；可以检查记录后取消任务。当前不支持训练中途从 epoch 恢复。旧 `/agent/run` 同步接口保留。
+检查点与工作区校验不一致，或服务中断导致外部调用结果不明时，任务进入 `recovery_required`，普通 resume 返回 409，不自动重放潜在付费调用。可从 execution、事件和子任务记录检查原因，再取消任务。已完成并落库的步骤可核对后复用。恢复粒度是工作流步骤，不支持训练中途从 epoch 接续。
 
-基础模块离线回归：35 项通过，包含预算连续性、幂等提交、暂停取消、重启复用、过期租约和文件篡改检测。人工审批、Memory 和完整部署验收仍在建设中。
+### 接口
+
+以下接口全部要求 `Authorization: Bearer <EXPERIMENT_API_TOKEN>`。当前为单操作者 Token 模式，项目隔离指检索范围隔离，不是多用户权限系统。
+
+| 接口 | 用途 |
+|---|---|
+| `POST /agent/tasks` | 异步提交，要求 `mode=autonomous` 和 `Idempotency-Key`；返回 202 |
+| `GET /agent/tasks/{id}` | 任务结果与统计 |
+| `GET /agent/tasks/{id}/execution` | 当前节点、预算、未确认调用 |
+| `POST /agent/tasks/{id}/pause`、`resume`、`cancel` | 生命周期控制 |
+| `GET /agent/tasks/{id}/durable/checkpoints`、`events` | 检查点摘要、执行审计 |
+| `GET /agent/tasks/{id}/approvals` | 审批记录及操作摘要 |
+| `POST /agent/tasks/{id}/approvals/{approval_id}/decision` | approve / reject / modify |
+| `GET /agent/tasks/{id}/memory` | 任务摘要、子步骤引用、检索到的记忆 |
+| `GET /projects/{id}/memory`、`PUT /projects/{id}/memory` | 项目上下文；更新需要 expected_version |
+| `GET /projects/{id}/experiences` | 历史已验证经验；可按 problem_code 过滤 |
+| `PATCH /projects/{id}/experiences/{memory_id}` | `{"enabled":false}` 禁用经验，保留历史 |
+
+同一幂等 key 和请求只创建一次；相同 key 配不同请求返回 409。旧 `/agent/run` 同步接口保留；达到审批阈值的实验必须改用持久化接口。
+
+### 审批与记忆规则
+
+`WORKFLOW_APPROVAL_THRESHOLD` 默认为 20000，判断量是 `epochs × train_samples × 模型数量`，这是资源策略阈值，不是货币报价；设置为 0 表示所有实验均需审批。阈值由服务器控制，模型不能降低。CPU MNIST 是当前支持的真实执行范围；GPU、任意删除和远程写操作不在本阶段开放。
+
+任务进入 `awaiting_approval` 后停止调度。批准绑定任务、计划版本、代码 SHA-256、实验参数及预算上限，有效期 24 小时，只能消费一次。approve 后进入 paused，需要单独 resume；reject 保持阻塞。modify 必须提供完整 `ExperimentSpecification`，生成新计划、重新执行编码验证并按新参数重新判断审批，旧批准失效，预算保留。过期/已拒绝请求可通过 modify 生成新版本，或取消任务。
+
+项目 Memory 保存用户明确配置的上下文。Experience Memory 只从最终 PASS 且确实完成后续修复步骤的任务提取，保留失败/成功 review、计划版本、子任务和实验引用；每次最多引用 3 条同项目、同数据集/设备的经验。无项目任务不共享长期经验。记忆始终是有来源的参考数据，不能覆盖当前目标、工具限制、预算或审批规则。
+
+### 本地接口测试
+
+正常开发启动 `docker compose up -d --build`，新增迁移会自动运行。可在当前 PowerShell 临时将审批阈值设为 0，再重建服务配置，方便测试审批；不会修改 `.env`：
+
+```powershell
+$env:WORKFLOW_APPROVAL_THRESHOLD = '0'
+docker compose up -d --no-build api workflow-worker
+$secret = Read-Host '输入 EXPERIMENT_API_TOKEN' -AsSecureString
+$credential = [pscredential]::new('local', $secret)
+$headers = @{ Authorization = 'Bearer ' + $credential.GetNetworkCredential().Password }
+$base = 'http://localhost:8000'
+$submitHeaders = $headers.Clone()
+$submitHeaders['Idempotency-Key'] = [guid]::NewGuid().ToString()
+$payload = @{
+  objective = '验证已有 MNIST 模板，对比 MLP 与 CNN，不进行外部检索。'
+  mode = 'autonomous'
+  experiment_specification = @{ epochs = 1; train_samples = 128; test_samples = 128 }
+  budget = @{ model_calls = 10; training_runs = 2; replans = 1; total_tokens = 60000 }
+} | ConvertTo-Json -Depth 10
+$task = Invoke-RestMethod -Method Post -Uri "$base/agent/tasks" -Headers $submitHeaders `
+  -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($payload))
+$taskId = $task.task_id
+Invoke-RestMethod "$base/agent/tasks/$taskId/execution" -Headers $headers
+```
+
+这组接口测试使用 `.env` 配置的真实 LLM，会产生费用；无付费 API 的验收方式见下节。重复查询 execution，直到 `awaiting_approval`，再执行：
+
+```powershell
+$approvalList = Invoke-RestMethod "$base/agent/tasks/$taskId/approvals" -Headers $headers
+$approval = $approvalList.items | Where-Object status -eq 'pending' | Select-Object -First 1
+if (-not $approval) { throw '当前没有待审批请求，请先检查任务状态。' }
+$decision = @{ action = 'approve'; operation_sha256 = $approval.operation_sha256 } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$base/agent/tasks/$taskId/approvals/$($approval.id)/decision" `
+  -Headers $headers -ContentType 'application/json; charset=utf-8' `
+  -Body ([Text.Encoding]::UTF8.GetBytes($decision))
+Invoke-RestMethod -Method Post -Uri "$base/agent/tasks/$taskId/resume" -Headers $headers
+Invoke-RestMethod "$base/agent/tasks/$taskId" -Headers $headers
+```
+
+成功时检查 `status=succeeded`、`metrics.training_runs=1`、`metrics.artifact_count=10`。暂停测试可调用 pause，等待 paused 后执行 `docker compose restart api workflow-worker`，再 resume，核对任务 ID、已完成子任务 ID 及累计预算未变化。强制打断未完成的 LLM/训练操作可能按规则进入 recovery_required，不应将它误判为可无条件重放。
+
+测试完成后可用 `Remove-Item Env:WORKFLOW_APPROVAL_THRESHOLD` 清除当前终端的临时阈值，再运行 `docker compose up -d --no-build api workflow-worker` 恢复 `.env` 或默认配置。
+
+### 无付费 API 的部署验收
+
+`tests/integration/phase7_acceptance.py` 使用固定模型替身、真实 PostgreSQL 和真实隔离 Docker CPU 训练。先停止正常 workflow-worker，避免它使用真实 LLM 领取验收任务。脚本只按本次 task ID 领取任务；普通运行数据和历史记录保留。
+
+```powershell
+docker compose stop workflow-worker
+$acceptanceScript = (Join-Path (Get-Location) 'tests/integration/phase7_acceptance.py').Replace('\', '/')
+docker compose run --rm --no-deps --pull never --volume "${acceptanceScript}:/tmp/phase7_acceptance.py:ro" `
+  api python /tmp/phase7_acceptance.py --prepare
+# 将上一条命令最后一行输出的 task_id 填入下方变量
+$acceptanceTaskId = '<prepare 输出的 task_id>'
+docker compose restart api
+docker compose run --rm --no-deps --pull never --volume "${acceptanceScript}:/tmp/phase7_acceptance.py:ro" `
+  api python /tmp/phase7_acceptance.py --resume $acceptanceTaskId
+docker compose up -d --no-build workflow-worker
+```
+
+准备进程完成编码并保存暂停状态后退出；恢复进程验证原编码子任务复用、两次审批、一次故障后重规划、10 个产物下载校验、经验提取/复用、真实 PostgreSQL 并发租约，以及不明调用不自动重放。最终应输出 `acceptance: passed` 和 `external_api_calls: 0`。若验收脚本失败，先检查并暂停/取消其任务，再启动正常 Worker，以免它继续执行该任务。
+
+2026-09-26 验证结果：完整自动化回归 **218 passed、1 skipped**（Windows 账户无法创建符号链接），Ruff、mypy 和 `alembic check` 通过。真实 PostgreSQL/Docker 两进程验收任务 `9f376851-25e4-47d1-a746-1bc30b8f8ed0` 通过上述全部断言，10 个产物下载后 SHA-256 校验一致；该轮未请求外部 LLM/Tavily。真实模型参与 Phase 7 的稳定性联测尚未执行。
 
 ## 开发路线
 
@@ -599,7 +689,8 @@ docker compose run --rm --no-deps --pull never --volume "${projectRoot}/tests/in
 | Phase 4 | 任务工作区、代码生成与修复、隔离 Docker 沙箱 |
 | Phase 5 | 实验指标、隔离产物、可复现实验报告 |
 | Phase 6 | 结构化 DAG、Reviewer/Replanning、共享预算、版本历史 |
-| Phase 7–9 | Checkpoint、Memory、Human-in-the-loop、MCP、Web 工作台 |
+| Phase 7 | 持久化队列、Checkpoint、暂停恢复、人工审批、项目/经验 Memory |
+| Phase 8–9 | MCP、Web 工作台 |
 | Phase 10–11 | 全链路评测、安全加固、CI/CD 与部署 |
 
 ## 分支与提交约定

@@ -9,10 +9,12 @@ from pydantic import ValidationError
 
 from autoscholar.core.budget import BudgetExceeded, BudgetLimits, current_budget
 from autoscholar.core.errors import AppError
-from autoscholar.core.journal import current_journal
+from autoscholar.core.journal import current_journal, persist_budget
 from autoscholar.experiment.models import ExperimentSpecification
+from autoscholar.orchestration.approvals import ApprovalService, cost_units
 from autoscholar.orchestration.checkpoints import Snapshot, Stage, digest
 from autoscholar.orchestration.durable_repository import DurableRepository, LeaseLost, conflict
+from autoscholar.orchestration.memory import MemoryService
 from autoscholar.orchestration.models import ReviewResult, TaskPlan
 from autoscholar.orchestration.service import AutonomousService, FlowState, Run, source_digest
 
@@ -27,6 +29,8 @@ class DurableService:
     ) -> None:
         self.service = service
         self.repository = DurableRepository(service.tasks.session_factory)
+        self.approvals = ApprovalService(self.repository)
+        self.memory = MemoryService(self.repository)
         self.lease_seconds = lease_seconds
         self.approval_threshold = approval_threshold
         self.owner = str(uuid4())
@@ -47,8 +51,8 @@ class DurableService:
         )
         return await self.repository.enqueue(snapshot, key, digest(payload))
 
-    async def tick(self) -> bool:
-        claimed = await self.repository.claim(self.owner, self.lease_seconds)
+    async def tick(self, task_id: str | None = None) -> bool:
+        claimed = await self.repository.claim(self.owner, self.lease_seconds, task_id)
         if claimed is None:
             return False
         task_id, generation = claimed
@@ -127,6 +131,30 @@ class DurableService:
                     )
                     if ready is not None:
                         active["step_id"] = ready.id
+                        if (
+                            ready.type == "experiment"
+                            and all(
+                                run.results[key]["status"] == "succeeded"
+                                for key in ready.dependencies
+                            )
+                            and cost_units(run.specification)
+                            >= min(snapshot.approval_threshold, self.approval_threshold)
+                        ):
+                            allowed = await self.approvals.gate(run, ready, self.owner, generation)
+                            if not allowed:
+                                await self.repository.save(
+                                    task_id,
+                                    self.owner,
+                                    generation,
+                                    snapshot.capture(run, stage),
+                                    run.budget.used,
+                                    time.monotonic() - run.budget.started,
+                                    status="awaiting_approval",
+                                )
+                                return
+                            active["operation_sha256"] = digest(
+                                self.approvals.operation(run, ready)
+                            )
                 state = await self.repository.begin(task_id, self.owner, generation, active)
                 if state != "running":
                     status = "cancelled" if state == "cancel_requested" else "paused"
@@ -146,7 +174,9 @@ class DurableService:
         except LeaseLost:
             raise
         except Exception as exc:
-            if getattr(exc, "code", "") in {"operation_uncertain", "checkpoint_integrity_failed"}:
+            if getattr(exc, "code", "") == "approval_required":
+                status = "awaiting_approval"
+            elif getattr(exc, "code", "") in {"operation_uncertain", "checkpoint_integrity_failed"}:
                 status = "recovery_required"
             else:
                 status = "failed"
@@ -164,6 +194,8 @@ class DurableService:
             status=status,
             error_code=code,
         )
+        if status == "succeeded":
+            await self.memory.learn(run)
 
     def _verify_sources(self, run: Run) -> None:
         for step_id, source in run.sources.items():
@@ -175,6 +207,18 @@ class DurableService:
 
     async def _unit(self, run: Run, stage: Stage) -> Stage:
         state: FlowState = {"run": run}
+        if stage in {"planner", "replanner"}:
+            run.memory_context = await self.memory.context(run)
+            if run.memory_context:
+                async with self.repository.sessions() as session:
+                    self.repository.event(
+                        session,
+                        run.task_id,
+                        "memory_retrieved",
+                        project_version=run.memory_context["project"]["version"],
+                        memory_ids=[item["id"] for item in run.memory_context["experiences"]],
+                    )
+                    await session.commit()
         if stage == "planner":
             await self.service._planner(state)
             return "executor"
@@ -190,6 +234,7 @@ class DurableService:
             )
             if ready is not None:
                 run.budget.consume("steps")
+                await persist_budget()
                 await self.service._step(run, ready)
             return "reviewer" if len(run.results) == len(run.plan.steps) else "executor"
         if stage == "reviewer":

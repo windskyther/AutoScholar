@@ -17,6 +17,7 @@ from autoscholar.api.routes.agent import router as agent_router
 from autoscholar.api.routes.chat import router as chat_router
 from autoscholar.api.routes.experiments import router as experiment_router
 from autoscholar.api.routes.health import router as health_router
+from autoscholar.api.routes.memory import router as memory_router
 from autoscholar.api.routes.projects import router as projects_router
 from autoscholar.api.routes.rag import router as rag_router
 from autoscholar.api.routes.workflows import router as workflows_router
@@ -360,6 +361,7 @@ def create_app(
     application.include_router(projects_router)
     application.include_router(rag_router)
     application.include_router(workflows_router)
+    application.include_router(memory_router)
     return application
 
 

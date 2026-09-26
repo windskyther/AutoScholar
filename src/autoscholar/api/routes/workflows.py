@@ -7,6 +7,7 @@ from fastapi import APIRouter, Header, Query, Request
 from autoscholar.api.experiment_auth import require_experiment_token
 from autoscholar.api.routes.agent import AgentRunRequest
 from autoscholar.core.errors import AppError
+from autoscholar.orchestration.approvals import ApprovalDecision
 from autoscholar.orchestration.durable import DurableService
 
 router = APIRouter(prefix="/agent/tasks", tags=["workflows"])
@@ -71,6 +72,44 @@ async def execution(task_id: str, request: Request) -> dict[str, Any]:
         "pending_calls": job.pending_calls,
         "error_code": job.error_code,
     }
+
+
+@router.get("/{task_id}/approvals")
+async def approvals(task_id: str, request: Request) -> dict[str, Any]:
+    return {"task_id": task_id, "items": await service(request).approvals.list(task_id)}
+
+
+@router.get("/{task_id}/memory")
+async def task_memory(task_id: str, request: Request) -> dict[str, Any]:
+    snapshot, job = await service(request).repository.snapshot(task_id)
+    return {
+        "task_id": task_id,
+        "status": job.status,
+        "objective": snapshot.objective,
+        "plan_version": snapshot.version,
+        "budget_used": job.usage,
+        "steps": {
+            key: {
+                name: value
+                for name, value in result.items()
+                if name in {"child_task_id", "status", "experiment_id", "error_code"}
+            }
+            for key, result in snapshot.results.items()
+        },
+        "review": snapshot.review.model_dump() if snapshot.review else None,
+        "retrieved_memory": snapshot.memory_context,
+    }
+
+
+@router.post("/{task_id}/approvals/{approval_id}/decision")
+async def decide(
+    task_id: str,
+    approval_id: str,
+    payload: ApprovalDecision,
+    request: Request,
+) -> dict[str, str]:
+    result = await service(request).approvals.decide(task_id, approval_id, payload)
+    return {"task_id": task_id, "status": result}
 
 
 @router.get("/{task_id}/durable/{kind}")

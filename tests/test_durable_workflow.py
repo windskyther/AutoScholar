@@ -1,12 +1,15 @@
 """Restart, accounting and lifecycle tests use a real file-backed database and fake APIs."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy import select
 
 from autoscholar.core.errors import AppError
+from autoscholar.llm import LLMResult
 from autoscholar.orchestration.durable import DurableService
 from autoscholar.orchestration.durable_models import WorkflowCheckpointRow, WorkflowJobRow
 from autoscholar.orchestration.durable_repository import LeaseLost
@@ -52,6 +55,57 @@ async def test_restart_reuses_completed_coding_and_budget(tmp_path: Path) -> Non
         training = next(item for item in steps if item["step_id"] == "train")
         assert len(await service.tasks.list_artifacts(training["child_task_id"])) == 10
     finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize("action", ["pause", "cancel"])
+async def test_control_during_active_call_is_bounded_and_durable(
+    tmp_path: Path,
+    action: str,
+) -> None:
+    class HeldProvider(ScriptedProvider):
+        def __init__(self) -> None:
+            super().__init__(script())
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def generate(self, *args: Any, **kwargs: Any) -> LLMResult:
+            self.entered.set()
+            await self.release.wait()
+            return await super().generate(*args, **kwargs)
+
+    provider = HeldProvider()
+    service, engine = await workflow(
+        tmp_path / "workspace",
+        provider,
+        FakeExperimentSandbox(),
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'control.sqlite'}",
+    )
+    durable = DurableService(service, lease_seconds=6)
+    execution: asyncio.Task[bool] | None = None
+    try:
+        task_id, _ = await durable.submit({"objective": "Compare"}, action)
+        execution = asyncio.create_task(durable.tick(task_id))
+        await asyncio.wait_for(provider.entered.wait(), 5)
+        assert await durable.repository.control(task_id, action) == f"{action}_requested"
+        if action == "pause":
+            provider.release.set()
+        await asyncio.wait_for(execution, 6)
+        snapshot, job = await durable.repository.snapshot(task_id)
+        assert job.status == ("paused" if action == "pause" else "cancelled")
+        assert job.usage["model_calls"] == 1
+        assert not await durable.tick(task_id)
+        if action == "pause":
+            assert snapshot.stage == "executor"
+            await durable.repository.control(task_id, "resume")
+            assert await drain(durable, task_id) == "succeeded"
+        else:
+            assert job.pending_calls  # cancellation does not invent provider usage
+            assert not provider.calls
+    finally:
+        if execution is not None and not execution.done():
+            execution.cancel()
+            await asyncio.gather(execution, return_exceptions=True)
         await engine.dispose()
 
 
@@ -153,5 +207,36 @@ async def test_checkpoint_hash_and_budget_survive_pause(tmp_path: Path) -> None:
             await session.commit()
         with pytest.raises(AppError, match="integrity"):
             await durable.repository.snapshot(task_id)
+    finally:
+        await engine.dispose()
+
+
+async def test_completed_step_reconciles_after_checkpoint_commit_interruption(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ScriptedProvider(script())
+    service, engine = await workflow(tmp_path, provider, FakeExperimentSandbox())
+    durable = DurableService(service)
+    try:
+        task_id, _ = await durable.submit({"objective": "Compare"}, "commit-interrupted")
+        await durable.tick()
+
+        async def interrupted_commit(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("Simulated process loss before checkpoint commit")
+
+        monkeypatch.setattr(durable.repository, "save", interrupted_commit)
+        with pytest.raises(RuntimeError, match="process loss"):
+            await durable.tick()
+        async with durable.repository.sessions() as session:
+            row = await session.get(WorkflowJobRow, task_id)
+            assert row and not row.pending_calls and row.active["step_id"] == "code"
+            row.lease_until = datetime.now(UTC) - timedelta(seconds=1)
+            await session.commit()
+        restarted = DurableService(service)
+        assert await drain(restarted, task_id) == "succeeded"
+        assert len(provider.calls) == 3
+        steps = await service.workflows.history(task_id, "steps")
+        assert len([step for step in steps if step["step_id"] == "code"]) == 1
     finally:
         await engine.dispose()

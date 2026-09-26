@@ -21,6 +21,7 @@ from autoscholar.coding.workspace import WorkspaceError, WorkspaceFile, Workspac
 from autoscholar.core.budget import BudgetLimits
 from autoscholar.core.errors import AppError
 from autoscholar.experiment.models import ExperimentSpecification
+from autoscholar.orchestration.approvals import cost_units
 from autoscholar.orchestration.service import AutonomousService
 from autoscholar.rag.models import RetrievalMode
 
@@ -261,6 +262,14 @@ def _run_response(task: AgentTaskRecord, request_id: str) -> AgentRunResponse:
 
 @router.post("/run", response_model=AgentRunResponse)
 async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunResponse:
+    if payload.mode in {"autonomous", "experiment"}:
+        require_experiment_token(request)
+        specification = payload.experiment_specification or ExperimentSpecification()
+        if cost_units(specification) >= request.app.state.settings.workflow_approval_threshold:
+            raise AppError(
+                status_code=409, code="durable_approval_required",
+                message="This experiment requires approval; submit via POST /agent/tasks",
+            )
     if payload.mode == "autonomous":
         require_experiment_token(request)
         service: AutonomousService | None = request.app.state.autonomous_service

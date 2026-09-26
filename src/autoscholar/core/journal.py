@@ -9,6 +9,12 @@ JournalHook = Callable[[str, str, bool], Awaitable[None]]
 current_journal: ContextVar[JournalHook | None] = ContextVar("workflow_journal", default=None)
 
 
+async def persist_budget() -> None:
+    hook = current_journal.get()
+    if hook is not None:
+        await hook("", "budget", False)
+
+
 @asynccontextmanager
 async def external_operation(kind: str) -> AsyncIterator[None]:
     hook = current_journal.get()
