@@ -205,7 +205,7 @@ class DurableRepository:
             prior = row.status
             row.generation += 1
             row.owner = owner
-            row.lease_until = now + timedelta(seconds=lease_seconds)
+            row.lease_until = datetime.now(UTC) + timedelta(seconds=lease_seconds)
             # An expired in-flight unit must be reconciled by the worker, never replayed blindly.
             if prior == "queued":
                 await self.status(session, row, "running")
@@ -384,6 +384,8 @@ class DurableRepository:
                         "workflow_state_conflict", "Resolve approval/recovery before resume"
                     )
             elif action == "cancel":
+                if status in TERMINAL:
+                    return status
                 if status in {"running", "pause_requested", "cancel_requested"}:
                     status = "cancel_requested"
                 elif status not in TERMINAL:

@@ -678,6 +678,33 @@ docker compose up -d --no-build workflow-worker
 
 2026-09-26 验证结果：完整自动化回归 **218 passed、1 skipped**（Windows 账户无法创建符号链接），Ruff、mypy 和 `alembic check` 通过。真实 PostgreSQL/Docker 两进程验收任务 `9f376851-25e4-47d1-a746-1bc30b8f8ed0` 通过上述全部断言，10 个产物下载后 SHA-256 校验一致；该轮未请求外部 LLM/Tavily。真实模型参与 Phase 7 的稳定性联测尚未执行。
 
+### Phase 7 故障与并发补测（无付费 API）
+
+`tests/integration/phase7_resilience_acceptance.py` 创建独立 PostgreSQL、沙箱管理器和真实 Worker 进程，不暂停现有服务、不领取现有任务，也不向测试容器传入 `.env`。模型使用固定替身；检查点恢复及并发 resume 会执行真实 Docker CPU MNIST 训练。
+
+覆盖 11 个场景：运行中 SIGTERM / SIGKILL、编码完成但父检查点尚未提交时重启、旧 Worker 暂停后的租约接管、实验沙箱运行时 Worker 被杀 / 数据库无响应 / 数据库断连，以及重复批准、批准与修改、批准与取消、双 Worker 并发恢复。中断用例在真实隔离容器内运行等待脚本以稳定制造故障窗口；检查点恢复和并发恢复用例运行真实 MNIST，不伪造训练指标。
+
+关键断言：不明调用不重放；已提交编码只执行一次；旧执行代次不能提交；累计预算不重置；一次批准只消费一次、只训练一次；心跳失败立即取消执行；调用方断连后训练容器及临时卷在测试期限内清除。重复取消终态任务不得改写已完成结果和产物统计。
+
+先完成前文 Docker、沙箱镜像及 MNIST 数据集初始化，再在项目根目录运行：
+
+```powershell
+docker build -t autoscholar-api:phase7-hardening .
+if ($LASTEXITCODE -ne 0) { throw '验收镜像构建失败' }
+$projectRoot = (Get-Location).Path.Replace('\', '/')
+$runnerName = 'autoscholar-phase7-run-' + [guid]::NewGuid().ToString('N')
+docker run --rm --name $runnerName --network autoscholar_sandbox_control `
+  --mount 'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock' `
+  --mount "type=bind,source=${projectRoot}/tests/integration/phase7_resilience_acceptance.py,target=/tmp/phase7_resilience_acceptance.py,readonly" `
+  --mount "type=bind,source=${projectRoot}/tests/integration/phase7_resilience_worker.py,target=/tmp/phase7_resilience_worker.py,readonly" `
+  autoscholar-api:phase7-hardening python /tmp/phase7_resilience_acceptance.py
+if ($LASTEXITCODE -ne 0) { throw 'Phase 7 故障验收失败，请检查输出' }
+```
+
+需要本地 Docker Engine 管理权限，通常运行数分钟。成功时输出 `acceptance: passed`、`external_api_calls: 0` 和 `cleanup: passed`；脚本按本轮资源 ID 和所有权标签清理独立测试数据库、容器、网络与卷，保留已有数据库及只读 MNIST 数据集。不要在脚本结束前强制终止验收容器，否则可能留下带 `autoscholar.acceptance` 标签的测试资源。
+
+2026-09-29 补测：完整回归 **223 passed、1 skipped**（Windows 符号链接权限），Ruff lint、mypy、迁移检查通过；上述 11 个隔离故障/并发场景全部通过。最终一轮三类实验中断的容器及临时卷清理耗时分别为 0.42、2.55、2.82 秒。修复了数据库心跳异常或清理阻塞后执行未取消、调用方断连后沙箱继续运行、终态重复取消覆盖结果统计的问题，并调整租约起算时点。外部 API 调用为 0；真实 LLM/Tavily 的 Phase 7 稳定性联测仍未执行，GPU 实验仍不在当前执行范围内。
+
 ## 开发路线
 
 | 阶段 | 重点 |

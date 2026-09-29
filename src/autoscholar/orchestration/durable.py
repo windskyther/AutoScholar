@@ -57,27 +57,39 @@ class DurableService:
             return False
         task_id, generation = claimed
         execution = asyncio.create_task(self._execute(task_id, generation))
+        heartbeat: asyncio.Task[str] | None = None
         try:
             while not execution.done():
                 done, _ = await asyncio.wait({execution}, timeout=self.lease_seconds / 3)
                 if done:
                     break
-                status = await self.repository.heartbeat(
-                    task_id,
-                    self.owner,
-                    generation,
-                    self.lease_seconds,
+                # Cancellation of a DB operation can itself block on connection cleanup.
+                # Supervise independently so execution stops before that cleanup finishes.
+                heartbeat = asyncio.create_task(
+                    self.repository.heartbeat(
+                        task_id,
+                        self.owner,
+                        generation,
+                        self.lease_seconds,
+                    )
                 )
+                ready, _ = await asyncio.wait({heartbeat}, timeout=self.lease_seconds / 3)
+                if not ready:
+                    raise TimeoutError("Workflow heartbeat deadline exceeded")
+                status = heartbeat.result()
                 if status == "cancel_requested":
                     execution.cancel()
             await execution
         except LeaseLost:
-            execution.cancel()
-            await asyncio.gather(execution, return_exceptions=True)
-        except asyncio.CancelledError:
-            execution.cancel()
-            await asyncio.gather(execution, return_exceptions=True)
-            raise
+            pass
+        finally:
+            # This also covers DB connection failures, heartbeat timeouts and shutdown.
+            # Never return to the worker loop with a detached execution still running.
+            pending = [execution, *([heartbeat] if heartbeat is not None else [])]
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
         return True
 
     async def _execute(self, task_id: str, generation: int) -> None:

@@ -1,8 +1,9 @@
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 
 from autoscholar.coding.sandbox import (
     DockerLimits,
@@ -28,9 +29,7 @@ def create_manager_app(executor: SandboxExecutor | None = None) -> FastAPI:
             nano_cpus=int(os.getenv("SANDBOX_NANO_CPUS", "2000000000")),
             pids_limit=int(os.getenv("SANDBOX_PIDS_LIMIT", "256")),
             max_output_bytes=int(os.getenv("SANDBOX_MAX_OUTPUT_BYTES", "65536")),
-            max_artifact_file_bytes=int(
-                os.getenv("SANDBOX_MAX_ARTIFACT_FILE_BYTES", "16777216")
-            ),
+            max_artifact_file_bytes=int(os.getenv("SANDBOX_MAX_ARTIFACT_FILE_BYTES", "16777216")),
             max_artifact_bytes=int(os.getenv("SANDBOX_MAX_ARTIFACT_BYTES", "67108864")),
         ),
     )
@@ -63,8 +62,28 @@ def create_manager_app(executor: SandboxExecutor | None = None) -> FastAPI:
         return await resolved.health()
 
     @app.post("/internal/v1/run", response_model=SandboxRunResult)
-    async def run(payload: SandboxRunRequest) -> SandboxRunResult:
-        return await resolved.run(payload)
+    async def run(payload: SandboxRunRequest, request: Request) -> SandboxRunResult:
+        async def disconnected() -> None:
+            # FastAPI has already consumed the validated JSON body.
+            while (await request.receive())["type"] != "http.disconnect":
+                pass
+
+        execution = asyncio.create_task(resolved.run(payload))
+        disconnect = asyncio.create_task(disconnected())
+        try:
+            done, _ = await asyncio.wait(
+                {execution, disconnect}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if execution in done:
+                return await execution
+            # Propagate unexpected receive errors too, but still join the sandbox cleanup.
+            await disconnect
+            raise HTTPException(status_code=499, detail="Sandbox caller disconnected")
+        finally:
+            for pending in (execution, disconnect):
+                if not pending.done():
+                    pending.cancel()
+            await asyncio.gather(execution, disconnect, return_exceptions=True)
 
     return app
 
