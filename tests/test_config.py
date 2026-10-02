@@ -49,9 +49,10 @@ def test_invalid_port_is_rejected() -> None:
 
 
 @pytest.mark.parametrize("token", [None, "too-short"])
-def test_mcp_mode_requires_explicit_service_token(token: str | None) -> None:
+@pytest.mark.parametrize("backend", ["research_tool_backend", "filesystem_tool_backend"])
+def test_mcp_mode_requires_explicit_service_token(token: str | None, backend: str) -> None:
     with pytest.raises(ValidationError, match="MCP_SERVICE_TOKEN"):
-        Settings(research_tool_backend="mcp", mcp_service_token=SecretStr(token) if token else None)
+        Settings(**{backend: "mcp"}, mcp_service_token=SecretStr(token) if token else None)  # type: ignore[arg-type]
 
 
 def test_external_embeddings_require_a_secret() -> None:

@@ -4,7 +4,7 @@ import re
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 class WorkspaceError(ValueError):
@@ -50,6 +50,7 @@ class WorkspaceManager:
     def initialize(self, task_id: str) -> Path:
         task_root = self._task_root(task_id)
         for directory in self.directories:
+            self._ensure_no_symlinks(task_root, task_root / directory)
             (task_root / directory).mkdir(parents=True, exist_ok=True)
         return task_root
 
@@ -204,7 +205,10 @@ class WorkspaceManager:
         if not self._task_pattern.fullmatch(task_id):
             raise WorkspaceError("workspace_path_invalid", "Invalid task identifier")
         root = self.root.resolve()
-        candidate = (root / task_id).resolve()
+        candidate = root / task_id
+        if candidate.is_symlink() or candidate.is_junction():
+            raise WorkspaceError("workspace_path_invalid", "Task directory must not be a link")
+        candidate = candidate.resolve()
         if not candidate.is_relative_to(root):
             raise WorkspaceError("workspace_path_invalid", "Task path escapes workspace root")
         return candidate
@@ -231,13 +235,20 @@ class WorkspaceManager:
         if (
             not normalized
             or pure.is_absolute()
+            or ":" in normalized
+            or "\x00" in normalized
+            or PureWindowsPath(normalized).is_reserved()
+            or any(part.endswith((".", " ")) for part in raw_parts)
             or re.match(r"^[A-Za-z]:", normalized)
             or any(part in {"", ".", ".."} for part in raw_parts)
         ):
             raise WorkspaceError("workspace_path_invalid", "A safe relative file path is required")
         task_root = self._existing_task_root(task_id)
-        area_root = (task_root / area).resolve()
-        candidate = (area_root / Path(*pure.parts)).resolve(strict=False)
+        area_root = task_root / area
+        candidate = area_root / Path(*pure.parts)
+        self._ensure_no_symlinks(task_root, candidate)
+        area_root = area_root.resolve()
+        candidate = candidate.resolve(strict=False)
         if not candidate.is_relative_to(area_root):
             raise WorkspaceError("workspace_path_invalid", "File path escapes its workspace area")
         self._ensure_no_symlinks(task_root, candidate)
@@ -279,7 +290,7 @@ class WorkspaceManager:
     def _ensure_no_symlinks(task_root: Path, target: Path) -> None:
         current = target
         while current != task_root:
-            if current.exists() and current.is_symlink():
+            if current.is_symlink() or current.is_junction():
                 raise WorkspaceError(
                     "workspace_path_invalid", "Symbolic links are not allowed in workspaces"
                 )

@@ -174,7 +174,11 @@ def test_mcp_outage_only_degrades_research_and_never_constructs_native_provider(
         "autoscholar.main.TavilySearchProvider", side_effect=AssertionError("Native fallback")
     ):
         app = create_app(
-            Settings(research_tool_backend="mcp", mcp_service_token=SecretStr("x" * 32)),
+            Settings(
+                research_tool_backend="mcp",
+                filesystem_tool_backend="mcp",
+                mcp_service_token=SecretStr("x" * 32),
+            ),
             database=FakeDependency(),
             redis=FakeDependency(),
             qdrant=FakeDependency(),
@@ -182,10 +186,12 @@ def test_mcp_outage_only_degrades_research_and_never_constructs_native_provider(
             sandbox_executor=FakeSandbox(),
         )
     app.state.mcp_research_gateway.available = AsyncMock(return_value=False)
+    app.state.mcp_filesystem_gateway.available = AsyncMock(return_value=False)
     with TestClient(app) as client:
         assert client.get("/health/live").status_code == 200
         response = client.get("/health/ready")
     assert response.status_code == 200
     assert response.json()["capabilities"]["mcp_research"] == {"status": "error"}
+    assert response.json()["capabilities"]["mcp_filesystem"] == {"status": "error"}
     assert response.json()["capabilities"]["web_search"] == {"status": "error"}
     assert response.json()["dependencies"]["postgres"] == {"status": "ok"}

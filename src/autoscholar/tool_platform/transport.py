@@ -44,6 +44,9 @@ class BoundedHTTPTransport(httpx2.AsyncBaseTransport):
         if response.is_redirect:
             await response.aclose()
             raise ToolGatewayError("tool_redirect_rejected")
+        if response.headers.get("content-encoding", "identity").lower() != "identity":
+            await response.aclose()
+            raise ToolGatewayError("tool_compression_rejected")
         return httpx2.Response(
             response.status_code,
             headers=response.headers,
@@ -104,7 +107,7 @@ class MCPBackend:
     async def connect(self) -> AsyncIterator[ToolConnection]:
         async with (
             httpx2.AsyncClient(
-                headers={"Authorization": "Bearer " + self._token},
+                headers={"Authorization": "Bearer " + self._token, "Accept-Encoding": "identity"},
                 timeout=self.timeout,
                 follow_redirects=False,
                 trust_env=False,

@@ -1,9 +1,11 @@
-# Opt-in Phase 8 Research MCP. Does not mount the project, .env, or Docker socket.
+# Opt-in Phase 8 MCP services. Never mounts the project, .env, or Docker socket.
 # docker compose -f compose.yaml -f compose.mcp.yaml up -d --build
 services:
   api:
     environment: &mcp-core-environment
       RESEARCH_TOOL_BACKEND: mcp
+      FILESYSTEM_TOOL_BACKEND: mcp
+      MCP_FILESYSTEM_URL: http://filesystem-mcp:8092/mcp
       MCP_RESEARCH_URL: http://research-mcp:8091/mcp
       MCP_SERVICE_TOKEN: ${MCP_SERVICE_TOKEN:?Set a random service token of at least 32 characters}
       MCP_TIMEOUT_SECONDS: ${MCP_TIMEOUT_SECONDS:-25}
@@ -12,6 +14,38 @@ services:
 
   workflow-worker:
     environment: *mcp-core-environment
+
+  filesystem-mcp:
+    build:
+      context: .
+    command: [uvicorn, "autoscholar.tool_platform.filesystem_server:create_app", --factory, --host, "0.0.0.0", --port, "8092", --no-access-log]
+    environment:
+      MCP_SERVICE_TOKEN: ${MCP_SERVICE_TOKEN:?Set a random service token of at least 32 characters}
+      DATABASE_URL: postgresql+asyncpg://autoscholar:autoscholar@postgres:5432/autoscholar
+      WORKSPACE_ROOT: /data/workspaces
+      WORKSPACE_MAX_FILES: ${WORKSPACE_MAX_FILES:-100}
+      WORKSPACE_MAX_FILE_BYTES: ${WORKSPACE_MAX_FILE_BYTES:-1048576}
+      WORKSPACE_MAX_SOURCE_BYTES: ${WORKSPACE_MAX_SOURCE_BYTES:-10485760}
+    volumes:
+      - workspace_data:/data/workspaces
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16777216
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/health/live', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   research-mcp:
     build:

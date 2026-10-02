@@ -178,3 +178,20 @@ async def test_transport_rejects_redirects_and_bounds_wire_bytes() -> None:
     with pytest.raises(ToolGatewayError, match="tool_output_too_large"):
         async for _ in stream:
             pass
+
+
+async def test_transport_rejects_compression_before_decompression() -> None:
+    import httpx2
+
+    from autoscholar.tool_platform.transport import BoundedHTTPTransport
+
+    transport = BoundedHTTPTransport()
+    await transport.transport.aclose()
+    transport.transport = httpx2.MockTransport(  # type: ignore[assignment]
+        lambda request: httpx2.Response(200, headers={"content-encoding": "gzip"})
+    )
+    try:
+        with pytest.raises(ToolGatewayError, match="tool_compression_rejected"):
+            await transport.handle_async_request(httpx2.Request("POST", "http://localhost/mcp"))
+    finally:
+        await transport.aclose()

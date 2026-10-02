@@ -24,6 +24,8 @@ from autoscholar.llm import (
     ToolDefinition,
     ToolResultMessage,
 )
+from autoscholar.tool_platform.filesystem import mcp_file_tools
+from autoscholar.tool_platform.gateway import ToolGateway
 
 
 class CodingTaskStore(Protocol):
@@ -105,12 +107,14 @@ class CodingAgent:
         workspaces: WorkspaceManager,
         sandbox: SandboxExecutor,
         limits: CodingLimits | None = None,
+        filesystem_gateway: ToolGateway | None = None,
     ) -> None:
         self._provider = provider
         self._repository = repository
         self._workspaces = workspaces
         self._sandbox = sandbox
         self._limits = limits or CodingLimits()
+        self._filesystem_gateway = filesystem_gateway
         self._task_tools: dict[str, dict[str, AgentTool]] = {}
         self._tool_definitions: dict[str, list[ToolDefinition]] = {}
         self._graph = self._build_graph()
@@ -133,7 +137,11 @@ class CodingAgent:
             )
         self._workspaces.initialize(task_id)
         tools: list[AgentTool] = [
-            *WorkspaceToolset(self._workspaces, task_id).tools(),
+            *(
+                mcp_file_tools(self._workspaces, self._filesystem_gateway, task_id)
+                if self._filesystem_gateway is not None
+                else WorkspaceToolset(self._workspaces, task_id).tools()
+            ),
             *SandboxToolset(
                 self._workspaces,
                 self._sandbox,

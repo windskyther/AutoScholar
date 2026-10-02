@@ -20,6 +20,18 @@ class ToolScope:
 current_tool_scope: ContextVar[ToolScope | None] = ContextVar("tool_scope", default=None)
 
 
+@dataclass(frozen=True)
+class WorkflowClaim:
+    task_id: str
+    owner: str
+    generation: int
+
+
+current_workflow_claim: ContextVar[WorkflowClaim | None] = ContextVar(
+    "workflow_claim", default=None
+)
+
+
 @contextmanager
 def tool_scope(scope: ToolScope) -> Iterator[None]:
     token = current_tool_scope.set(scope)

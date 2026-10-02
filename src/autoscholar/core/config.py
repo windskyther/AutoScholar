@@ -39,13 +39,15 @@ class Settings(BaseSettings):
     research_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     research_cache_ttl_seconds: int = Field(default=86_400, ge=0, le=604_800)
     research_tool_backend: Literal["native", "mcp"] = "native"
+    filesystem_tool_backend: Literal["native", "mcp"] = "native"
+    mcp_filesystem_url: str = "http://filesystem-mcp:8092/mcp"
     mcp_research_url: str = "http://research-mcp:8091/mcp"
     mcp_service_token: SecretStr | None = None
     mcp_timeout_seconds: float = Field(default=25, gt=0, le=120)
 
     @model_validator(mode="after")
     def validate_mcp_configuration(self) -> "Settings":
-        if self.research_tool_backend == "mcp" and (
+        if "mcp" in (self.research_tool_backend, self.filesystem_tool_backend) and (
             self.mcp_service_token is None
             or len(self.mcp_service_token.get_secret_value()) < 32
         ):

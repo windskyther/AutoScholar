@@ -90,6 +90,11 @@ async def ready(request: Request) -> ReadyResponse | JSONResponse:
         ),
         **research_capabilities,
     }
+    filesystem_gateway = request.app.state.mcp_filesystem_gateway
+    if filesystem_gateway is not None:
+        capabilities["mcp_filesystem"] = DependencyStatus(
+            status="ok" if await filesystem_gateway.available() else "error"
+        )
     is_ready = all(dependency.status == "ok" for dependency in dependencies.values())
     response = ReadyResponse(
         status="ready" if is_ready else "not_ready",

@@ -726,7 +726,7 @@ Invoke-RestMethod http://localhost:8000/health/ready
 
 `capabilities.mcp_research` 表示 MCP 服务及工具目录可用性，不代表已经验证上游搜索账号。停止 Research 容器后 Core 的 `/health/live` 仍应为 200，基础设施正常时 `/health/ready` 仍为 ready，但研究能力显示 error。存在本地证据时研究结果可为 partial；证据不足则明确失败，不伪造完整答案。调用已经发出但结果未知时，持久化工作流仍进入 recovery_required，不会因“降级”而绕过不明调用保护。
 
-启用后的正常任务仍会使用你配置的真实模型/搜索服务。切换配置前先检查或暂停已有待执行任务，避免 Worker 启动后继续付费调用。回滚使用 `docker compose up -d --build api workflow-worker`；单独停用可选容器使用 `docker compose -f compose.yaml -f compose.mcp.yaml stop research-mcp`。
+启用后的正常任务仍会使用你配置的真实模型/搜索服务。切换配置前先检查或暂停已有待执行任务，避免 Worker 启动后继续付费调用。回滚使用 `docker compose up -d --build api workflow-worker`；单独停用可选容器使用 `docker compose -f compose.yaml -f compose.mcp.yaml stop research-mcp filesystem-mcp`。
 
 无付费验收使用独立网络、PostgreSQL、固定搜索替身和真实 MCP HTTP 进程，不读取 `.env`、不领取现有任务：
 
@@ -741,7 +741,29 @@ if ($LASTEXITCODE -ne 0) { throw 'Research MCP 验收失败' }
 
 2026-10-02 验证：Research MCP 四阶段隔离验收通过，外部 API 调用为 0，临时资源清理通过；完整回归 243 passed、1 skipped（Windows 符号链接权限），Ruff 和 mypy 通过。
 
-Filesystem、Git、Experiment MCP、持久化副作用去重和完整阶段验收尚未完成。当前不能将 Phase 8 标为验收通过。
+### Filesystem MCP（8C）
+
+提供 `list_files`、`read_file`、`search_code`、`create_file`、`edit_file`、`delete_file`，Coding Agent 可通过 `FILESYSTEM_TOOL_BACKEND=mcp` 接入，默认仍为 `native`。上述 Compose 覆盖文件同时启用 Research 和 Filesystem；仅需文件服务时可手动配置 `MCP_FILESYSTEM_URL`。它只挂载任务工作区卷，不挂载开发仓库、设计文档、`.env` 或 Docker Socket，也不获得 LLM/搜索密钥。数据库迁移新增 `tool_operations` 表；升级由 Compose 的 migrate 服务完成。
+
+- 任务 ID 和工作流 owner/generation 由 Core 提供，不接受模型传入任务目录或执行身份。服务端核对数据库中的任务归属、状态和租约；失效 worker、过期请求及取消请求不能执行文件修改。暂停请求遵循 Phase 7 的检查点边界语义，允许当前单元完成。
+- PostgreSQL 行锁串行化同一任务的文件操作及配额检查。拒绝绝对路径、目录穿越、符号链接和 Windows 目录联接；仍保留 UTF-8 字节配额和原子替换。每个文本参数最多 65536 字符，返回文本最多 262144 字符；超限明确失败，不静默截断源代码。
+- 每次操作先持久化预约，再执行并保存结果。同一 operation ID/身份/参数返回已保存结果；身份冲突拒绝执行。进程在文件修改后、结果提交前崩溃，会保留不确定记录，不自动再次修改文件；这不是数据库与文件系统的原子事务，也不宣称 exactly-once。Core 对结果不明的文件调用立即停止当前编码执行，不交给模型自动重试。
+- 工作区初始化、模板播种、源码快照、验证及日志仍由既有 Core 流程管理。此模块迁移的是模型可调用的六个文件工具，不代表 Core 已变成无状态服务；Experiment MCP 和完整恢复对账仍在后续模块中。
+
+无付费验收使用独立 PostgreSQL、独立工作区卷及两个 Filesystem 服务进程：
+
+```powershell
+docker build -t autoscholar-api:phase8-test .
+if ($LASTEXITCODE -ne 0) { throw '验收镜像构建失败' }
+.venv\Scripts\python.exe tests/integration/phase8_filesystem_acceptance.py
+if ($LASTEXITCODE -ne 0) { throw 'Filesystem MCP 验收失败' }
+```
+
+预期 prepare、healthy、restarted 三阶段通过，随后输出 `cleanup: passed`。覆盖真实迁移/Schema 检查、8 路并发配额、8 路同 ID 去重、服务重启后的结果复用、修改成功但结果未提交时拒绝重放、旧 worker/取消拒绝，以及 Linux 符号链接隔离；外部 API 调用为 0。脚本复用同目录的 Research 验收 Docker 辅助函数，两个脚本都需保留。仅删除经所有权标签验证的临时测试资源，不改动现有任务数据。
+
+2026-10-02 验证：完整回归 **252 passed、2 skipped**（Windows 符号链接权限，相关场景已在 Linux 隔离验收中通过），Ruff、mypy 和新迁移的 `alembic check` 通过；Research 四阶段及 Filesystem 三阶段容器验收均通过，外部 API 调用为 0，临时资源清理完成。现有服务未切换为 MCP，不改动本地 `.env` 或已有任务数据。
+
+Git、Experiment MCP、完整恢复对账和全阶段验收尚未完成。当前不能将 Phase 8 标为验收通过。
 
 ## 开发路线
 

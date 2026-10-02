@@ -65,6 +65,7 @@ from autoscholar.research import (
     SemanticScholarSearchProvider,
     TavilySearchProvider,
 )
+from autoscholar.tool_platform.filesystem import file_contracts
 from autoscholar.tool_platform.gateway import ToolGateway
 from autoscholar.tool_platform.research import RESEARCH_CONTRACTS, MCPResearchSearch
 from autoscholar.tool_platform.transport import MCPBackend
@@ -173,7 +174,8 @@ def create_app(
             timeout_seconds=resolved_settings.mcp_timeout_seconds,
         )
         resolved_research_services = [
-            MCPResearchSearch(mcp_gateway, "web"), MCPResearchSearch(mcp_gateway, "paper")
+            MCPResearchSearch(mcp_gateway, "web"),
+            MCPResearchSearch(mcp_gateway, "paper"),
         ]
     if resolved_research_services is None:
         cache = (
@@ -230,12 +232,25 @@ def create_app(
             candidate_limit=resolved_settings.rag_candidate_limit,
         )
     resolved_coding_agent = coding_agent
+    filesystem_gateway = None
+    if resolved_settings.filesystem_tool_backend == "mcp":
+        assert resolved_settings.mcp_service_token is not None
+        filesystem_gateway = ToolGateway(
+            MCPBackend(
+                resolved_settings.mcp_filesystem_url,
+                resolved_settings.mcp_service_token.get_secret_value(),
+                timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            ),
+            file_contracts(resolved_workspace_manager),
+            timeout_seconds=resolved_settings.mcp_timeout_seconds,
+        )
     if resolved_coding_agent is None and resolved_agent_repository is not None:
         resolved_coding_agent = CodingAgent(
             provider=resolved_llm_provider,
             repository=resolved_agent_repository,
             workspaces=resolved_workspace_manager,
             sandbox=resolved_sandbox_executor,
+            filesystem_gateway=filesystem_gateway,
             limits=CodingLimits(
                 max_repairs=resolved_settings.sandbox_max_repairs,
                 timeout_seconds=resolved_settings.sandbox_timeout_seconds,
@@ -346,13 +361,16 @@ def create_app(
     )
     application.state.settings = resolved_settings
     application.state.mcp_research_gateway = mcp_gateway
+    application.state.mcp_filesystem_gateway = filesystem_gateway
     application.state.autonomous_service = resolved_autonomous_service
     application.state.durable_service = (
         DurableService(
             resolved_autonomous_service,
             lease_seconds=resolved_settings.workflow_job_lease_seconds,
             approval_threshold=resolved_settings.workflow_approval_threshold,
-        ) if resolved_autonomous_service is not None else None
+        )
+        if resolved_autonomous_service is not None
+        else None
     )
     application.state.database = resolved_database
     application.state.redis = resolved_redis

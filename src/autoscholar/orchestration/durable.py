@@ -17,6 +17,7 @@ from autoscholar.orchestration.durable_repository import DurableRepository, Leas
 from autoscholar.orchestration.memory import MemoryService
 from autoscholar.orchestration.models import ReviewResult, TaskPlan
 from autoscholar.orchestration.service import AutonomousService, FlowState, Run, source_digest
+from autoscholar.tool_platform.context import WorkflowClaim, current_workflow_claim
 
 
 class DurableService:
@@ -115,6 +116,7 @@ class DurableService:
 
         budget_token = current_budget.set(run.budget)
         journal_token = current_journal.set(journal)
+        claim_token = current_workflow_claim.set(WorkflowClaim(task_id, self.owner, generation))
         stage = snapshot.stage
         status, code = "queued", None
         try:
@@ -194,6 +196,7 @@ class DurableService:
                 status = "failed"
             code = str(getattr(exc, "code", "workflow_execution_failed"))
         finally:
+            current_workflow_claim.reset(claim_token)
             current_journal.reset(journal_token)
             current_budget.reset(budget_token)
         await self.repository.save(

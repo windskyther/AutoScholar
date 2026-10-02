@@ -14,7 +14,7 @@ from jsonschema import Draft202012Validator
 
 from autoscholar.core.budget import BudgetExceeded, current_budget, current_parent
 from autoscholar.core.journal import external_operation
-from autoscholar.tool_platform.context import current_tool_scope
+from autoscholar.tool_platform.context import current_tool_scope, current_workflow_claim
 
 PROTOCOL_VERSION = "2026-07-28"
 MAX_MESSAGE_BYTES = 1_048_576
@@ -145,6 +145,7 @@ class ToolGateway:
                 if previous != fingerprint:
                     raise ToolGatewayError("tool_contract_changed")
                 scope = current_tool_scope.get()
+                claim = current_workflow_claim.get()
                 context = {
                     "operation_id": operation_id,
                     "parent_task_id": current_parent.get(),
@@ -152,6 +153,13 @@ class ToolGateway:
                     "arguments_sha256": argument_digest(arguments),
                     "deadline": deadline,
                     "scope": scope.payload() if scope is not None else None,
+                    "claim": {
+                        "task_id": claim.task_id,
+                        "owner": claim.owner,
+                        "generation": claim.generation,
+                    }
+                    if claim
+                    else None,
                 }
                 # Runner owns budget consumption. Gateway owns the one durable transport
                 # boundary; service processes never inherit the Core's ContextVars.
