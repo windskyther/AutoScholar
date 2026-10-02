@@ -16,9 +16,9 @@ async def persist_budget() -> None:
 
 
 @asynccontextmanager
-async def external_operation(kind: str) -> AsyncIterator[None]:
+async def external_operation(kind: str, *, operation_id: str | None = None) -> AsyncIterator[None]:
     hook = current_journal.get()
-    operation_id = str(uuid4())
+    operation_id = operation_id or str(uuid4())
     if hook is not None:
         await hook(operation_id, kind, True)
     yield
