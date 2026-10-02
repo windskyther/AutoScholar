@@ -48,6 +48,12 @@ def test_invalid_port_is_rejected() -> None:
         Settings(app_port=70000)
 
 
+@pytest.mark.parametrize("token", [None, "too-short"])
+def test_mcp_mode_requires_explicit_service_token(token: str | None) -> None:
+    with pytest.raises(ValidationError, match="MCP_SERVICE_TOKEN"):
+        Settings(research_tool_backend="mcp", mcp_service_token=SecretStr(token) if token else None)
+
+
 def test_external_embeddings_require_a_secret() -> None:
     settings = Settings(
         embedding_provider="openai_compatible",

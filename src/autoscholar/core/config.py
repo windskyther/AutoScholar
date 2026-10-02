@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from autoscholar.core.budget import BudgetLimits
@@ -38,6 +38,19 @@ class Settings(BaseSettings):
     semantic_scholar_api_key: SecretStr | None = None
     research_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     research_cache_ttl_seconds: int = Field(default=86_400, ge=0, le=604_800)
+    research_tool_backend: Literal["native", "mcp"] = "native"
+    mcp_research_url: str = "http://research-mcp:8091/mcp"
+    mcp_service_token: SecretStr | None = None
+    mcp_timeout_seconds: float = Field(default=25, gt=0, le=120)
+
+    @model_validator(mode="after")
+    def validate_mcp_configuration(self) -> "Settings":
+        if self.research_tool_backend == "mcp" and (
+            self.mcp_service_token is None
+            or len(self.mcp_service_token.get_secret_value()) < 32
+        ):
+            raise ValueError("MCP mode requires MCP_SERVICE_TOKEN with at least 32 characters")
+        return self
 
     embedding_provider: Literal["fastembed", "openai_compatible"] = "fastembed"
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

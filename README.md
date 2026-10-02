@@ -711,7 +711,37 @@ if ($LASTEXITCODE -ne 0) { throw 'Phase 7 故障验收失败，请检查输出' 
 
 Agent 负责消耗预算，网关只记录一次调用边界，避免跨进程后重复计数。发现阶段不可用不会创建不明调用；发出请求后超时或返回不确定结果会保留未完成账本，不自动重试，不静默切换到原生付费工具。MCP 返回内容始终视为不可信证据。
 
-Research MCP 搜索链路正在接入；Filesystem、Git、Experiment MCP、持久化副作用去重和完整阶段验收尚未完成。当前不能将 Phase 8 标为验收通过。
+### Research MCP（8B）
+
+独立服务提供 `search_web`、`search_papers`、`get_document`。研究 Agent 的搜索接口保持兼容；文档工具只返回已索引的文本片段，需要 Core 提供任务 ID、项目 ID 和明确的文档授权，服务端核对数据库归属。每次最多 8 个片段，每段最多 16384 字符，截断会标记 `truncated`；不读取宿主机任意文件或原始 PDF 路径。现有本地 RAG 保持独立，可在远程搜索停机时继续提供证据。
+
+服务使用内部 Bearer Token 并检查 Host/Origin；不挂载工作区、`.env` 或 Docker Socket，不暴露宿主端口。搜索密钥仅注入 Research 容器。文档查询使用只读事务，可通过 `MCP_DOCUMENT_DATABASE_URL` 配置专用只读数据库账号；默认开发 Compose 使用现有数据库账号，不等同于数据库角色级权限隔离。
+
+默认仍使用显式 `native` 模式。启用 MCP 时，在本地 `.env` 新增一个随机、至少 32 字符的 `MCP_SERVICE_TOKEN`（不要复用 LLM/Tavily 密钥），然后运行：
+
+```powershell
+docker compose -f compose.yaml -f compose.mcp.yaml up -d --build
+Invoke-RestMethod http://localhost:8000/health/ready
+```
+
+`capabilities.mcp_research` 表示 MCP 服务及工具目录可用性，不代表已经验证上游搜索账号。停止 Research 容器后 Core 的 `/health/live` 仍应为 200，基础设施正常时 `/health/ready` 仍为 ready，但研究能力显示 error。存在本地证据时研究结果可为 partial；证据不足则明确失败，不伪造完整答案。调用已经发出但结果未知时，持久化工作流仍进入 recovery_required，不会因“降级”而绕过不明调用保护。
+
+启用后的正常任务仍会使用你配置的真实模型/搜索服务。切换配置前先检查或暂停已有待执行任务，避免 Worker 启动后继续付费调用。回滚使用 `docker compose up -d --build api workflow-worker`；单独停用可选容器使用 `docker compose -f compose.yaml -f compose.mcp.yaml stop research-mcp`。
+
+无付费验收使用独立网络、PostgreSQL、固定搜索替身和真实 MCP HTTP 进程，不读取 `.env`、不领取现有任务：
+
+```powershell
+docker build -t autoscholar-api:phase8-test .
+if ($LASTEXITCODE -ne 0) { throw '验收镜像构建失败' }
+.venv\Scripts\python.exe tests/integration/phase8_research_acceptance.py
+if ($LASTEXITCODE -ne 0) { throw 'Research MCP 验收失败' }
+```
+
+预期 healthy、down、recovered、factory 四阶段分别输出 `acceptance: passed`、`external_api_calls: 0`，最后输出 `cleanup: passed`。factory 使用真实服务工厂验证无搜索密钥时拒绝调用，以及真实 PostgreSQL 文档只读查询。仅清理脚本本轮创建并校验过所有权的测试容器、网络及数据库卷，不影响现有服务数据。测试脚本需要 Docker Engine 管理权限；中途强制终止可能留下带 `autoscholar.acceptance` 标签的测试资源。
+
+2026-10-02 验证：Research MCP 四阶段隔离验收通过，外部 API 调用为 0，临时资源清理通过；完整回归 243 passed、1 skipped（Windows 符号链接权限），Ruff 和 mypy 通过。
+
+Filesystem、Git、Experiment MCP、持久化副作用去重和完整阶段验收尚未完成。当前不能将 Phase 8 标为验收通过。
 
 ## 开发路线
 

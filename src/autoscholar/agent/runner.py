@@ -846,10 +846,16 @@ class AgentRunner:
             try:
                 consume("tool_calls")
                 consume("search_queries")
-                response = await service.search(
-                    query.query,
-                    limit=self._research_limits.max_results_per_query,
-                )
+                from autoscholar.tool_platform.context import ToolScope, tool_scope
+
+                with tool_scope(ToolScope(
+                    task_id=state["task_id"], project_id=state["project_id"],
+                    document_ids=tuple(state["document_ids"] or []),
+                )):
+                    response = await service.search(
+                        query.query,
+                        limit=self._research_limits.max_results_per_query,
+                    )
                 output = json.dumps(response.to_dict(), ensure_ascii=False, separators=(",", ":"))
                 trace = await self._repository.add_tool_call(
                     task_id=state["task_id"],

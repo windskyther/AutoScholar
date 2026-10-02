@@ -72,6 +72,13 @@ async def ready(request: Request) -> ReadyResponse | JSONResponse:
         )
         for service in research_services
     }
+    mcp_gateway = request.app.state.mcp_research_gateway
+    if mcp_gateway is not None:
+        # Tool outage degrades research, not the Core's liveness or database readiness.
+        mcp_status: Literal["ok", "error"] = "ok" if await mcp_gateway.available() else "error"
+        research_capabilities["mcp_research"] = DependencyStatus(status=mcp_status)
+        for name in ("web_search", "paper_search"):
+            research_capabilities[name] = DependencyStatus(status=mcp_status)
     capabilities = {
         "llm": DependencyStatus(status=llm_status),
         "rag": DependencyStatus(

@@ -65,6 +65,9 @@ from autoscholar.research import (
     SemanticScholarSearchProvider,
     TavilySearchProvider,
 )
+from autoscholar.tool_platform.gateway import ToolGateway
+from autoscholar.tool_platform.research import RESEARCH_CONTRACTS, MCPResearchSearch
+from autoscholar.tool_platform.transport import MCPBackend
 
 
 def create_app(
@@ -157,6 +160,21 @@ def create_app(
             dense_dimensions=resolved_embedding_provider.dimensions,
         )
     resolved_research_services = research_services
+    mcp_gateway = None
+    if resolved_research_services is None and resolved_settings.research_tool_backend == "mcp":
+        assert resolved_settings.mcp_service_token is not None
+        mcp_gateway = ToolGateway(
+            MCPBackend(
+                resolved_settings.mcp_research_url,
+                resolved_settings.mcp_service_token.get_secret_value(),
+                timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            ),
+            RESEARCH_CONTRACTS,
+            timeout_seconds=resolved_settings.mcp_timeout_seconds,
+        )
+        resolved_research_services = [
+            MCPResearchSearch(mcp_gateway, "web"), MCPResearchSearch(mcp_gateway, "paper")
+        ]
     if resolved_research_services is None:
         cache = (
             RedisResearchCache(
@@ -327,6 +345,7 @@ def create_app(
         default_response_class=UTF8JSONResponse,
     )
     application.state.settings = resolved_settings
+    application.state.mcp_research_gateway = mcp_gateway
     application.state.autonomous_service = resolved_autonomous_service
     application.state.durable_service = (
         DurableService(
