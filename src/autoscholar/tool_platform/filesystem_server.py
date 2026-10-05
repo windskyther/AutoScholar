@@ -67,6 +67,15 @@ def create_filesystem_app(
             return await operations.execute(context, action)
 
     @mcp.tool()
+    async def get_operation(operation_id: str, ctx: Context[Any, Any]) -> dict[str, Any]:
+        """Read a task-bound receipt using the current worker's authority; never replay it."""
+        context, remaining = invocation_context(
+            "get_operation", {"operation_id": operation_id}, ctx
+        )
+        async with asyncio.timeout(remaining):
+            return await operations.lookup(operation_id, context)
+
+    @mcp.tool()
     async def list_files(ctx: Context[Any, Any]) -> dict[str, Any]:
         """List source files only in the authenticated task workspace."""
         return await execute("list_files", {}, ctx)

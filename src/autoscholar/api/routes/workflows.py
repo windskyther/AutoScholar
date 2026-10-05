@@ -3,6 +3,7 @@
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Header, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from autoscholar.api.experiment_auth import require_experiment_token
 from autoscholar.api.routes.agent import AgentRunRequest
@@ -11,6 +12,11 @@ from autoscholar.orchestration.approvals import ApprovalDecision
 from autoscholar.orchestration.durable import DurableService
 
 router = APIRouter(prefix="/agent/tasks", tags=["workflows"])
+
+
+class RecoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    checkpoint_sequence: int = Field(ge=1)
 
 
 def service(request: Request) -> DurableService:
@@ -77,6 +83,25 @@ async def execution(task_id: str, request: Request) -> dict[str, Any]:
 @router.get("/{task_id}/approvals")
 async def approvals(task_id: str, request: Request) -> dict[str, Any]:
     return {"task_id": task_id, "items": await service(request).approvals.list(task_id)}
+
+
+@router.get("/{task_id}/operations")
+async def operations(
+    task_id: str, request: Request, limit: int = Query(default=50, ge=1, le=200)
+) -> dict[str, Any]:
+    from autoscholar.tool_platform.registry import InvocationRegistry
+
+    durable = service(request)
+    await durable.repository.snapshot(task_id)
+    return {
+        "task_id": task_id,
+        "items": await InvocationRegistry(durable.repository.sessions).inspect(task_id, limit),
+    }
+
+
+@router.post("/{task_id}/reconcile")
+async def reconcile(task_id: str, payload: RecoveryRequest, request: Request) -> dict[str, Any]:
+    return await service(request).reconcile(task_id, payload.checkpoint_sequence)
 
 
 @router.get("/{task_id}/memory")

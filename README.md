@@ -763,7 +763,13 @@ if ($LASTEXITCODE -ne 0) { throw 'Filesystem MCP 验收失败' }
 
 2026-10-02 验证：完整回归 **252 passed、2 skipped**（Windows 符号链接权限，相关场景已在 Linux 隔离验收中通过），Ruff、mypy 和新迁移的 `alembic check` 通过；Research 四阶段及 Filesystem 三阶段容器验收均通过，外部 API 调用为 0，临时资源清理完成。现有服务未切换为 MCP，不改动本地 `.env` 或已有任务数据。
 
-Git、Experiment MCP、完整恢复对账和全阶段验收尚未完成。当前不能将 Phase 8 标为验收通过。
+### 操作查询与恢复对账
+
+Core 在派发任务工具前保存 operation ID、参数摘要、调用身份及输出契约，验证响应后保存完成回执。恢复 worker 可只读查询旧身份的回执；旧身份不能获得新的写入授权。新增 `core_tool_calls` 迁移不保存原始请求、密钥或模型提示。
+
+受既有实验 API Token 保护的接口：`GET /agent/tasks/{task_id}/operations` 查看调用和回执状态；`POST /agent/tasks/{task_id}/reconcile` 使用 JSON `{"checkpoint_sequence": 当前 execution 中的值}` 对账。对账只解除工具、任务、参数与原身份均匹配且结果契约有效的调用。整步完成记录及源码校验同时通过才可排队恢复；单个文件回执不能重建缺失的编码回合。不明 LLM/搜索调用仍保留，不重置累计预算，也不自动重跑。
+
+Git、Experiment MCP 和全阶段验收尚未完成。当前不能将 Phase 8 标为验收通过。
 
 ## 开发路线
 

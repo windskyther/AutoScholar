@@ -93,6 +93,33 @@ class DurableService:
             await asyncio.gather(*pending, return_exceptions=True)
         return True
 
+    async def reconcile(self, task_id: str, checkpoint_sequence: int) -> dict[str, Any]:
+        from autoscholar.tool_platform.registry import InvocationRegistry
+
+        snapshot, job = await self.repository.snapshot(task_id)
+        if job.checkpoint_sequence != checkpoint_sequence:
+            raise conflict("workflow_state_conflict", "Recovery checkpoint changed")
+        pending = await self.repository.reconcile_calls(
+            task_id, checkpoint_sequence=checkpoint_sequence
+        )
+        status = "recovery_required"
+        if not pending:
+            run = snapshot.restore(job.usage, job.active_seconds)
+            try:
+                await self._reconcile(snapshot, run, job.active)
+                self._verify_sources(run)
+            except AppError:
+                # A file receipt cannot reconstruct a missing coding/model turn.
+                pass
+            else:
+                status = await self.repository.queue_reconciled(task_id, checkpoint_sequence)
+        return {
+            "task_id": task_id,
+            "status": status,
+            "pending_calls": pending,
+            "operations": await InvocationRegistry(self.repository.sessions).inspect(task_id),
+        }
+
     async def _execute(self, task_id: str, generation: int) -> None:
         try:
             snapshot, job = await self.repository.snapshot(task_id)
@@ -123,7 +150,13 @@ class DurableService:
             if job.status == "cancel_requested":
                 status = "cancelled"
             elif job.pending_calls:
-                status, code = "recovery_required", "external_result_uncertain"
+                pending = await self.repository.reconcile_calls(
+                    task_id, owner=self.owner, generation=generation
+                )
+                if pending:
+                    status, code = "recovery_required", "external_result_uncertain"
+                else:
+                    stage = await self._reconcile(snapshot, run, job.active)
             elif job.active:
                 stage = await self._reconcile(snapshot, run, job.active)
             elif job.status == "pause_requested":

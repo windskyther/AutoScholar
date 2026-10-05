@@ -32,7 +32,9 @@ class OperationStore:
     def __init__(self, sessions: async_sessionmaker[AsyncSession], service: str) -> None:
         self.sessions, self.service = sessions, service
 
-    async def authorize(self, session: AsyncSession, context: dict[str, Any]) -> AgentTaskRow:
+    async def authorize(
+        self, session: AsyncSession, context: dict[str, Any], *, read_only: bool = False
+    ) -> AgentTaskRow:
         scope = context.get("scope")
         if not isinstance(scope, dict) or not isinstance(scope.get("task_id"), str):
             raise OperationDenied("task_scope_required")
@@ -62,7 +64,7 @@ class OperationStore:
             except LeaseLost as exc:
                 raise OperationDenied("workflow_claim_stale") from exc
             # Pause is a checkpoint-boundary request; finish the current unit.
-            if job.status not in {"running", "pause_requested"}:
+            if not read_only and job.status not in {"running", "pause_requested"}:
                 raise OperationDenied("workflow_not_running")
         elif parent_id is not None or claim is not None or task.mode == "autonomous":
             raise OperationDenied("workflow_claim_invalid")
@@ -72,13 +74,27 @@ class OperationStore:
             .with_for_update()
             .execution_options(populate_existing=True)
         )
-        if locked_task is None or locked_task.status != "running":
+        if locked_task is None or (not read_only and locked_task.status != "running"):
             raise OperationDenied("task_not_running")
         if scope.get("project_id") is not None and scope["project_id"] != locked_task.project_id:
             raise OperationDenied("task_project_mismatch")
         if float(context["deadline"]) <= time.time():
             raise OperationDenied("operation_expired")
         return locked_task
+
+    async def lookup(self, operation_id: str, context: dict[str, Any]) -> dict[str, Any]:
+        try:
+            async with self.sessions() as session:
+                task = await self.authorize(session, context, read_only=True)
+                row = await session.get(ToolOperationRow, operation_id)
+                if row is None or row.task_id != task.id or row.service != self.service:
+                    return {"status": "missing", "result": None}
+                return {
+                    "status": row.status,
+                    "result": row.result if row.status == "completed" else None,
+                }
+        except OperationDenied:
+            return {"status": "denied", "result": None}
 
     def receipt(self, row: ToolOperationRow, context: dict[str, Any]) -> dict[str, Any]:
         if (

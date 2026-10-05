@@ -221,6 +221,65 @@ class DurableRepository:
             await session.commit()
             return row.status
 
+    async def reconcile_calls(
+        self,
+        task_id: str,
+        *,
+        owner: str | None = None,
+        generation: int | None = None,
+        checkpoint_sequence: int | None = None,
+    ) -> dict[str, str]:
+        from autoscholar.tool_platform.operation_models import CoreToolCallRow
+        from autoscholar.tool_platform.registry import InvocationRegistry
+
+        async with self.sessions() as session:
+            job = await self.locked(session, task_id)
+            if owner is not None and generation is not None:
+                self.fence(job, owner, generation)
+            elif (
+                job.status != "recovery_required"
+                or job.owner is not None
+                or job.checkpoint_sequence != checkpoint_sequence
+            ):
+                raise conflict("workflow_state_conflict", "Recovery state or checkpoint changed")
+            pending = dict(job.pending_calls)
+            for operation_id, kind in list(pending.items()):
+                call = await session.get(CoreToolCallRow, operation_id)
+                if call is None or call.parent_task_id != task_id or kind != "mcp:" + call.tool:
+                    continue
+                if await InvocationRegistry.receipt_status(session, call) != "completed":
+                    continue
+                pending.pop(operation_id)
+                self.event(
+                    session,
+                    task_id,
+                    "call_reconciled",
+                    call_id=operation_id,
+                    service=call.service,
+                    tool=call.tool,
+                )
+            job.pending_calls = pending
+            await session.commit()
+            return pending
+
+    async def queue_reconciled(self, task_id: str, checkpoint_sequence: int) -> str:
+        async with self.sessions() as session:
+            job = await self.locked(session, task_id)
+            if (
+                job.status != "recovery_required"
+                or job.owner is not None
+                or job.checkpoint_sequence != checkpoint_sequence
+                or job.pending_calls
+            ):
+                raise conflict("workflow_state_conflict", "Recovery state changed")
+            job.error_code = None
+            await self.status(session, job, "queued")
+            self.event(
+                session, task_id, "recovery_verified", checkpoint_sequence=checkpoint_sequence
+            )
+            await session.commit()
+            return job.status
+
     async def quarantine(self, task_id: str, owner: str, generation: int) -> None:
         async with self.sessions() as session:
             row = await self.locked(session, task_id)

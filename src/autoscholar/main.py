@@ -67,6 +67,7 @@ from autoscholar.research import (
 )
 from autoscholar.tool_platform.filesystem import file_contracts
 from autoscholar.tool_platform.gateway import ToolGateway
+from autoscholar.tool_platform.registry import InvocationRegistry
 from autoscholar.tool_platform.research import RESEARCH_CONTRACTS, MCPResearchSearch
 from autoscholar.tool_platform.transport import MCPBackend
 
@@ -161,6 +162,11 @@ def create_app(
             dense_dimensions=resolved_embedding_provider.dimensions,
         )
     resolved_research_services = research_services
+    invocation_registry = (
+        InvocationRegistry(resolved_database.session_factory)
+        if isinstance(resolved_database, Database)
+        else None
+    )
     mcp_gateway = None
     if resolved_research_services is None and resolved_settings.research_tool_backend == "mcp":
         assert resolved_settings.mcp_service_token is not None
@@ -172,6 +178,8 @@ def create_app(
             ),
             RESEARCH_CONTRACTS,
             timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            registry=invocation_registry,
+            service_name="research",
         )
         resolved_research_services = [
             MCPResearchSearch(mcp_gateway, "web"),
@@ -243,6 +251,8 @@ def create_app(
             ),
             file_contracts(resolved_workspace_manager),
             timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            registry=invocation_registry,
+            service_name="filesystem",
         )
     if resolved_coding_agent is None and resolved_agent_repository is not None:
         resolved_coding_agent = CodingAgent(

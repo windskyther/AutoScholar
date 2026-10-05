@@ -7,14 +7,17 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Protocol
-from uuid import uuid4
+from typing import TYPE_CHECKING, Any, Protocol
+from uuid import UUID, uuid4
 
 from jsonschema import Draft202012Validator
 
 from autoscholar.core.budget import BudgetExceeded, current_budget, current_parent
 from autoscholar.core.journal import external_operation
 from autoscholar.tool_platform.context import current_tool_scope, current_workflow_claim
+
+if TYPE_CHECKING:
+    from autoscholar.tool_platform.registry import InvocationRegistry
 
 PROTOCOL_VERSION = "2026-07-28"
 MAX_MESSAGE_BYTES = 1_048_576
@@ -98,13 +101,20 @@ def validate(schema: dict[str, Any], value: Any, code: str) -> None:
 
 class ToolGateway:
     def __init__(
-        self, backend: ToolBackend, contracts: list[ToolContract], *, timeout_seconds: float = 25
+        self,
+        backend: ToolBackend,
+        contracts: list[ToolContract],
+        *,
+        timeout_seconds: float = 25,
+        registry: "InvocationRegistry | None" = None,
+        service_name: str = "native",
     ) -> None:
         self.backend = backend
         self.contracts = {contract.name: contract for contract in contracts}
         if len(self.contracts) != len(contracts):
             raise ValueError("Duplicate tool contract")
         self.timeout_seconds = timeout_seconds
+        self.registry, self.service_name = registry, service_name
         self._fingerprints: dict[str, str] = {}
 
     async def available(self) -> bool:
@@ -118,7 +128,14 @@ class ToolGateway:
         except Exception:
             return False
 
-    async def invoke(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def invoke(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        operation_id: str | None = None,
+        journal: bool = True,
+    ) -> dict[str, Any]:
         contract = self.contracts.get(name)
         if contract is None:
             raise ToolGatewayError("tool_not_allowed")
@@ -130,7 +147,7 @@ class ToolGateway:
         if budget is not None:
             budget.check()
             timeout = min(timeout, budget.limits.wall_seconds - (time.monotonic() - budget.started))
-        operation_id = str(uuid4())
+        operation_id = str(UUID(operation_id)) if operation_id else str(uuid4())
         deadline = time.time() + timeout
         dispatched = False
         try:
@@ -161,9 +178,11 @@ class ToolGateway:
                     if claim
                     else None,
                 }
+                if self.registry is not None and journal:
+                    await self.registry.prepare(self.service_name, context, contract.output_schema)
                 # Runner owns budget consumption. Gateway owns the one durable transport
                 # boundary; service processes never inherit the Core's ContextVars.
-                async with external_operation("mcp:" + name, operation_id=operation_id):
+                async with self._journal(name, operation_id, journal):
                     if budget is not None:
                         budget.check()
                     dispatched = True
@@ -175,6 +194,8 @@ class ToolGateway:
                     validate(contract.output_schema, reply.payload, "tool_result_invalid")
                     if reply.payload.get("uncertain") is True:
                         raise ToolGatewayError("tool_result_uncertain", uncertain=True)
+                    if self.registry is not None and journal:
+                        await self.registry.complete(context, reply.payload)
                 return reply.payload
         except ToolGatewayError as exc:
             if dispatched:
@@ -194,3 +215,12 @@ class ToolGateway:
                 raise cause from None
             # Do not expose headers, arguments, upstream exception messages or credentials.
             raise ToolGatewayError("tool_unavailable", uncertain=dispatched) from exc
+
+    @staticmethod
+    @asynccontextmanager
+    async def _journal(name: str, operation_id: str, enabled: bool) -> AsyncIterator[None]:
+        if enabled:
+            async with external_operation("mcp:" + name, operation_id=operation_id):
+                yield
+        else:
+            yield
