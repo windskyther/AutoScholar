@@ -26,6 +26,7 @@ from autoscholar.llm import (
 )
 from autoscholar.tool_platform.filesystem import mcp_file_tools
 from autoscholar.tool_platform.gateway import ToolGateway
+from autoscholar.tool_platform.git_tools import git_tools
 
 
 class CodingTaskStore(Protocol):
@@ -108,6 +109,7 @@ class CodingAgent:
         sandbox: SandboxExecutor,
         limits: CodingLimits | None = None,
         filesystem_gateway: ToolGateway | None = None,
+        git_gateway: ToolGateway | None = None,
     ) -> None:
         self._provider = provider
         self._repository = repository
@@ -115,6 +117,7 @@ class CodingAgent:
         self._sandbox = sandbox
         self._limits = limits or CodingLimits()
         self._filesystem_gateway = filesystem_gateway
+        self._git_gateway = git_gateway
         self._task_tools: dict[str, dict[str, AgentTool]] = {}
         self._tool_definitions: dict[str, list[ToolDefinition]] = {}
         self._graph = self._build_graph()
@@ -153,6 +156,8 @@ class CodingAgent:
             # Seeded autonomous work receives complete current sources on every turn.
             # No delete/recreate gap, repeated reads, or unreviewed training is needed.
             tools = [tool for tool in tools if tool.definition.name in {"create_file", "edit_file"}]
+        elif self._git_gateway is not None:
+            tools.extend(git_tools(self._git_gateway, task_id))
         self._task_tools[task_id] = {tool.definition.name: tool for tool in tools}
         self._tool_definitions[task_id] = [
             *(tool.definition for tool in tools),

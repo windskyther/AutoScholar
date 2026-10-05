@@ -67,6 +67,7 @@ from autoscholar.research import (
 )
 from autoscholar.tool_platform.filesystem import file_contracts
 from autoscholar.tool_platform.gateway import ToolGateway
+from autoscholar.tool_platform.git_tools import GIT_CONTRACTS
 from autoscholar.tool_platform.registry import InvocationRegistry
 from autoscholar.tool_platform.research import RESEARCH_CONTRACTS, MCPResearchSearch
 from autoscholar.tool_platform.transport import MCPBackend
@@ -240,6 +241,19 @@ def create_app(
             candidate_limit=resolved_settings.rag_candidate_limit,
         )
     resolved_coding_agent = coding_agent
+    git_gateway = None
+    if resolved_settings.git_tool_backend == "mcp":
+        assert resolved_settings.mcp_service_token is not None
+        git_gateway = ToolGateway(
+            MCPBackend(
+                resolved_settings.mcp_git_url,
+                resolved_settings.mcp_service_token.get_secret_value(),
+            ),
+            GIT_CONTRACTS,
+            timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            registry=invocation_registry,
+            service_name="git",
+        )
     filesystem_gateway = None
     if resolved_settings.filesystem_tool_backend == "mcp":
         assert resolved_settings.mcp_service_token is not None
@@ -261,6 +275,7 @@ def create_app(
             workspaces=resolved_workspace_manager,
             sandbox=resolved_sandbox_executor,
             filesystem_gateway=filesystem_gateway,
+            git_gateway=git_gateway,
             limits=CodingLimits(
                 max_repairs=resolved_settings.sandbox_max_repairs,
                 timeout_seconds=resolved_settings.sandbox_timeout_seconds,
@@ -372,6 +387,7 @@ def create_app(
     application.state.settings = resolved_settings
     application.state.mcp_research_gateway = mcp_gateway
     application.state.mcp_filesystem_gateway = filesystem_gateway
+    application.state.mcp_git_gateway = git_gateway
     application.state.autonomous_service = resolved_autonomous_service
     application.state.durable_service = (
         DurableService(

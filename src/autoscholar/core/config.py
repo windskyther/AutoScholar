@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     research_cache_ttl_seconds: int = Field(default=86_400, ge=0, le=604_800)
     research_tool_backend: Literal["native", "mcp"] = "native"
     filesystem_tool_backend: Literal["native", "mcp"] = "native"
+    git_tool_backend: Literal["disabled", "mcp"] = "disabled"
+    mcp_git_url: str = "http://git-mcp:8093/mcp"
     mcp_filesystem_url: str = "http://filesystem-mcp:8092/mcp"
     mcp_research_url: str = "http://research-mcp:8091/mcp"
     mcp_service_token: SecretStr | None = None
@@ -47,9 +49,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_mcp_configuration(self) -> "Settings":
-        if "mcp" in (self.research_tool_backend, self.filesystem_tool_backend) and (
-            self.mcp_service_token is None
-            or len(self.mcp_service_token.get_secret_value()) < 32
+        if "mcp" in (
+            self.research_tool_backend,
+            self.filesystem_tool_backend,
+            self.git_tool_backend,
+        ) and (
+            self.mcp_service_token is None or len(self.mcp_service_token.get_secret_value()) < 32
         ):
             raise ValueError("MCP mode requires MCP_SERVICE_TOKEN with at least 32 characters")
         return self
@@ -81,12 +86,8 @@ class Settings(BaseSettings):
     workspace_max_file_bytes: int = Field(default=1_048_576, ge=1, le=10_485_760)
     workspace_max_source_bytes: int = Field(default=10_485_760, ge=1, le=104_857_600)
     workspace_max_artifact_files: int = Field(default=100, ge=1, le=1_000)
-    workspace_max_artifact_file_bytes: int = Field(
-        default=16_777_216, ge=1, le=104_857_600
-    )
-    workspace_max_artifact_bytes: int = Field(
-        default=67_108_864, ge=1, le=1_073_741_824
-    )
+    workspace_max_artifact_file_bytes: int = Field(default=16_777_216, ge=1, le=104_857_600)
+    workspace_max_artifact_bytes: int = Field(default=67_108_864, ge=1, le=1_073_741_824)
     sandbox_manager_url: str = "http://sandbox-manager:8090"
     sandbox_timeout_seconds: int = Field(default=300, ge=1, le=600)
     sandbox_max_repairs: int = Field(default=3, ge=0, le=10)
@@ -99,10 +100,7 @@ class Settings(BaseSettings):
 
     @property
     def experiment_api_configured(self) -> bool:
-        return bool(
-            self.experiment_api_token
-            and self.experiment_api_token.get_secret_value()
-        )
+        return bool(self.experiment_api_token and self.experiment_api_token.get_secret_value())
 
     @property
     def llm_configured(self) -> bool:

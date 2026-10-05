@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS autoscholar-base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -20,3 +20,10 @@ ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 
 CMD ["uvicorn", "autoscholar.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+FROM autoscholar-base AS git-mcp
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+CMD ["uvicorn", "autoscholar.tool_platform.git_server:create_app", "--factory", "--host", "0.0.0.0", "--port", "8093", "--no-access-log"]
+
+FROM autoscholar-base AS api

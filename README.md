@@ -769,7 +769,13 @@ Core 在派发任务工具前保存 operation ID、参数摘要、调用身份�
 
 受既有实验 API Token 保护的接口：`GET /agent/tasks/{task_id}/operations` 查看调用和回执状态；`POST /agent/tasks/{task_id}/reconcile` 使用 JSON `{"checkpoint_sequence": 当前 execution 中的值}` 对账。对账只解除工具、任务、参数与原身份均匹配且结果契约有效的调用。整步完成记录及源码校验同时通过才可排队恢复；单个文件回执不能重建缺失的编码回合。不明 LLM/搜索调用仍保留，不重置累计预算，也不自动重跑。
 
-Git、Experiment MCP 和全阶段验收尚未完成。当前不能将 Phase 8 标为验收通过。
+### Git MCP（8D）
+
+Coding Agent 可启用 `GIT_TOOL_BACKEND=mcp` 使用 `clone_repo`、`git_status`、`git_diff`。管理员通过 `MCP_GIT_ALLOWED_URLS` JSON 列表指定精确的公开 HTTPS 仓库；默认列表为空，不允许克隆。禁止 SSH、本地路径、凭据、子模块、重定向及私有地址；DNS 解析后固定公开 IP，禁用继承的 Git 配置、代理、钩子及外部 diff。
+
+只导入配额内的 UTF-8 文本快照到当前任务源码，Git 元数据存放独立卷。服务不访问开发仓库、不提供 push/commit/任意 Git 命令；修改可交给 Filesystem 工具，随后查看 diff。保留操作预约、租约检查及不明结果不重放规则。镜像使用 `docker build --target git-mcp -t autoscholar-git:phase8-test .` 构建。
+
+Experiment MCP 和全阶段验收尚未完成。当前不能将 Phase 8 标为验收通过。
 
 ## 开发路线
 

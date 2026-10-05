@@ -159,3 +159,55 @@ class OperationStore:
                 return result
         except OperationDenied as exc:
             return failure(str(exc))
+
+    async def reserve(self, context: dict[str, Any]) -> dict[str, Any] | None:
+        """Reserve a long operation without retaining locks during external execution."""
+        try:
+            async with self.sessions() as session:
+                await self.authorize(session, context)
+                existing = await session.get(ToolOperationRow, context["operation_id"])
+                if existing is not None:
+                    return self.receipt(existing, context)
+                session.add(
+                    ToolOperationRow(
+                        id=context["operation_id"],
+                        task_id=context["scope"]["task_id"],
+                        service=self.service,
+                        tool=context["tool"],
+                        arguments_sha256=context["arguments_sha256"],
+                        authority_sha256=self.authority(context),
+                        status="running",
+                        result=None,
+                    )
+                )
+                try:
+                    await session.commit()
+                except IntegrityError:
+                    await session.rollback()
+                    existing = await session.get(ToolOperationRow, context["operation_id"])
+                    if existing is None:
+                        raise
+                    return self.receipt(existing, context)
+            return None
+        except OperationDenied as exc:
+            return failure(str(exc))
+
+    async def finish(
+        self, context: dict[str, Any], action: Callable[[], Awaitable[dict[str, Any]]]
+    ) -> dict[str, Any]:
+        """Fence and commit a short publication after external work has finished."""
+        async with self.sessions() as session:
+            await self.authorize(session, context)
+            row = await session.get(ToolOperationRow, context["operation_id"])
+            if row is None:
+                raise ValueError("Operation was not reserved")
+            prior = self.receipt(row, context)
+            if (
+                row.status == "completed"
+                or prior.get("error_code") == "operation_identity_conflict"
+            ):
+                return prior
+            result = await action()
+            row.result, row.status = result, "completed"
+            await session.commit()
+            return result

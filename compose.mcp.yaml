@@ -5,6 +5,8 @@ services:
     environment: &mcp-core-environment
       RESEARCH_TOOL_BACKEND: mcp
       FILESYSTEM_TOOL_BACKEND: mcp
+      GIT_TOOL_BACKEND: mcp
+      MCP_GIT_URL: http://git-mcp:8093/mcp
       MCP_FILESYSTEM_URL: http://filesystem-mcp:8092/mcp
       MCP_RESEARCH_URL: http://research-mcp:8091/mcp
       MCP_SERVICE_TOKEN: ${MCP_SERVICE_TOKEN:?Set a random service token of at least 32 characters}
@@ -14,6 +16,38 @@ services:
 
   workflow-worker:
     environment: *mcp-core-environment
+
+  git-mcp:
+    build:
+      context: .
+      target: git-mcp
+    environment:
+      MCP_SERVICE_TOKEN: ${MCP_SERVICE_TOKEN:?Set a random service token of at least 32 characters}
+      DATABASE_URL: postgresql+asyncpg://autoscholar:autoscholar@postgres:5432/autoscholar
+      MCP_GIT_ALLOWED_URLS: '${MCP_GIT_ALLOWED_URLS:-[]}'
+      MCP_GIT_ROOT: /data/git
+      WORKSPACE_ROOT: /data/workspaces
+    volumes:
+      - git_task_data:/data/git
+      - workspace_data:/data/workspaces
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16777216
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/health/live', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   filesystem-mcp:
     build:
@@ -87,3 +121,6 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+
+volumes:
+  git_task_data:
