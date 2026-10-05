@@ -806,7 +806,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Phase 8 全链路验收失败' }
 
 回滚时先在检查点暂停任务，再使用 `docker compose up -d --build api workflow-worker` 恢复显式原生后端；可选服务停用命令为 `docker compose -f compose.yaml -f compose.mcp.yaml stop research-mcp filesystem-mcp git-mcp experiment-mcp`。不在执行中途切换后端或重放不明操作，不删除数据卷。
 
-2026-10-05 验收结果：Phase 8 的 8A–8F 已完成当前无付费 CPU 范围验收。完整回归 **290 passed、3 skipped**（现有 Compose smoke 未启用、Windows 两项符号链接权限限制）；Ruff、mypy、Compose 配置与独立 PostgreSQL 的迁移/`alembic check` 通过。Research 四阶段、Filesystem 三阶段（含 Linux 符号链接）及全平台五阶段均通过，全平台实测一次审批、一次真实训练、10 个产物下载校验，强制中断后的沙箱/临时卷清理耗时 0.22 秒；所有本轮测试资源已清理，外部 API 调用为 0。真实 LLM/Tavily/GitHub 上游联测及 GPU 不在本轮验收范围；现有 `.env` 和正常部署未切换为 MCP，`main` 仍待单独审核。
+2026-10-05 验收结果：Phase 8 的 8A–8F 已完成当前无付费 CPU 范围验收。完整回归 **290 passed、3 skipped**（现有 Compose smoke 未启用、Windows 两项符号链接权限限制）；Ruff、mypy、Compose 配置与独立 PostgreSQL 的迁移/`alembic check` 通过。Research 四阶段、Filesystem 三阶段（含 Linux 符号链接）及全平台五阶段均通过，全平台实测一次审批、一次真实训练、10 个产物下载校验，强制中断后的沙箱/临时卷清理耗时 0.22 秒；所有本轮测试资源已清理，外部 API 调用为 0。真实 LLM/Tavily/GitHub 上游联测及 GPU 不在该轮验收范围；现有 `.env` 和正常部署未切换为 MCP。
+
+2026-10-06 真实 API 补测：经项目所有者授权，先执行 1 组轻量联测，再执行 10 组连续联测。每组通过本地独立 Research MCP 调用 Tavily 基础检索，再使用现有 LLM Provider 生成简短中文回答；仅发送公开 MNIST 查询和检索摘录。两轮合计 Tavily 11 次、LLM 11 次，全部 HTTP 200、无重试；批量 10 组全部通过来源、回答、引用标记及用量校验，LLM 输入 2380、输出 334、合计 2714 tokens，耗时 35.81 秒。每次 LLM 输出上限 128 tokens，测试时关闭深度思考，不运行训练、不修改正常部署。原始报告和本地测试脚本保留在 Git 忽略的 `data/` 目录，不上传密钥、`.env` 或设计文档。这是小规模顺序调用验证，不代表完整付费工作流、并发压力、真实 GitHub 工具访问或 GPU 验收。
 
 ## 开发路线
 
@@ -820,7 +822,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Phase 8 全链路验收失败' }
 | Phase 5 | 实验指标、隔离产物、可复现实验报告 |
 | Phase 6 | 结构化 DAG、Reviewer/Replanning、共享预算、版本历史 |
 | Phase 7 | 持久化队列、Checkpoint、暂停恢复、人工审批、项目/经验 Memory |
-| Phase 8 | MCP 工具平台（无付费 CPU 验收通过） |
+| Phase 8 | MCP 工具平台（无付费 CPU 验收、轻量真实 LLM/Tavily 补测通过） |
 | Phase 9 | Web 工作台 |
 | Phase 10–11 | 全链路评测、安全加固、CI/CD 与部署 |
 
