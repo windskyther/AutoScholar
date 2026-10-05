@@ -100,6 +100,11 @@ async def ready(request: Request) -> ReadyResponse | JSONResponse:
         capabilities["mcp_git"] = DependencyStatus(
             status="ok" if await git_gateway.available() else "error"
         )
+    experiment_gateway = request.app.state.mcp_experiment_gateway
+    if experiment_gateway is not None:
+        capabilities["mcp_experiment"] = DependencyStatus(
+            status="ok" if await experiment_gateway.available() else "error"
+        )
     is_ready = all(dependency.status == "ok" for dependency in dependencies.values())
     response = ReadyResponse(
         status="ready" if is_ready else "not_ready",

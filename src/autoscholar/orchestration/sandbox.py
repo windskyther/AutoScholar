@@ -29,6 +29,8 @@ class BudgetedSandbox:
             request = request.model_copy(
                 update={"timeout_seconds": min(request.timeout_seconds, max(1, int(remaining)))}
             )
+        if getattr(self.sandbox, "owns_journal", False):
+            return await self.sandbox.run(request)
         async with external_operation("sandbox:" + request.action):
             return await self.sandbox.run(request)
 

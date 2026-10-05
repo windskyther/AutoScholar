@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, func
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from autoscholar.agent.database_models import Base
@@ -44,3 +44,17 @@ class CoreToolCallRow(Base):
     result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     result_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ExperimentExecutionRow(Base):
+    __tablename__ = "mcp_experiment_executions"
+
+    id: Mapped[str] = mapped_column(
+        ForeignKey("tool_operations.id", ondelete="CASCADE"), primary_key=True
+    )
+    context: Mapped[dict[str, Any]] = mapped_column(JSON)
+    request: Mapped[dict[str, Any]] = mapped_column(JSON)
+    owner: Mapped[str] = mapped_column(String(36))
+    status: Mapped[str] = mapped_column(String(16))
+    heartbeat: Mapped[float] = mapped_column(Float)
+    deadline: Mapped[float] = mapped_column(Float)

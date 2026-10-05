@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     research_tool_backend: Literal["native", "mcp"] = "native"
     filesystem_tool_backend: Literal["native", "mcp"] = "native"
     git_tool_backend: Literal["disabled", "mcp"] = "disabled"
+    experiment_tool_backend: Literal["native", "mcp"] = "native"
+    mcp_experiment_url: str = "http://experiment-mcp:8094/mcp"
+    mcp_artifact_root: Path = Path("data/mcp-artifacts")
     mcp_git_url: str = "http://git-mcp:8093/mcp"
     mcp_filesystem_url: str = "http://filesystem-mcp:8092/mcp"
     mcp_research_url: str = "http://research-mcp:8091/mcp"
@@ -53,6 +56,7 @@ class Settings(BaseSettings):
             self.research_tool_backend,
             self.filesystem_tool_backend,
             self.git_tool_backend,
+            self.experiment_tool_backend,
         ) and (
             self.mcp_service_token is None or len(self.mcp_service_token.get_secret_value()) < 32
         ):

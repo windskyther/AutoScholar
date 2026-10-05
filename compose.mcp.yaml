@@ -6,6 +6,9 @@ services:
       RESEARCH_TOOL_BACKEND: mcp
       FILESYSTEM_TOOL_BACKEND: mcp
       GIT_TOOL_BACKEND: mcp
+      EXPERIMENT_TOOL_BACKEND: mcp
+      MCP_EXPERIMENT_URL: http://experiment-mcp:8094/mcp
+      MCP_ARTIFACT_ROOT: /data/mcp-artifacts
       MCP_GIT_URL: http://git-mcp:8093/mcp
       MCP_FILESYSTEM_URL: http://filesystem-mcp:8092/mcp
       MCP_RESEARCH_URL: http://research-mcp:8091/mcp
@@ -13,9 +16,47 @@ services:
       MCP_TIMEOUT_SECONDS: ${MCP_TIMEOUT_SECONDS:-25}
       TAVILY_API_KEY: ""
       SEMANTIC_SCHOLAR_API_KEY: ""
+    volumes:
+      - mcp_artifact_data:/data/mcp-artifacts:ro
 
   workflow-worker:
     environment: *mcp-core-environment
+    volumes:
+      - mcp_artifact_data:/data/mcp-artifacts:ro
+
+  experiment-mcp:
+    build:
+      context: .
+    command: [uvicorn, "autoscholar.tool_platform.experiment_server:create_app", --factory, --host, "0.0.0.0", --port, "8094", --no-access-log]
+    environment:
+      MCP_SERVICE_TOKEN: ${MCP_SERVICE_TOKEN:?Set a random service token of at least 32 characters}
+      DATABASE_URL: postgresql+asyncpg://autoscholar:autoscholar@postgres:5432/autoscholar
+      WORKSPACE_ROOT: /data/workspaces
+      MCP_ARTIFACT_ROOT: /data/mcp-artifacts
+      SANDBOX_MANAGER_URL: http://sandbox-manager:8090
+      WORKFLOW_APPROVAL_THRESHOLD: ${WORKFLOW_APPROVAL_THRESHOLD:-20000}
+    volumes:
+      - workspace_data:/data/workspaces:ro
+      - mcp_artifact_data:/data/mcp-artifacts
+    networks: [default, sandbox_control]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16777216
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 768m
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      sandbox-manager:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/health/live', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   git-mcp:
     build:
@@ -124,3 +165,4 @@ services:
 
 volumes:
   git_task_data:
+  mcp_artifact_data:

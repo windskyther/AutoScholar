@@ -103,7 +103,7 @@ class EvidenceRow(Base):
     authors: Mapped[list[str]] = mapped_column(JSON, default=list)
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    query: Mapped[str] = mapped_column(String(400))
+    query: Mapped[str] = mapped_column(Text)
     topic: Mapped[str] = mapped_column(String(255))
     claim: Mapped[str] = mapped_column(Text)
     excerpt: Mapped[str] = mapped_column(Text)

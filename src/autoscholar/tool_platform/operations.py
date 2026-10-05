@@ -51,7 +51,14 @@ class OperationStore:
             .with_for_update()
         )
         claim = context.get("claim")
-        if job is not None:
+        terminal_read = (
+            job is not None
+            and read_only
+            and job.owner is None
+            and job.status in {"succeeded", "failed", "cancelled", "budget_exceeded"}
+            and claim is None
+        )
+        if job is not None and not terminal_read:
             if (
                 not isinstance(claim, dict)
                 or claim.get("task_id") != job.task_id
@@ -66,7 +73,9 @@ class OperationStore:
             # Pause is a checkpoint-boundary request; finish the current unit.
             if not read_only and job.status not in {"running", "pause_requested"}:
                 raise OperationDenied("workflow_not_running")
-        elif parent_id is not None or claim is not None or task.mode == "autonomous":
+        elif job is None and (
+            parent_id is not None or claim is not None or task.mode == "autonomous"
+        ):
             raise OperationDenied("workflow_claim_invalid")
         locked_task: AgentTaskRow | None = await session.scalar(
             select(AgentTaskRow)

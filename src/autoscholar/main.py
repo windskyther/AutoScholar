@@ -65,6 +65,9 @@ from autoscholar.research import (
     SemanticScholarSearchProvider,
     TavilySearchProvider,
 )
+from autoscholar.tool_platform.artifact_spool import ArtifactSpool
+from autoscholar.tool_platform.experiment_adapter import MCPExperimentSandbox
+from autoscholar.tool_platform.experiment_contracts import EXPERIMENT_CONTRACTS
 from autoscholar.tool_platform.filesystem import file_contracts
 from autoscholar.tool_platform.gateway import ToolGateway
 from autoscholar.tool_platform.git_tools import GIT_CONTRACTS
@@ -125,6 +128,31 @@ def create_app(
         max_artifact_file_bytes=resolved_settings.workspace_max_artifact_file_bytes,
         max_artifact_bytes=resolved_settings.workspace_max_artifact_bytes,
     )
+    invocation_registry = (
+        InvocationRegistry(resolved_database.session_factory)
+        if isinstance(resolved_database, Database)
+        else None
+    )
+    experiment_gateway = None
+    if sandbox_executor is None and resolved_settings.experiment_tool_backend == "mcp":
+        if invocation_registry is None or resolved_settings.mcp_service_token is None:
+            raise ValueError("Experiment MCP requires a persistent Core database and service token")
+        experiment_gateway = ToolGateway(
+            MCPBackend(
+                resolved_settings.mcp_experiment_url,
+                resolved_settings.mcp_service_token.get_secret_value(),
+                timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            ),
+            EXPERIMENT_CONTRACTS,
+            timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            service_name="experiment",
+        )
+        sandbox_executor = MCPExperimentSandbox(
+            experiment_gateway,
+            resolved_workspace_manager,
+            ArtifactSpool(resolved_settings.mcp_artifact_root),
+            invocation_registry,
+        )
     resolved_sandbox_executor = BudgetedSandbox(
         sandbox_executor
         or SandboxClient(
@@ -163,11 +191,6 @@ def create_app(
             dense_dimensions=resolved_embedding_provider.dimensions,
         )
     resolved_research_services = research_services
-    invocation_registry = (
-        InvocationRegistry(resolved_database.session_factory)
-        if isinstance(resolved_database, Database)
-        else None
-    )
     mcp_gateway = None
     if resolved_research_services is None and resolved_settings.research_tool_backend == "mcp":
         assert resolved_settings.mcp_service_token is not None
@@ -388,6 +411,7 @@ def create_app(
     application.state.mcp_research_gateway = mcp_gateway
     application.state.mcp_filesystem_gateway = filesystem_gateway
     application.state.mcp_git_gateway = git_gateway
+    application.state.mcp_experiment_gateway = experiment_gateway
     application.state.autonomous_service = resolved_autonomous_service
     application.state.durable_service = (
         DurableService(
