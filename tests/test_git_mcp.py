@@ -5,6 +5,7 @@ import subprocess
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 import uvicorn
@@ -20,6 +21,46 @@ from autoscholar.tool_platform.transport import MCPBackend
 pytest_plugins = ["tests.test_filesystem_mcp"]
 URL = "https://example.org/fixture/research.git"
 TOKEN = "offline-git-service-token-at-least-32-characters"
+
+
+@pytest.mark.parametrize(
+    "addresses",
+    [["127.0.0.1"], ["10.0.0.1"], ["169.254.169.254"], ["::1"], ["8.8.8.8", "192.168.1.1"], []],
+)
+async def test_production_fetch_rejects_private_or_mixed_dns(
+    git_manager: GitManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, addresses: list[str]
+) -> None:
+    resolver = AsyncMock(return_value=[(2, 1, 6, "", (ip, 443)) for ip in addresses])
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", resolver)
+    invoke = AsyncMock()
+    monkeypatch.setattr(git_manager, "run", invoke)
+    with pytest.raises(GitPolicyError, match="git_network_denied"):
+        await git_manager.fetch_https(URL, tmp_path, AsyncMock())
+    invoke.assert_not_called()
+
+
+async def test_production_fetch_pins_public_dns_and_has_no_credentials(
+    git_manager: GitManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        asyncio.get_running_loop(),
+        "getaddrinfo",
+        AsyncMock(return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]),
+    )
+    invoke = AsyncMock()
+    monkeypatch.setattr(git_manager, "run", invoke)
+    monkeypatch.setenv("HTTPS_PROXY", "http://private-proxy")
+    monkeypatch.setenv("GIT_ASKPASS", "malicious-helper")
+    await git_manager.fetch_https(URL, tmp_path, AsyncMock())
+    args = invoke.call_args.args[0]
+    assert "http.curloptResolve=example.org:443:8.8.8.8" in args
+    assert "--depth=1" in args and args[-2] == URL
+    assert "http.followRedirects=false" in git_manager.options()
+    assert "protocol.allow=never" in git_manager.options()
+    assert (
+        "HTTPS_PROXY" not in git_manager.environment()
+        and "GIT_ASKPASS" not in git_manager.environment()
+    )
 
 
 @pytest.fixture
