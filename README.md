@@ -705,7 +705,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Phase 7 故障验收失败，请检查输出' 
 
 2026-09-29 补测：完整回归 **223 passed、1 skipped**（Windows 符号链接权限），Ruff lint、mypy、迁移检查通过；上述 11 个隔离故障/并发场景全部通过。最终一轮三类实验中断的容器及临时卷清理耗时分别为 0.42、2.55、2.82 秒。修复了数据库心跳异常或清理阻塞后执行未取消、调用方断连后沙箱继续运行、终态重复取消覆盖结果统计的问题，并调整租约起算时点。外部 API 调用为 0；真实 LLM/Tavily 的 Phase 7 稳定性联测仍未执行，GPU 实验仍不在当前执行范围内。
 
-## Phase 8：MCP 工具平台（开发中）
+## Phase 8：MCP 工具平台
 
 首个模块为统一工具网关：锁定官方 Python SDK `mcp==2.2.0` 和 MCP `2026-07-28`，使用 Streamable HTTP。服务地址及工具契约由服务器配置，模型不能指定 URL、认证信息或注册任意工具。网关支持显式 Native/MCP 后端，校验参数、返回值、工具集合变化、调用期限和响应大小，拒绝远程 Schema 引用及 HTTP 重定向。
 
@@ -748,7 +748,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Research MCP 验收失败' }
 - 任务 ID 和工作流 owner/generation 由 Core 提供，不接受模型传入任务目录或执行身份。服务端核对数据库中的任务归属、状态和租约；失效 worker、过期请求及取消请求不能执行文件修改。暂停请求遵循 Phase 7 的检查点边界语义，允许当前单元完成。
 - PostgreSQL 行锁串行化同一任务的文件操作及配额检查。拒绝绝对路径、目录穿越、符号链接和 Windows 目录联接；仍保留 UTF-8 字节配额和原子替换。每个文本参数最多 65536 字符，返回文本最多 262144 字符；超限明确失败，不静默截断源代码。
 - 每次操作先持久化预约，再执行并保存结果。同一 operation ID/身份/参数返回已保存结果；身份冲突拒绝执行。进程在文件修改后、结果提交前崩溃，会保留不确定记录，不自动再次修改文件；这不是数据库与文件系统的原子事务，也不宣称 exactly-once。Core 对结果不明的文件调用立即停止当前编码执行，不交给模型自动重试。
-- 工作区初始化、模板播种、源码快照、验证及日志仍由既有 Core 流程管理。此模块迁移的是模型可调用的六个文件工具，不代表 Core 已变成无状态服务；Experiment MCP 和完整恢复对账仍在后续模块中。
+- 工作区初始化、模板播种、源码快照、验证及日志仍由既有 Core 流程管理。此模块迁移的是模型可调用的六个文件工具，不代表 Core 已变成无状态服务；恢复对账与 Experiment 集成见后续章节。
 
 无付费验收使用独立 PostgreSQL、独立工作区卷及两个 Filesystem 服务进程：
 
@@ -775,7 +775,38 @@ Coding Agent 可启用 `GIT_TOOL_BACKEND=mcp` 使用 `clone_repo`、`git_status`
 
 只导入配额内的 UTF-8 文本快照到当前任务源码，Git 元数据存放独立卷。服务不访问开发仓库、不提供 push/commit/任意 Git 命令；修改可交给 Filesystem 工具，随后查看 diff。保留操作预约、租约检查及不明结果不重放规则。镜像使用 `docker build --target git-mcp -t autoscholar-git:phase8-test .` 构建。
 
-Experiment MCP 和全阶段验收尚未完成。当前不能将 Phase 8 标为验收通过。
+### Experiment MCP（8E）
+
+启用 `EXPERIMENT_TOOL_BACKEND=mcp` 后，编码验证和实验执行统一经过独立服务。提供 `execute`、`get_status`、`get_logs`、`get_metrics`、`cancel`，另外有只读沙箱健康查询；这些接口由 Core 调用，不直接作为模型的任意训练入口。
+
+- `execute` 提交持久化执行身份后立即返回；Core 短轮询等待真实结果，单次沙箱最长 600 秒。提交与查询只有一个逻辑调用账本，预算只在 Core 消耗一次，不因轮询重复计数。服务最多接收 4 个活跃执行。
+- 服务从只读任务卷读取源码并核对 SHA-256，不在 MCP 消息内传输最多 10 MiB 的源码。训练前核对实验记录、固定参数、数据集指纹、有效工作流租约、计划/源码检查点及已消费的审批；同一训练单元不能用新 operation ID 再派发一次。
+- Planner、Reviewer、修复/重规划、预算、审批和报告分析仍在 Core。服务只请求现有 sandbox-manager，只有 sandbox-manager 持有 Docker Socket。Experiment 不获得 LLM/搜索密钥，不挂载开发仓库或 `.env`。
+- 日志在执行结束后提供，每个流最多 24 KiB UTF-8 字节，截断明确标记；不提供虚假的实时日志。指标查询只读取哈希验证通过的原始 metrics JSON。二进制产物通过独立内部卷传输，每件最多 16 MiB、每次总计 64 MiB；MCP 只返回文件身份/大小/摘要。Core 再核验并通过既有受保护下载 API 提供产物，不把大文件塞入 1 MiB 的 MCP 包。
+- 服务心跳失败、租约失效、取消或未知结果会停止执行并保留不确定状态；服务重启不自动重跑预约或运行中的实验。完成回执可重新查询；正在运行的工作流需要当前 worker 身份，已结束且无 owner 的工作流允许可信 Core 只读查询，旧 worker 和所有写操作仍受原租约保护。
+
+新增迁移 `20261005_0011` 保存异步执行身份；`20261005_0012` 将证据查询改为 Text，修复项目内检索问题超过旧 400 字符字段导致保存失败的问题，保留完整来源信息。后者降级时若存在长查询会明确阻止截断。正常升级仍由 migrate 服务完成；本轮未升级已有业务数据库。
+
+### 无付费全链路验收（8F）
+
+先按 Phase 4/5 说明准备 Docker CPU 镜像和 MNIST 数据集，然后在项目根目录运行：
+
+```powershell
+docker build -t autoscholar-api:phase8-test .
+if ($LASTEXITCODE -ne 0) { throw 'Core/MCP 验收镜像构建失败' }
+docker build --target git-mcp -t autoscholar-git:phase8-test .
+if ($LASTEXITCODE -ne 0) { throw 'Git MCP 验收镜像构建失败' }
+.venv\Scripts\python.exe tests/integration/phase8_platform_acceptance.py
+if ($LASTEXITCODE -ne 0) { throw 'Phase 8 全链路验收失败' }
+```
+
+脚本创建私有 PostgreSQL、Research/Filesystem/Git/Experiment MCP 和独立沙箱管理器，不传入 `.env`，不领取已有任务，不切换现有部署。模型、搜索和索引检索采用固定夹具；Git 使用明确注入的隔离本地仓库夹具，生产服务没有允许本地 URL 的配置开关。执行真实 Git 命令、MCP HTTP、数据库迁移/Schema 检查和 Docker CPU MNIST 训练，并下载核验 10 个真实产物。公开 HTTPS DNS 固定、私有/混合 DNS 拒绝及凭据隔离另有离线单测；此验收不代表已经访问真实 GitHub/Tavily/LLM 上游。
+
+预期 prepare、resume、receipt、interrupt、uncertain 五阶段通过，输出 `external_api_calls: 0`、`sandbox_cleanup: passed` 和最后的 `cleanup: passed`。覆盖 Git→文件编辑→真实沙箱验证、Research→Coding→Experiment 工作流、暂停后多服务重启、预算/编码子任务保留、一次审批一次训练、完成回执重查，以及运行中强制终止 Experiment 服务后的沙箱/临时卷清理和不确定执行不重放。只按本轮 ID 与所有权标签清理测试资源，保留现有数据和只读 MNIST 卷；不要在清理完成前强制关闭脚本。
+
+回滚时先在检查点暂停任务，再使用 `docker compose up -d --build api workflow-worker` 恢复显式原生后端；可选服务停用命令为 `docker compose -f compose.yaml -f compose.mcp.yaml stop research-mcp filesystem-mcp git-mcp experiment-mcp`。不在执行中途切换后端或重放不明操作，不删除数据卷。
+
+2026-10-05 验收结果：Phase 8 的 8A–8F 已完成当前无付费 CPU 范围验收。完整回归 **290 passed、3 skipped**（现有 Compose smoke 未启用、Windows 两项符号链接权限限制）；Ruff、mypy、Compose 配置与独立 PostgreSQL 的迁移/`alembic check` 通过。Research 四阶段、Filesystem 三阶段（含 Linux 符号链接）及全平台五阶段均通过，全平台实测一次审批、一次真实训练、10 个产物下载校验，强制中断后的沙箱/临时卷清理耗时 0.22 秒；所有本轮测试资源已清理，外部 API 调用为 0。真实 LLM/Tavily/GitHub 上游联测及 GPU 不在本轮验收范围；现有 `.env` 和正常部署未切换为 MCP，`main` 仍待单独审核。
 
 ## 开发路线
 
@@ -789,7 +820,8 @@ Experiment MCP 和全阶段验收尚未完成。当前不能将 Phase 8 标为�
 | Phase 5 | 实验指标、隔离产物、可复现实验报告 |
 | Phase 6 | 结构化 DAG、Reviewer/Replanning、共享预算、版本历史 |
 | Phase 7 | 持久化队列、Checkpoint、暂停恢复、人工审批、项目/经验 Memory |
-| Phase 8–9 | MCP、Web 工作台 |
+| Phase 8 | MCP 工具平台（无付费 CPU 验收通过） |
+| Phase 9 | Web 工作台 |
 | Phase 10–11 | 全链路评测、安全加固、CI/CD 与部署 |
 
 ## 分支与提交约定
