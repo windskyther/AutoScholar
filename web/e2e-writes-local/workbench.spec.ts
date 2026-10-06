@@ -130,7 +130,7 @@ test('lost acknowledgement after a real committed task is recovered with the sam
   expect(receipt.request().headers()['idempotency-key']).toBe(firstKey);
   expect(await receipt.json()).toMatchObject({ task_id: taskId, created: false });
   await expect(page.getByRole('heading', { name: '任务详情', exact: true })).toBeVisible();
-  await expect(page.getByText('已排队', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('task-status').getByText('已排队', { exact: true })).toBeVisible();
   const state = await request.get(fixtureURL + '/__fixture/status');
   expect(await state.json()).toMatchObject({ task_jobs: 1, model_calls: 0, sandbox_calls: 0 });
   await page.screenshot({ path: 'test-results/phase9c-task.png', fullPage: true });

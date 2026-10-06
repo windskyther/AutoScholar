@@ -1,4 +1,4 @@
-import type { BudgetLimits, EventPage, Overview, Page, PDFDocument, Project, Session, SubmissionReceipt, Task, WorkflowEvent } from './types';
+import type { Approval, BudgetLimits, ControlReceipt, ControlState, EventPage, ExpectedState, ExperimentSpecification, Overview, Page, PDFDocument, Project, Session, SubmissionReceipt, Task, WorkflowEvent } from './types';
 
 type RecordValue = Record<string, unknown>;
 function record(value: unknown): value is RecordValue {
@@ -47,7 +47,8 @@ export function isSession(value: unknown): value is Session {
     && ['research_backend', 'filesystem_backend', 'experiment_backend'].every((key) => string(caps[key]))
     && (caps.document_max_bytes === undefined || (integer(caps.document_max_bytes) && caps.document_max_bytes > 0))
     && (caps.document_max_pages === undefined || (integer(caps.document_max_pages) && caps.document_max_pages > 0))
-    && (caps.budget_limits === undefined || isBudget(caps.budget_limits));
+    && (caps.budget_limits === undefined || isBudget(caps.budget_limits))
+    && (caps.task_controls === undefined || typeof caps.task_controls === 'boolean');
 }
 export function isBudget(value: unknown): value is BudgetLimits {
   return record(value) && ['steps', 'replans', 'model_calls', 'tool_calls', 'search_queries', 'code_repairs',
@@ -101,4 +102,45 @@ export function isOverview(value: unknown): value is Overview {
       || !number(run.active_seconds) || !integer(run.pending_call_count) || !nullableString(run.error_code)) return false;
   }
   return true;
+}
+
+export function isExpectedState(value: unknown): value is ExpectedState {
+  return record(value) && isTaskStatus(value.status) && integer(value.checkpoint_sequence)
+    && value.checkpoint_sequence >= 1 && integer(value.event_sequence);
+}
+export function isControlReceipt(value: unknown): value is ControlReceipt {
+  return record(value) && string(value.task_id) && isTaskStatus(value.status);
+}
+export function isControlState(value: unknown): value is ControlState {
+  if (!isControlReceipt(value) || !record(value) || !Array.isArray(value.actions)
+    || value.actions.length > 3 || new Set(value.actions).size !== value.actions.length) return false;
+  if (value.expected === null) return value.actions.length === 0;
+  if (!isExpectedState(value.expected) || value.expected.status !== value.status) return false;
+  const allowed = { pause: ['queued', 'running'], resume: ['paused'],
+    cancel: ['queued', 'running', 'paused', 'pause_requested', 'awaiting_approval', 'recovery_required'] };
+  return value.actions.every((action: unknown) => string(action) && action in allowed
+    && allowed[action as keyof typeof allowed].includes(value.status));
+}
+export function isSpecification(value: unknown): value is ExperimentSpecification {
+  if (!record(value)) return false;
+  const bounded = (key: string, min: number, max: number) => integer(value[key]) && value[key] >= min && value[key] <= max;
+  return value.schema_version === 1 && value.dataset === 'mnist' && value.device === 'cpu'
+    && value.primary_metric === 'test_accuracy' && string(value.name)
+    && /^[A-Za-z0-9][A-Za-z0-9._ -]{0,199}$/.test(value.name)
+    && Array.isArray(value.models) && value.models.length === 2 && value.models[0] === 'mlp' && value.models[1] === 'cnn'
+    && bounded('seed', 0, 4294967295) && bounded('epochs', 1, 10) && bounded('batch_size', 8, 256)
+    && bounded('train_samples', 128, 60000) && bounded('test_samples', 128, 10000)
+    && number(value.learning_rate) && value.learning_rate > 0 && value.learning_rate <= 1;
+}
+export function isApproval(value: unknown): value is Approval {
+  return record(value) && string(value.id) && string(value.operation_sha256) && /^[0-9a-f]{64}$/.test(value.operation_sha256)
+    && string(value.status) && ['pending', 'approved', 'rejected', 'expired', 'superseded', 'consumed'].includes(value.status)
+    && integer(value.plan_version) && value.plan_version >= 1 && string(value.step_id) && isSpecification(value.specification)
+    && isBudget(value.budget_limits) && integer(value.cost_units)
+    && value.cost_units === value.specification.epochs * value.specification.train_samples * 2
+    && value.risk_level === 3 && string(value.reason) && value.reason.length <= 2000
+    && string(value.expires_at) && Number.isFinite(Date.parse(value.expires_at))
+    && Array.isArray(value.actions) && value.actions.length <= 3 && new Set(value.actions).size === value.actions.length
+    && value.actions.every((action: unknown) => ['approve', 'reject', 'modify'].includes(String(action)))
+    && (value.status === 'pending' || !value.actions.includes('approve'));
 }

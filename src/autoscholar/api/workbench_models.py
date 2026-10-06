@@ -1,14 +1,17 @@
 """Bounded browser-facing records; no runtime credentials or checkpoint internals."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from autoscholar.agent.records import ResolvedAgentMode, TaskStatus
 from autoscholar.api.routes.agent import AgentMetricsResponse, EvidenceResponse
 from autoscholar.api.routes.experiments import ArtifactResponse, ExperimentResponse
 from autoscholar.core.budget import BudgetLimits
+from autoscholar.experiment.models import ExperimentSpecification
+from autoscholar.orchestration.approvals import ApprovalDecision
+from autoscholar.orchestration.durable_repository import ExpectedWorkflowState
 from autoscholar.orchestration.models import TaskPlan
 
 
@@ -127,3 +130,52 @@ class WorkflowEventPage(BaseModel):
     next_cursor: int
     has_more: bool
     has_older: bool
+
+
+class WorkbenchExpectedState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: TaskStatus
+    checkpoint_sequence: int = Field(ge=1, strict=True)
+    event_sequence: int = Field(ge=0, le=9007199254740991, strict=True)
+
+    def guard(self) -> ExpectedWorkflowState:
+        return ExpectedWorkflowState(**self.model_dump())
+
+
+class WorkbenchControlRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected: WorkbenchExpectedState
+
+
+class WorkbenchDecisionRequest(ApprovalDecision):
+    expected: WorkbenchExpectedState
+
+
+class WorkbenchControlState(BaseModel):
+    task_id: str
+    status: TaskStatus
+    expected: WorkbenchExpectedState | None
+    actions: list[Literal["pause", "resume", "cancel"]]
+
+
+class WorkbenchApproval(BaseModel):
+    id: str
+    operation_sha256: str
+    status: Literal["pending", "approved", "rejected", "expired", "superseded", "consumed"]
+    plan_version: int
+    step_id: str
+    specification: ExperimentSpecification
+    budget_limits: BudgetLimits
+    cost_units: int
+    risk_level: Literal[3] = 3
+    reason: str
+    expires_at: datetime
+    actions: list[Literal["approve", "reject", "modify"]]
+
+
+class WorkbenchApprovalPage(BaseModel):
+    task_id: str
+    items: list[WorkbenchApproval]
+    total: int
+    limit: int
+    offset: int

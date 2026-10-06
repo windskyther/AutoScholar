@@ -1,6 +1,7 @@
 """Read-only, paginated views over a root task and its same-project direct children."""
 
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from sqlalchemy import func, or_, select
@@ -27,15 +28,20 @@ from autoscholar.api.workbench_models import (
     TaskListResponse,
     TaskOverviewResponse,
     TaskSummary,
+    WorkbenchApproval,
+    WorkbenchApprovalPage,
+    WorkbenchControlState,
     WorkflowEventPage,
 )
 from autoscholar.core.budget import BudgetLimits
 from autoscholar.core.errors import AppError
 from autoscholar.orchestration.durable_models import (
+    WorkflowApprovalRow,
     WorkflowCheckpointRow,
     WorkflowEventRow,
     WorkflowJobRow,
 )
+from autoscholar.orchestration.durable_repository import utc
 from autoscholar.rag.database_models import ProjectRow
 
 
@@ -68,6 +74,116 @@ class WorkbenchRepository:
                 status_code=404, code="workbench_task_not_found", message="Root task was not found"
             )
         return row
+
+    async def controls(self, task_id: str) -> WorkbenchControlState:
+        async with self.sessions() as session:
+            # One statement gives the UI a coherent state token; mutations validate
+            # it again under locks, never trusting UI button availability.
+            result = (
+                await session.execute(
+                    select(AgentTaskRow, WorkflowJobRow)
+                    .outerjoin(WorkflowJobRow, WorkflowJobRow.task_id == AgentTaskRow.id)
+                    .where(AgentTaskRow.id == task_id, AgentTaskRow.parent_task_id.is_(None))
+                )
+            ).first()
+            if result is None:
+                raise AppError(
+                    status_code=404,
+                    code="workbench_task_not_found",
+                    message="Root task was not found",
+                )
+            task, job = result
+            if job is None:
+                return WorkbenchControlState(
+                    task_id=task_id, status=task.status, expected=None, actions=[]
+                )
+            actions = []
+            if job.status in {"queued", "running"}:
+                actions.append("pause")
+            if job.status == "paused":
+                actions.append("resume")
+            if job.status in {
+                "queued",
+                "running",
+                "paused",
+                "pause_requested",
+                "awaiting_approval",
+                "recovery_required",
+            }:
+                actions.append("cancel")
+            return WorkbenchControlState.model_validate(
+                {
+                    "task_id": task_id,
+                    "status": job.status,
+                    "actions": actions,
+                    "expected": {
+                        "status": job.status,
+                        "checkpoint_sequence": job.checkpoint_sequence,
+                        "event_sequence": task.event_sequence,
+                    },
+                }
+            )
+
+    async def approvals(self, task_id: str, *, limit: int, offset: int) -> WorkbenchApprovalPage:
+        async with self.sessions() as session:
+            await self.root(session, task_id)
+            job = await session.get(WorkflowJobRow, task_id)
+            version = await session.scalar(
+                select(func.max(TaskPlanRow.version)).where(TaskPlanRow.task_id == task_id)
+            )
+            condition = WorkflowApprovalRow.task_id == task_id
+            total = await session.scalar(
+                select(func.count()).select_from(WorkflowApprovalRow).where(condition)
+            )
+            rows = (
+                await session.scalars(
+                    select(WorkflowApprovalRow)
+                    .where(condition)
+                    .order_by(WorkflowApprovalRow.created_at.desc(), WorkflowApprovalRow.id.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+            ).all()
+            items = []
+            for row in rows:
+                expired = utc(row.expires_at) <= datetime.now(UTC)
+                status = (
+                    "expired" if expired and row.status in {"pending", "approved"} else row.status
+                )
+                actions = []
+                if (
+                    job
+                    and job.status == "awaiting_approval"
+                    and row.payload["plan_version"] == version
+                ):
+                    if row.status == "pending" and not expired:
+                        actions.append("approve")
+                    if row.status in {"pending", "expired"}:
+                        actions.append("reject")
+                    if row.status in {"pending", "expired", "rejected"}:
+                        actions.append("modify")
+                # Explicit projection: no arbitrary operation payload, code, paths,
+                # source hashes, Memory context, worker identity or credentials.
+                items.append(
+                    WorkbenchApproval.model_validate(
+                        {
+                            "id": row.id,
+                            "operation_sha256": row.operation_sha256,
+                            "status": status,
+                            "plan_version": row.payload["plan_version"],
+                            "step_id": row.payload["step_id"],
+                            "specification": row.payload["specification"],
+                            "budget_limits": row.payload["budget_limits"],
+                            "cost_units": row.payload["cost_units"],
+                            "reason": row.reason[:2000],
+                            "expires_at": utc(row.expires_at),
+                            "actions": actions,
+                        }
+                    )
+                )
+            return WorkbenchApprovalPage(
+                task_id=task_id, items=items, total=int(total or 0), limit=limit, offset=offset
+            )
 
     @staticmethod
     def family(root: AgentTaskRow) -> Any:

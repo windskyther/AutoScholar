@@ -1,5 +1,5 @@
-import type { EventPage, Overview, Page, PDFDocument, Project, Session, StreamMessage, SubmissionReceipt, Task, TaskStatus, TaskSubmission } from './types';
-import { isDocument, isEventPage, isOverview, isPage, isProject, isReceipt, isSession, isTask, isTaskStatus, isWorkflowEvent } from './guards';
+import type { ApprovalDecision, ApprovalPage, ControlAction, ControlReceipt, ControlState, EventPage, ExpectedState, Overview, Page, PDFDocument, Project, Session, StreamMessage, SubmissionReceipt, Task, TaskStatus, TaskSubmission } from './types';
+import { isApproval, isControlReceipt, isControlState, isDocument, isEventPage, isExpectedState, isOverview, isPage, isProject, isReceipt, isSession, isSpecification, isTask, isTaskStatus, isWorkflowEvent } from './guards';
 import { consumeSSE, StreamProtocolError } from './sse';
 
 export class ApiError extends Error {
@@ -34,6 +34,12 @@ const messages: Record<string, string> = {
   event_cursor_invalid: '事件游标失效，请重新加载记录后再连接。',
   workbench_stream_unavailable: '事件连接暂不可用，任务不会因此重跑。',
   event_sequence_gap: '事件序号不连续，请重新加载记录核查。',
+  workbench_state_stale: '任务状态已变化，请刷新并重新确认操作。',
+  workflow_state_conflict: '当前状态不允许此操作，请刷新核查。',
+  approval_stale: '审批参数或计划版本已变化，请核查最新审批。',
+  approval_not_found: '审批不存在，或不属于当前任务。',
+  approval_expired_or_decided: '审批已过期或已处理，请核查最新状态。',
+  approval_already_decided: '审批已处理，不能更改此决定。',
 };
 export function isWriteUncertain(error: unknown): boolean {
   return error instanceof ApiError && (error.code === 'write_result_unknown' || error.status >= 500);
@@ -193,6 +199,30 @@ export class ApiClient {
   }
   overview(id: string, page: number, signal?: AbortSignal): Promise<Overview> {
     return this.checked(`/tasks/${encodeURIComponent(id)}/overview?limit=20&offset=${(page - 1) * 20}`, isOverview, signal);
+  }
+  controls(id: string, signal?: AbortSignal): Promise<ControlState> {
+    return this.checked(`/tasks/${encodeURIComponent(id)}/controls`,
+      (value): value is ControlState => isControlState(value) && value.task_id === id, signal);
+  }
+  approvals(id: string, page: number, signal?: AbortSignal): Promise<ApprovalPage> {
+    return this.checked(`/tasks/${encodeURIComponent(id)}/approvals?limit=20&offset=${(page - 1) * 20}`,
+      (value): value is ApprovalPage => isPage(value, isApproval) && (value as ApprovalPage).task_id === id, signal);
+  }
+  async controlTask(id: string, action: ControlAction, expected: ExpectedState): Promise<ControlReceipt> {
+    if (!['pause', 'resume', 'cancel'].includes(action) || !isExpectedState(expected)) throw new ApiError('request_validation_error', 422);
+    const statuses = { pause: ['paused', 'pause_requested'], resume: ['queued'], cancel: ['cancelled', 'cancel_requested'] };
+    return this.write(`/tasks/${encodeURIComponent(id)}/control/${action}`,
+      (value): value is ControlReceipt => isControlReceipt(value) && value.task_id === id && statuses[action].includes(value.status), { expected });
+  }
+  async decideApproval(id: string, approvalId: string, decision: ApprovalDecision): Promise<ControlReceipt> {
+    if (!isExpectedState(decision.expected) || !['approve', 'reject', 'modify'].includes(decision.action)
+      || !/^[0-9a-f]{64}$/.test(decision.operation_sha256) || typeof decision.reason !== 'string' || decision.reason.length > 2000
+      || (decision.action === 'modify' ? !isSpecification(decision.specification) : decision.specification !== undefined)) {
+      throw new ApiError('request_validation_error', 422);
+    }
+    return this.write(`/tasks/${encodeURIComponent(id)}/approvals/${encodeURIComponent(approvalId)}/decision`,
+      (value): value is ControlReceipt => isControlReceipt(value) && value.task_id === id
+        && value.status === (decision.action === 'reject' ? 'awaiting_approval' : 'paused'), { ...decision });
   }
   events(id: string, before?: number, signal?: AbortSignal): Promise<EventPage> {
     if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) throw new ApiError('event_cursor_invalid', 422);

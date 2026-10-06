@@ -14,11 +14,13 @@ import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from anyio import Event, create_task_group, sleep
 from fastapi import Request
 from pydantic import SecretStr
 
 from autoscholar.agent.database_models import AgentTaskRow
 from autoscholar.api.workbench_events import event_stream
+from autoscholar.api.workbench_models import WorkflowEventPage
 from autoscholar.api.workbench_repository import WorkbenchRepository
 from autoscholar.core.config import Settings
 from autoscholar.core.errors import AppError
@@ -324,6 +326,34 @@ async def test_stream_storage_failure_never_leaks_exception(
             ]
         )
     assert '"code":"workbench_stream_unavailable"' in output and "PRIVATE" not in output
+
+
+async def test_stream_disconnect_during_sql_read_finishes_session_cleanup(
+    context: tuple[httpx.AsyncClient, DurableService],
+) -> None:
+    client, durable = context
+    repository = WorkbenchRepository(durable.repository.sessions)
+    first = await repository.events(client.headers["X-Fixture-Task"], after=5)
+    entered, closed = Event(), Event()
+    original = repository.events
+
+    async def slow_read(task_id: str, *, after: int, limit: int) -> WorkflowEventPage:
+        entered.set()
+        await sleep(0.03)  # Cancel while a database read is in progress.
+        result = await original(task_id, after=after, limit=limit)
+        closed.set()  # Original returns only after the SQL session is closed.
+        return result
+
+    async def consume() -> None:
+        async for _ in event_stream(repository, cast(Request, Connection()), first, poll_seconds=0):
+            pass
+
+    with patch.object(repository, "events", slow_read):
+        async with create_task_group() as group:
+            group.start_soon(consume)
+            await entered.wait()
+            group.cancel_scope.cancel()
+    assert closed.is_set()
 
 
 def test_event_migration_backfill_roundtrip_and_postgres_sql() -> None:

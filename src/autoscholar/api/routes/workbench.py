@@ -1,6 +1,6 @@
 """Authenticated browser facade. Legacy REST paths remain explicitly unchanged."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import StreamingResponse
@@ -15,6 +15,7 @@ from autoscholar.api.routes.health import router as health_router
 from autoscholar.api.routes.memory import router as memory_router
 from autoscholar.api.routes.projects import router as projects_router
 from autoscholar.api.routes.workflows import router as workflows_router
+from autoscholar.api.routes.workflows import service as workflow_service
 from autoscholar.api.workbench_events import MAX_CURSOR, event_stream
 from autoscholar.api.workbench_models import (
     FamilyArtifactResponse,
@@ -22,11 +23,16 @@ from autoscholar.api.workbench_models import (
     FamilyExperimentResponse,
     TaskListResponse,
     TaskOverviewResponse,
+    WorkbenchApprovalPage,
+    WorkbenchControlRequest,
+    WorkbenchControlState,
+    WorkbenchDecisionRequest,
     WorkbenchSessionResponse,
     WorkflowEventPage,
 )
 from autoscholar.api.workbench_repository import WorkbenchRepository
 from autoscholar.core.errors import AppError
+from autoscholar.orchestration.approvals import ApprovalDecision
 
 router = APIRouter(
     prefix="/workbench", tags=["workbench"], dependencies=[Depends(require_experiment_token)]
@@ -56,11 +62,56 @@ async def session(request: Request) -> WorkbenchSessionResponse:
             "filesystem_backend": settings.filesystem_tool_backend,
             "experiment_backend": settings.experiment_tool_backend,
             "task_streaming": True,
+            "task_controls": True,
             "document_max_bytes": settings.document_max_bytes,
             "document_max_pages": settings.document_max_pages,
             "budget_limits": settings.autonomous_budget.model_dump(),
         },
     )
+
+
+@router.get("/tasks/{task_id}/controls", response_model=WorkbenchControlState)
+async def controls(task_id: str, request: Request) -> WorkbenchControlState:
+    return await store(request).controls(task_id)
+
+
+@router.post("/tasks/{task_id}/control/{action}")
+async def task_control(
+    task_id: str,
+    action: Literal["pause", "resume", "cancel"],
+    payload: WorkbenchControlRequest,
+    request: Request,
+) -> dict[str, str]:
+    await store(request).controls(task_id)
+    status = await workflow_service(request).repository.control(
+        task_id, action, expected=payload.expected.guard()
+    )
+    return {"task_id": task_id, "status": status}
+
+
+@router.get("/tasks/{task_id}/approvals", response_model=WorkbenchApprovalPage)
+async def task_approvals(
+    task_id: str,
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> WorkbenchApprovalPage:
+    return await store(request).approvals(task_id, limit=limit, offset=offset)
+
+
+@router.post("/tasks/{task_id}/approvals/{approval_id}/decision")
+async def task_decision(
+    task_id: str,
+    approval_id: str,
+    payload: WorkbenchDecisionRequest,
+    request: Request,
+) -> dict[str, str]:
+    await store(request).controls(task_id)
+    decision = ApprovalDecision.model_validate(payload.model_dump(exclude={"expected"}))
+    status = await workflow_service(request).approvals.decide(
+        task_id, approval_id, decision, expected=payload.expected.guard()
+    )
+    return {"task_id": task_id, "status": status}
 
 
 @router.get("/projects/{project_id}/tasks", response_model=TaskListResponse)

@@ -47,6 +47,9 @@ p { color: #606b67; line-height: 1.7; }
 .event-section { margin-top: 42px; border-top: 1px solid #dce5e1; }
 .event-navigation { margin-bottom: 18px; }
 .event-payload { overflow-wrap: anywhere; white-space: pre-wrap; }
+.control-section { margin: 30px 0; padding: 0 0 24px; border-bottom: 1px solid #dce5e1; }
+.approval-table { margin-top: 24px; }
+.approval-options { margin: 24px 0; }
 input[type="file"] { max-width: 100%; }
 @media (max-width: 760px) {
   .app-content { padding: 20px 16px; }

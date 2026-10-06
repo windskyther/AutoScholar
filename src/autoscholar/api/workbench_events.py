@@ -6,6 +6,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
+from anyio import CancelScope
 from fastapi import Request
 
 from autoscholar.api.workbench_models import WorkflowEventPage, WorkflowEventSummary
@@ -152,7 +153,11 @@ async def event_stream(
         try:
             # Every query closes its session before yielding. Never retain a SQL
             # transaction/connection or lock for the lifetime of a browser stream.
-            page = await repository.events(page.task_id, after=cursor, limit=100)
+            # ASGI disconnects use level cancellation. Protect just this bounded
+            # read and its session finalization, not the stream or polling wait.
+            # Otherwise cancellation can interrupt rollback/connection check-in.
+            with CancelScope(shield=True):
+                page = await repository.events(page.task_id, after=cursor, limit=100)
         except Exception:
             yield frame("error", {"code": "workbench_stream_unavailable"})
             return

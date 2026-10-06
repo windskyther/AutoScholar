@@ -27,7 +27,7 @@ export interface Session {
   status: 'connected'; authentication: 'single_operator_bearer'; api_version: string;
   capabilities: {
     llm_configured: boolean; web_search_configured: boolean; research_backend: string;
-    filesystem_backend: string; experiment_backend: string; task_streaming: boolean;
+    filesystem_backend: string; experiment_backend: string; task_streaming: boolean; task_controls?: boolean;
     document_max_bytes?: number; document_max_pages?: number; budget_limits?: BudgetLimits;
   };
 }
@@ -64,3 +64,25 @@ export type StreamMessage =
   | { type: 'workflow'; event: WorkflowEvent }
   | { type: 'ready'; status: TaskStatus; durable: boolean }
   | { type: 'end'; status: TaskStatus; reason: 'terminal' | 'unsupported' | 'rotate' };
+
+export type ControlAction = 'pause' | 'resume' | 'cancel';
+export type ApprovalAction = 'approve' | 'reject' | 'modify';
+export interface ExpectedState { status: TaskStatus; checkpoint_sequence: number; event_sequence: number }
+export interface ControlState { task_id: string; status: TaskStatus; expected: ExpectedState | null; actions: ControlAction[] }
+export interface ControlReceipt { task_id: string; status: TaskStatus }
+export interface ExperimentSpecification {
+  schema_version: 1; name: string; dataset: 'mnist'; models: ['mlp', 'cnn']; seed: number;
+  epochs: number; batch_size: number; learning_rate: number; train_samples: number; test_samples: number;
+  primary_metric: 'test_accuracy'; device: 'cpu';
+}
+export interface Approval {
+  id: string; operation_sha256: string;
+  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'superseded' | 'consumed';
+  plan_version: number; step_id: string; specification: ExperimentSpecification; budget_limits: BudgetLimits;
+  cost_units: number; risk_level: 3; reason: string; expires_at: string; actions: ApprovalAction[];
+}
+export interface ApprovalPage extends Page<Approval> { task_id: string }
+export interface ApprovalDecision {
+  action: ApprovalAction; operation_sha256: string; reason: string;
+  specification?: ExperimentSpecification; expected: ExpectedState;
+}

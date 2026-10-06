@@ -12,7 +12,12 @@ from autoscholar.core.errors import AppError
 from autoscholar.experiment.models import ExperimentSpecification
 from autoscholar.orchestration.checkpoints import Snapshot, digest
 from autoscholar.orchestration.durable_models import WorkflowApprovalRow
-from autoscholar.orchestration.durable_repository import DurableRepository, conflict, utc
+from autoscholar.orchestration.durable_repository import (
+    DurableRepository,
+    ExpectedWorkflowState,
+    conflict,
+    utc,
+)
 from autoscholar.orchestration.models import PlanStep, TaskPlan
 from autoscholar.orchestration.service import Run, source_digest
 
@@ -120,10 +125,19 @@ class ApprovalService:
                 for row in rows
             ]
 
-    async def decide(self, task_id: str, approval_id: str, decision: ApprovalDecision) -> str:
+    async def decide(
+        self,
+        task_id: str,
+        approval_id: str,
+        decision: ApprovalDecision,
+        *,
+        expected: ExpectedWorkflowState | None = None,
+    ) -> str:
         snapshot, prior = await self.repository.snapshot(task_id)
         async with self.repository.sessions() as session:
             job = await self.repository.locked(session, task_id)
+            if expected is not None:
+                await self.repository.expect(session, job, expected)
             row = await session.get(WorkflowApprovalRow, approval_id)
             if row is None or row.task_id != task_id:
                 raise AppError(

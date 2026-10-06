@@ -10,6 +10,7 @@ import CreateProject from './create-project';
 import Documents from './documents';
 import { useSubmission } from './task-submission';
 import Events from './events';
+import Controls from './controls';
 
 export function ProjectsPage() {
   const { api, session } = useConnection();
@@ -92,10 +93,11 @@ export function TaskPage() {
     <Breadcrumb items={[{ title: <Link to="/">项目</Link> },
       { title: <Link to={`/projects/${encodeURIComponent(projectId!)}`}>项目任务</Link> }, { title: '任务详情' }]} />
     <PageHeading title="任务详情" subtitle={data.task.objective} refresh={() => void query.refetch()} />
-    <Space wrap><Status value={data.execution?.status ?? data.task.status} />
+    <Space wrap data-testid="task-status"><Status value={data.execution?.status ?? data.task.status} />
       <Tag>{data.task.mode}</Tag><span className="identifier">{data.task.task_id}</span></Space>
     <Alert className="snapshot-note" type="info" showIcon title={session?.capabilities.task_streaming ? '任务快照随持久化事件刷新' : '当前为只读快照，不是实时流'}
-      description="刷新页面不会重新执行任务。暂停、审批和资源浏览器将在后续模块接入；旧后端仍可手动刷新快照。" />
+      description="刷新页面不会重新执行任务。控制与审批需要单独确认；资源详情浏览将在后续模块接入，旧后端仍可手动刷新快照。" />
+    {session?.capabilities.task_controls && <Controls key={taskId} taskId={taskId!} projectId={projectId!} />}
     <div className="metrics-grid">
       <Metric label="模型调用" value={usage.model_calls ?? 0} limit={limits?.model_calls} />
       <Metric label="总 Tokens" value={usage.total_tokens ?? 0} limit={limits?.total_tokens} />

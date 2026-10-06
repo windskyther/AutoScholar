@@ -1,5 +1,6 @@
 """Transactional queue, fenced leases, immutable checkpoints and operation accounting."""
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -32,6 +33,13 @@ def conflict(code: str, message: str) -> AppError:
 
 class LeaseLost(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class ExpectedWorkflowState:
+    status: str
+    checkpoint_sequence: int
+    event_sequence: int
 
 
 class DurableRepository:
@@ -79,6 +87,28 @@ class DurableRepository:
             or utc(row.lease_until) <= datetime.now(UTC)
         ):
             raise LeaseLost("Workflow lease expired or belongs to another worker")
+
+    @staticmethod
+    async def expect(
+        session: AsyncSession, row: WorkflowJobRow, expected: ExpectedWorkflowState
+    ) -> None:
+        # Called under the job lock, in the mutation transaction. The conditional
+        # task-row write also fences event-only writers (e.g. Memory settings).
+        if (row.status, row.checkpoint_sequence) != (expected.status, expected.checkpoint_sequence):
+            raise conflict("workbench_state_stale", "Task changed; refresh before deciding")
+        matched = await session.scalar(
+            update(AgentTaskRow)
+            .where(
+                AgentTaskRow.id == row.task_id,
+                AgentTaskRow.parent_task_id.is_(None),
+                AgentTaskRow.event_sequence == expected.event_sequence,
+            )
+            .values(event_sequence=AgentTaskRow.event_sequence)
+            .returning(AgentTaskRow.id)
+            .execution_options(synchronize_session=False)
+        )
+        if matched is None:
+            raise conflict("workbench_state_stale", "Task changed; refresh before deciding")
 
     @staticmethod
     async def status(session: AsyncSession, row: WorkflowJobRow, status: str) -> None:
@@ -454,9 +484,29 @@ class DurableRepository:
             )
             await session.commit()
 
-    async def control(self, task_id: str, action: str) -> str:
+    async def control(
+        self, task_id: str, action: str, *, expected: ExpectedWorkflowState | None = None
+    ) -> str:
         async with self.sessions() as session:
             row = await self.locked(session, task_id)
+            if expected is not None:
+                await self.expect(session, row, expected)
+                allowed = {
+                    "pause": {"queued", "running"},
+                    "resume": {"paused"},
+                    "cancel": {
+                        "queued",
+                        "running",
+                        "paused",
+                        "pause_requested",
+                        "awaiting_approval",
+                        "recovery_required",
+                    },
+                }
+                if row.status not in allowed.get(action, set()):
+                    raise conflict(
+                        "workflow_state_conflict", "Control is unavailable in this state"
+                    )
             status = row.status
             if action == "pause":
                 if status in {"queued", "paused"}:

@@ -13,6 +13,7 @@
     "test:local": "npm run build && node scripts/browser.mjs test --config playwright.local.config.ts",
     "test:writes": "npm run build && node scripts/browser.mjs test --config playwright.writes.config.ts",
     "test:events": "npm run build && node scripts/browser.mjs test --config playwright.events.config.ts",
+    "test:controls": "npm run build && node scripts/browser.mjs test --config playwright.controls.config.ts",
     "install:browser": "node scripts/browser.mjs install chromium",
     "preview": "vite preview --host 127.0.0.1"
   },
