@@ -44,6 +44,9 @@ p { color: #606b67; line-height: 1.7; }
 .budget-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
 .budget-settings { margin-bottom: 24px; }
 .task-options { align-items: flex-start; }
+.event-section { margin-top: 42px; border-top: 1px solid #dce5e1; }
+.event-navigation { margin-bottom: 18px; }
+.event-payload { overflow-wrap: anywhere; white-space: pre-wrap; }
 input[type="file"] { max-width: 100%; }
 @media (max-width: 760px) {
   .app-content { padding: 20px 16px; }

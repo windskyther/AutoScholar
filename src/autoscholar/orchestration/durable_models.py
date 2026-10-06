@@ -5,9 +5,11 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -56,12 +58,16 @@ class WorkflowCheckpointRow(Base):
 
 class WorkflowEventRow(Base):
     __tablename__ = "workflow_events"
+    __table_args__ = (
+        Index("ux_workflow_events_task_sequence", "task_id", "sequence", unique=True),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     task_id: Mapped[str] = mapped_column(
         ForeignKey("agent_tasks.id", ondelete="CASCADE"), index=True
     )
     kind: Mapped[str] = mapped_column(String(48))
+    sequence: Mapped[int] = mapped_column(BigInteger)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

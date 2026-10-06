@@ -1,6 +1,9 @@
 """Authenticated browser facade. Legacy REST paths remain explicitly unchanged."""
 
-from fastapi import APIRouter, Depends, Query, Request
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi.responses import StreamingResponse
 
 from autoscholar import __version__
 from autoscholar.agent.records import ResolvedAgentMode, TaskStatus
@@ -12,6 +15,7 @@ from autoscholar.api.routes.health import router as health_router
 from autoscholar.api.routes.memory import router as memory_router
 from autoscholar.api.routes.projects import router as projects_router
 from autoscholar.api.routes.workflows import router as workflows_router
+from autoscholar.api.workbench_events import MAX_CURSOR, event_stream
 from autoscholar.api.workbench_models import (
     FamilyArtifactResponse,
     FamilyEvidenceResponse,
@@ -19,6 +23,7 @@ from autoscholar.api.workbench_models import (
     TaskListResponse,
     TaskOverviewResponse,
     WorkbenchSessionResponse,
+    WorkflowEventPage,
 )
 from autoscholar.api.workbench_repository import WorkbenchRepository
 from autoscholar.core.errors import AppError
@@ -50,7 +55,7 @@ async def session(request: Request) -> WorkbenchSessionResponse:
             "research_backend": settings.research_tool_backend,
             "filesystem_backend": settings.filesystem_tool_backend,
             "experiment_backend": settings.experiment_tool_backend,
-            "task_streaming": False,
+            "task_streaming": True,
             "document_max_bytes": settings.document_max_bytes,
             "document_max_pages": settings.document_max_pages,
             "budget_limits": settings.autonomous_budget.model_dump(),
@@ -81,6 +86,45 @@ async def overview(
     offset: int = Query(default=0, ge=0),
 ) -> TaskOverviewResponse:
     return await store(request).overview(task_id, limit=limit, offset=offset)
+
+
+@router.get("/tasks/{task_id}/events", response_model=WorkflowEventPage)
+async def events(
+    task_id: str,
+    request: Request,
+    after: int | None = Query(default=None, ge=0, le=MAX_CURSOR),
+    before: int | None = Query(default=None, ge=1, le=MAX_CURSOR),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> WorkflowEventPage:
+    if after is not None and before is not None:
+        raise AppError(
+            status_code=422, code="event_cursor_invalid", message="Use only one event cursor"
+        )
+    return await store(request).events(task_id, after=after, before=before, limit=limit)
+
+
+@router.get("/tasks/{task_id}/stream")
+async def stream(
+    task_id: str,
+    request: Request,
+    last_event_id: Annotated[str | None, Header(pattern=r"^[0-9]{1,16}$")] = None,
+    after: int | None = Query(default=None, ge=0, le=MAX_CURSOR),
+) -> StreamingResponse:
+    header_cursor = int(last_event_id) if last_event_id is not None else None
+    if header_cursor is not None and (
+        header_cursor > MAX_CURSOR or (after is not None and after != header_cursor)
+    ):
+        raise AppError(status_code=422, code="event_cursor_invalid", message="Invalid event cursor")
+    repository = store(request)
+    # Validate auth/root/cursor/storage before sending a 200 streaming response.
+    first = await repository.events(
+        task_id, after=header_cursor if header_cursor is not None else (after or 0), limit=100
+    )
+    return StreamingResponse(
+        event_stream(repository, request, first),
+        media_type="text/event-stream",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "private, no-store"},
+    )
 
 
 @router.get("/tasks/{task_id}/evidence", response_model=FamilyEvidenceResponse)

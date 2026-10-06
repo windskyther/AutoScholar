@@ -78,7 +78,7 @@ class ApprovalService:
                     expires_at=datetime.now(UTC) + timedelta(hours=24),
                 )
                 session.add(row)
-                self.repository.event(
+                await self.repository.event(
                     session,
                     run.task_id,
                     "approval_requested",
@@ -174,7 +174,7 @@ class ApprovalService:
             row.decided_at = datetime.now(UTC)
             status = "paused" if decision.action in {"approve", "modify"} else "awaiting_approval"
             await self.repository.status(session, job, status)
-            self.repository.event(
+            await self.repository.event(
                 session,
                 task_id,
                 "approval_decided",

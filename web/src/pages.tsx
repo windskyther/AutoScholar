@@ -9,6 +9,7 @@ import type { Project, Task, TaskStatus } from './types';
 import CreateProject from './create-project';
 import Documents from './documents';
 import { useSubmission } from './task-submission';
+import Events from './events';
 
 export function ProjectsPage() {
   const { api, session } = useConnection();
@@ -75,7 +76,7 @@ export function ProjectPage() {
 
 export function TaskPage() {
   const { projectId, taskId } = useParams();
-  const { api } = useConnection();
+  const { api, session } = useConnection();
   const [page, setPage] = useState(1);
   const query = useQuery({ queryKey: ['overview', projectId, taskId, page], queryFn: async ({ signal }) => {
     const value = await api!.overview(taskId!, page, signal);
@@ -93,8 +94,8 @@ export function TaskPage() {
     <PageHeading title="任务详情" subtitle={data.task.objective} refresh={() => void query.refetch()} />
     <Space wrap><Status value={data.execution?.status ?? data.task.status} />
       <Tag>{data.task.mode}</Tag><span className="identifier">{data.task.task_id}</span></Space>
-    <Alert className="snapshot-note" type="info" showIcon title="当前为只读快照，不是实时流"
-      description="刷新页面不会重新执行任务。暂停、审批、SSE 和资源浏览器将在后续模块接入。" />
+    <Alert className="snapshot-note" type="info" showIcon title={session?.capabilities.task_streaming ? '任务快照随持久化事件刷新' : '当前为只读快照，不是实时流'}
+      description="刷新页面不会重新执行任务。暂停、审批和资源浏览器将在后续模块接入；旧后端仍可手动刷新快照。" />
     <div className="metrics-grid">
       <Metric label="模型调用" value={usage.model_calls ?? 0} limit={limits?.model_calls} />
       <Metric label="总 Tokens" value={usage.total_tokens ?? 0} limit={limits?.total_tokens} />
@@ -125,6 +126,7 @@ export function TaskPage() {
     <h2>任务输出</h2>
     {data.answer_truncated && <Alert type="warning" title="输出超过大小上限，下方仅展示部分内容。" />}
     {data.answer ? <pre className="plain-output">{data.answer}</pre> : <Empty description="任务尚未产生最终输出。" />}
+    {session?.capabilities.task_streaming && <Events taskId={taskId!} projectId={projectId!} />}
     <p className="usage-note">以上用量仅采用根任务记录，不累加子任务的同一份共享预算。</p>
   </>;
 }

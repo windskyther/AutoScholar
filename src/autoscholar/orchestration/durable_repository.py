@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -39,11 +39,23 @@ class DurableRepository:
         self.sessions = sessions
 
     @staticmethod
-    def event(session: AsyncSession, task_id: str, kind: str, **payload: Any) -> None:
+    async def event(session: AsyncSession, task_id: str, kind: str, **payload: Any) -> None:
+        # The task-row update serializes all writers until commit. Allocation and event
+        # insertion share the caller's transaction, so rollback cannot leave a gap.
+        sequence = await session.scalar(
+            update(AgentTaskRow)
+            .where(AgentTaskRow.id == task_id)
+            .values(event_sequence=AgentTaskRow.event_sequence + 1)
+            .returning(AgentTaskRow.event_sequence)
+            .execution_options(synchronize_session=False)
+        )
+        if sequence is None:
+            raise AppError(status_code=404, code="workflow_not_found", message="Task not found")
         session.add(
             WorkflowEventRow(
                 id=str(uuid4()),
                 task_id=task_id,
+                sequence=sequence,
                 kind=kind,
                 payload=payload,
             )
@@ -152,8 +164,8 @@ class DurableRepository:
             )
             session.add(row)
             self.checkpoint(session, row, snapshot)
-            self.event(session, row.task_id, "submitted")
             try:
+                await self.event(session, row.task_id, "submitted")
                 await session.commit()
             except IntegrityError as exc:
                 await session.rollback()
@@ -225,7 +237,9 @@ class DurableRepository:
             # An expired in-flight unit must be reconciled by the worker, never replayed blindly.
             if prior == "queued":
                 await self.status(session, row, "running")
-            self.event(session, row.task_id, "claimed", generation=row.generation, previous=prior)
+            await self.event(
+                session, row.task_id, "claimed", generation=row.generation, previous=prior
+            )
             await session.commit()
             return row.task_id, row.generation
 
@@ -266,7 +280,7 @@ class DurableRepository:
                 if await InvocationRegistry.receipt_status(session, call) != "completed":
                     continue
                 pending.pop(operation_id)
-                self.event(
+                await self.event(
                     session,
                     task_id,
                     "call_reconciled",
@@ -290,7 +304,7 @@ class DurableRepository:
                 raise conflict("workflow_state_conflict", "Recovery state changed")
             job.error_code = None
             await self.status(session, job, "queued")
-            self.event(
+            await self.event(
                 session, task_id, "recovery_verified", checkpoint_sequence=checkpoint_sequence
             )
             await session.commit()
@@ -303,7 +317,7 @@ class DurableRepository:
             row.error_code = "checkpoint_integrity_failed"
             row.owner, row.lease_until = None, None
             await self.status(session, row, "recovery_required")
-            self.event(session, task_id, "checkpoint_rejected")
+            await self.event(session, task_id, "checkpoint_rejected")
             await session.commit()
 
     async def begin(
@@ -333,9 +347,9 @@ class DurableRepository:
                     ):
                         raise conflict("approval_required", "A current approval is required")
                     approval.status = "consumed"
-                    self.event(session, task_id, "approval_consumed", approval_id=approval.id)
+                    await self.event(session, task_id, "approval_consumed", approval_id=approval.id)
                 row.active = active
-                self.event(session, task_id, "unit_started", **active)
+                await self.event(session, task_id, "unit_started", **active)
             await session.commit()
             return row.status
 
@@ -368,7 +382,7 @@ class DurableRepository:
             row.pending_calls = pending
             row.usage = {key: max(value, row.usage.get(key, 0)) for key, value in usage.items()}
             row.active_seconds = max(row.active_seconds, elapsed)
-            self.event(
+            await self.event(
                 session,
                 task_id,
                 "budget_saved"
@@ -430,7 +444,7 @@ class DurableRepository:
                     "experiments_succeeded",
                 )
             }
-            self.event(
+            await self.event(
                 session,
                 task_id,
                 "checkpoint_saved",
@@ -468,7 +482,7 @@ class DurableRepository:
             else:
                 raise ValueError("Unknown workflow action")
             await self.status(session, row, status)
-            self.event(session, task_id, action, status=status)
+            await self.event(session, task_id, action, status=status)
             await session.commit()
             return status
 
@@ -502,13 +516,14 @@ class DurableRepository:
                     .where(
                         WorkflowEventRow.task_id == task_id,
                     )
-                    .order_by(WorkflowEventRow.created_at.desc(), WorkflowEventRow.id.desc())
+                    .order_by(WorkflowEventRow.sequence.desc())
                     .limit(limit)
                 )
             ).all()
             return [
                 {
                     "id": row.id,
+                    "sequence": row.sequence,
                     "kind": row.kind,
                     "payload": row.payload,
                     "created_at": row.created_at.isoformat(),

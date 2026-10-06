@@ -259,7 +259,7 @@ class DurableService:
             run.memory_context = await self.memory.context(run)
             if run.memory_context:
                 async with self.repository.sessions() as session:
-                    self.repository.event(
+                    await self.repository.event(
                         session,
                         run.task_id,
                         "memory_retrieved",

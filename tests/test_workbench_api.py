@@ -157,7 +157,7 @@ async def test_session_has_only_public_configuration(api: httpx.AsyncClient) -> 
     response = await api.get("/workbench/session", headers=AUTH)
     assert response.status_code == 200
     assert response.json()["capabilities"]["llm_configured"] is True
-    assert response.json()["capabilities"]["task_streaming"] is False
+    assert response.json()["capabilities"]["task_streaming"] is True
     assert "hidden-llm-key" not in response.text and TOKEN not in response.text
     assert response.headers["Cache-Control"] == "private, no-store"
     assert response.headers["X-Content-Type-Options"] == "nosniff"

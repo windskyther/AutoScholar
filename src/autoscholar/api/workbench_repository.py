@@ -1,7 +1,7 @@
 """Read-only, paginated views over a root task and its same-project direct children."""
 
 from dataclasses import asdict
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -15,6 +15,7 @@ from autoscholar.agent.database_models import (
 )
 from autoscholar.agent.records import ResolvedAgentMode, TaskStatus
 from autoscholar.agent.repository import AgentTaskRepository
+from autoscholar.api.workbench_events import public_event
 from autoscholar.api.workbench_models import (
     ChildTaskPage,
     ExecutionSummary,
@@ -26,10 +27,15 @@ from autoscholar.api.workbench_models import (
     TaskListResponse,
     TaskOverviewResponse,
     TaskSummary,
+    WorkflowEventPage,
 )
 from autoscholar.core.budget import BudgetLimits
 from autoscholar.core.errors import AppError
-from autoscholar.orchestration.durable_models import WorkflowCheckpointRow, WorkflowJobRow
+from autoscholar.orchestration.durable_models import (
+    WorkflowCheckpointRow,
+    WorkflowEventRow,
+    WorkflowJobRow,
+)
 from autoscholar.rag.database_models import ProjectRow
 
 
@@ -253,3 +259,50 @@ class WorkbenchRepository:
                 "artifacts": FamilyArtifactResponse,
             }
             return responses[kind].model_validate(payload)
+
+    async def events(
+        self,
+        task_id: str,
+        *,
+        after: int | None = None,
+        before: int | None = None,
+        limit: int = 50,
+    ) -> WorkflowEventPage:
+        async with self.sessions() as session:
+            root = await self.root(session, task_id)
+            latest = root.event_sequence
+            if (after is not None and after > latest) or (
+                before is not None and before > latest + 1
+            ):
+                raise AppError(
+                    status_code=409,
+                    code="event_cursor_invalid",
+                    message="Reload event history before resuming",
+                )
+            job = await session.get(WorkflowJobRow, task_id)
+            query = select(WorkflowEventRow).where(
+                WorkflowEventRow.task_id == task_id, WorkflowEventRow.sequence <= latest
+            )
+            forward = after is not None
+            if forward:
+                query = query.where(WorkflowEventRow.sequence > after)
+            elif before is not None:
+                query = query.where(WorkflowEventRow.sequence < before)
+            query = query.order_by(
+                WorkflowEventRow.sequence.asc() if forward else WorkflowEventRow.sequence.desc()
+            ).limit(limit + 1)
+            rows = list((await session.scalars(query)).all())
+            more = len(rows) > limit
+            rows = rows[:limit]
+            if not forward:
+                rows.reverse()
+            cursor = rows[-1].sequence if rows else (after or 0)
+            return WorkflowEventPage(
+                task_id=task_id,
+                status=cast(TaskStatus, root.status),
+                durable=job is not None,
+                items=[public_event(row) for row in rows],
+                next_cursor=cursor,
+                has_more=more if forward else bool(rows and cursor < latest),
+                has_older=(bool(rows and rows[0].sequence > 1) if forward else more),
+            )

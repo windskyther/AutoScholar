@@ -51,3 +51,16 @@ export interface Overview {
   resources: { evidence: number; experiments: number; artifacts: number };
   answer: string | null; answer_truncated: boolean; usage_scope: 'root_task_only'; monetary_cost: null;
 }
+
+export interface WorkflowEvent {
+  task_id: string; sequence: number; kind: string; created_at: string;
+  payload: Record<string, string | number | boolean>;
+}
+export interface EventPage {
+  task_id: string; status: TaskStatus; durable: boolean; items: WorkflowEvent[];
+  next_cursor: number; has_more: boolean; has_older: boolean;
+}
+export type StreamMessage =
+  | { type: 'workflow'; event: WorkflowEvent }
+  | { type: 'ready'; status: TaskStatus; durable: boolean }
+  | { type: 'end'; status: TaskStatus; reason: 'terminal' | 'unsupported' | 'rotate' };

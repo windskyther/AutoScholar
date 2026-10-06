@@ -15,5 +15,5 @@
     "verbatimModuleSyntax": true,
     "types": ["node"]
   },
-  "include": ["src", "e2e", "e2e-local", "e2e-writes-local", "*.config.ts"]
+  "include": ["src", "e2e", "e2e-local", "e2e-writes-local", "e2e-events-local", "*.config.ts"]
 }

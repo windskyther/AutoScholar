@@ -1,4 +1,4 @@
-import type { BudgetLimits, Overview, Page, PDFDocument, Project, Session, SubmissionReceipt, Task } from './types';
+import type { BudgetLimits, EventPage, Overview, Page, PDFDocument, Project, Session, SubmissionReceipt, Task, WorkflowEvent } from './types';
 
 type RecordValue = Record<string, unknown>;
 function record(value: unknown): value is RecordValue {
@@ -11,6 +11,33 @@ const integer = (value: unknown): value is number => number(value) && Number.isS
 const numbers = (value: unknown) => record(value) && Object.values(value).every(number);
 const statuses = new Set(['running', 'succeeded', 'partial', 'failed', 'budget_exceeded',
   'queued', 'pause_requested', 'paused', 'awaiting_approval', 'cancel_requested', 'cancelled', 'recovery_required']);
+export const isTaskStatus = (value: unknown): value is Task['status'] => string(value) && statuses.has(value);
+export const eventKinds = new Set(['submitted', 'claimed', 'call_reconciled', 'recovery_verified', 'checkpoint_rejected',
+  'approval_consumed', 'unit_started', 'budget_saved', 'call_started', 'call_finished', 'checkpoint_saved',
+  'pause', 'resume', 'cancel', 'memory_retrieved', 'memory_enabled_changed', 'experience_recorded',
+  'approval_requested', 'approval_decided', 'other']);
+
+export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
+  if (!record(value) || !string(value.task_id) || !integer(value.sequence) || value.sequence < 1
+    || !string(value.kind) || !eventKinds.has(value.kind) || !string(value.created_at) || !record(value.payload)) return false;
+  return Object.entries(value.payload).every(([key, item]) => {
+    if (['status', 'previous'].includes(key)) return isTaskStatus(item);
+    if (key === 'stage') return string(item) && ['planner', 'executor', 'reviewer', 'replanner', 'writer', 'done'].includes(item);
+    if (key === 'kind_name') return string(item) && ['llm', 'search', 'training', 'sandbox', 'tool', 'repair', 'embedding', 'mcp'].includes(item);
+    if (key === 'decision') return string(item) && ['approve', 'reject', 'modify'].includes(item);
+    if (key === 'enabled') return typeof item === 'boolean';
+    return ['sequence', 'version', 'project_version'].includes(key) && integer(item);
+  });
+}
+export function isEventPage(value: unknown): value is EventPage {
+  if (!record(value) || !Array.isArray(value.items) || value.items.length > 100 || !value.items.every(isWorkflowEvent)) return false;
+  const items = value.items;
+  return string(value.task_id) && isTaskStatus(value.status) && typeof value.durable === 'boolean'
+    && items.every((item, index) => item.task_id === value.task_id
+      && (index === 0 || item.sequence === items[index - 1].sequence + 1))
+    && integer(value.next_cursor) && (items.length === 0 || value.next_cursor === items.at(-1)!.sequence)
+    && typeof value.has_more === 'boolean' && typeof value.has_older === 'boolean';
+}
 
 export function isSession(value: unknown): value is Session {
   if (!record(value) || value.status !== 'connected' || value.authentication !== 'single_operator_bearer'

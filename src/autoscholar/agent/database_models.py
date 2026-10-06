@@ -28,6 +28,7 @@ class AgentTaskRow(Base):
         ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
     )
     status: Mapped[str] = mapped_column(String(32), index=True)
+    event_sequence: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     objective: Mapped[str] = mapped_column(Text)
     parent_task_id: Mapped[str | None] = mapped_column(
         ForeignKey("agent_tasks.id", ondelete="CASCADE"), nullable=True, index=True

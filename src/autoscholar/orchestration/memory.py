@@ -122,7 +122,7 @@ class MemoryService:
             if row is None or row.project_id != project_id:
                 raise AppError(status_code=404, code="memory_not_found", message="Memory not found")
             row.enabled = enabled
-            self.repository.event(
+            await self.repository.event(
                 session, row.task_id, "memory_enabled_changed", memory_id=memory_id, enabled=enabled
             )
             await session.commit()
@@ -240,7 +240,7 @@ class MemoryService:
                     )
                     session.add(memory)
                     await session.flush()
-                    self.repository.event(
+                    await self.repository.event(
                         session, run.task_id, "experience_recorded", memory_id=memory.id
                     )
                     count += 1

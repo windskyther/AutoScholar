@@ -1,5 +1,6 @@
-import type { Overview, Page, PDFDocument, Project, Session, SubmissionReceipt, Task, TaskStatus, TaskSubmission } from './types';
-import { isDocument, isOverview, isPage, isProject, isReceipt, isSession, isTask } from './guards';
+import type { EventPage, Overview, Page, PDFDocument, Project, Session, StreamMessage, SubmissionReceipt, Task, TaskStatus, TaskSubmission } from './types';
+import { isDocument, isEventPage, isOverview, isPage, isProject, isReceipt, isSession, isTask, isTaskStatus, isWorkflowEvent } from './guards';
+import { consumeSSE, StreamProtocolError } from './sse';
 
 export class ApiError extends Error {
   constructor(public code: string, public status = 0, public requestId: string | null = null) {
@@ -30,6 +31,9 @@ const messages: Record<string, string> = {
   selected_documents_unavailable: '所选文档必须已就绪并属于当前项目，请刷新后重新选择。',
   idempotency_conflict: '提交编号已对应另一份请求，请核查原任务。',
   workflow_unavailable: '服务端持久化任务服务暂不可用。',
+  event_cursor_invalid: '事件游标失效，请重新加载记录后再连接。',
+  workbench_stream_unavailable: '事件连接暂不可用，任务不会因此重跑。',
+  event_sequence_gap: '事件序号不连续，请重新加载记录核查。',
 };
 export function isWriteUncertain(error: unknown): boolean {
   return error instanceof ApiError && (error.code === 'write_result_unknown' || error.status >= 500);
@@ -69,11 +73,12 @@ async function readJSON(response: Response): Promise<unknown> {
 
 export class ApiClient {
   #token: string;
+  #streams = new Set<AbortController>();
   constructor(token: string, private unauthorized: () => void = () => {}) {
     if (!/^[\x21-\x7e]{1,4096}$/.test(token)) throw new ApiError('experiment_auth_required', 401);
     this.#token = token;
   }
-  clear(): void { this.#token = ''; }
+  clear(): void { this.#token = ''; for (const stream of this.#streams) stream.abort(); this.#streams.clear(); }
   get connected(): boolean { return this.#token.length > 0; }
 
   async get<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -188,5 +193,67 @@ export class ApiClient {
   }
   overview(id: string, page: number, signal?: AbortSignal): Promise<Overview> {
     return this.checked(`/tasks/${encodeURIComponent(id)}/overview?limit=20&offset=${(page - 1) * 20}`, isOverview, signal);
+  }
+  events(id: string, before?: number, signal?: AbortSignal): Promise<EventPage> {
+    if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) throw new ApiError('event_cursor_invalid', 422);
+    return this.checked(`/tasks/${encodeURIComponent(id)}/events?limit=50${before === undefined ? '' : '&before=' + before}`,
+      (value): value is EventPage => isEventPage(value) && value.task_id === id
+        && (before === undefined || value.items.every((item) => item.sequence < before)), signal);
+  }
+  async stream(id: string, after: number, signal: AbortSignal, receive: (message: StreamMessage) => void): Promise<void> {
+    if (!this.connected) throw new ApiError('experiment_auth_required', 401);
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || !Number.isSafeInteger(after) || after < 0) throw new ApiError('event_cursor_invalid', 422);
+    const controller = new AbortController(); this.#streams.add(controller);
+    const abort = () => controller.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) controller.abort();
+    let timer = setTimeout(abort, 15000);
+    try {
+      const response = await fetch(`/api/workbench/tasks/${encodeURIComponent(id)}/stream`, {
+        headers: { Authorization: 'Bearer ' + this.#token, Accept: 'text/event-stream', 'Last-Event-ID': String(after) },
+        credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
+      });
+      clearTimeout(timer);
+      timer = setTimeout(abort, 35000);
+      if (response.status === 401 || response.status === 403) { this.clear(); this.unauthorized(); throw new ApiError('experiment_auth_required', response.status); }
+      if (!this.connected || signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (!response.ok) {
+        const payload = await readJSON(response) as { error?: { code?: unknown } };
+        throw new ApiError(typeof payload.error?.code === 'string' ? payload.error.code : 'workbench_stream_unavailable', response.status);
+      }
+      if (response.status !== 200 || response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'text/event-stream') {
+        await response.body?.cancel(); throw new ApiError('invalid_response');
+      }
+      function activity() { clearTimeout(timer); timer = setTimeout(abort, 35000); }
+      activity();
+      let ready = false; let ended = false; let durable = false;
+      await consumeSSE(response, (frame) => {
+        if (!this.connected || signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        const value = JSON.parse(frame.data) as Record<string, unknown>;
+        if (!value || typeof value !== 'object' || Array.isArray(value) || ended) throw new StreamProtocolError('Invalid frame');
+        if (frame.type === 'error' && value.code === 'workbench_stream_unavailable') throw new ApiError('workbench_stream_unavailable', 503);
+        if (value.task_id !== id) throw new StreamProtocolError('Task mismatch');
+        if (ready && frame.type === 'workflow' && isWorkflowEvent(value) && frame.id === String(value.sequence)) {
+          receive({ type: 'workflow', event: value }); return;
+        }
+        if (frame.id !== undefined || !isTaskStatus(value.status)) throw new StreamProtocolError('Invalid control frame');
+        if (!ready && frame.type === 'ready' && typeof value.durable === 'boolean') { ready = true; durable = value.durable; receive({ type: 'ready', status: value.status, durable }); }
+        else if (ready && frame.type === 'end' && ['terminal', 'unsupported', 'rotate'].includes(String(value.reason))) {
+          const terminal = ['succeeded', 'partial', 'failed', 'budget_exceeded', 'cancelled'].includes(value.status);
+          if (value.reason === 'terminal' && (!durable || !terminal)
+            || value.reason === 'unsupported' && durable
+            || value.reason === 'rotate' && (!durable || terminal)) throw new StreamProtocolError('Invalid ending');
+          ended = true;
+          receive({ type: 'end', status: value.status, reason: value.reason as 'terminal' | 'unsupported' | 'rotate' });
+        } else throw new StreamProtocolError('Unknown frame');
+      }, activity);
+    } catch (error) {
+      if (signal.aborted || !this.connected) throw new DOMException('Aborted', 'AbortError');
+      if (error instanceof ApiError) throw error;
+      if (error instanceof StreamProtocolError || error instanceof SyntaxError) {
+        throw new ApiError('invalid_response');
+      }
+      throw new ApiError('network_unavailable');
+    } finally { clearTimeout(timer); signal.removeEventListener('abort', abort); controller.abort(); this.#streams.delete(controller); }
   }
 }

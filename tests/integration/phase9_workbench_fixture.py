@@ -6,6 +6,7 @@ import re
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
@@ -29,7 +30,11 @@ from autoscholar.coding.workspace import WorkspaceManager  # noqa: E402
 from autoscholar.core.config import Settings  # noqa: E402
 from autoscholar.core.errors import AppError  # noqa: E402
 from autoscholar.core.responses import UTF8JSONResponse  # noqa: E402
-from autoscholar.orchestration.durable_models import WorkflowJobRow  # noqa: E402
+from autoscholar.orchestration.checkpoints import digest  # noqa: E402
+from autoscholar.orchestration.durable_models import (  # noqa: E402
+    WorkflowCheckpointRow,
+    WorkflowJobRow,
+)
 from autoscholar.orchestration.models import PlanStep, TaskPlan  # noqa: E402
 from autoscholar.orchestration.repository import WorkflowRepository  # noqa: E402
 from autoscholar.rag.chunking import StructureAwareChunker  # noqa: E402
@@ -84,13 +89,13 @@ def public_pdf(*, blank: bool = False) -> bytes:
     return output.getvalue()
 
 
-async def fixture_app(*, writes: bool = False) -> FastAPI:
+async def fixture_app(*, writes: bool = False, streams: bool = False) -> FastAPI:
     data_root = (ROOT / "data" / "validation").resolve()
     assert data_root.is_relative_to(ROOT.resolve())
     temporary = None
-    if writes:
+    if writes or streams:
         data_root.mkdir(parents=True, exist_ok=True)
-        temporary = TemporaryDirectory(prefix="phase9c-", dir=data_root)
+        temporary = TemporaryDirectory(prefix="phase9d-" if streams else "phase9c-", dir=data_root)
     temporary_root = Path(temporary.name) if temporary else ROOT / "data" / "phase9-fixture-unused"
     settings = Settings(
         _env_file=None,  # type: ignore[call-arg]
@@ -180,6 +185,32 @@ async def fixture_app(*, writes: bool = False) -> FastAPI:
         sandbox_executor=sandbox,
         research_services=[],
     )
+    stream_task = ""
+    stream_patch = None
+    if streams:
+        from autoscholar.api.routes import workbench as workbench_routes
+        from autoscholar.api.workbench_events import event_stream as native_stream
+
+        stream_patch = patch.object(
+            workbench_routes,
+            "event_stream",
+            partial(
+                native_stream,
+                poll_seconds=0.05,
+                heartbeat_seconds=0.2,
+                duration_seconds=2,
+            ),
+        )
+        stream_patch.start()
+        durable = application.state.durable_service
+        stream_task, _ = await durable.submit(
+            {"objective": "公开的实时事件验收", "mode": "autonomous", "project_id": "project-a"},
+            "public-stream-fixture",
+        )
+        async with sessions() as session:
+            for _ in range(104):
+                await durable.repository.event(session, stream_task, "budget_saved")
+            await session.commit()
     api_requests = 0
 
     @application.middleware("http")
@@ -195,6 +226,7 @@ async def fixture_app(*, writes: bool = False) -> FastAPI:
                 request.url.path,
             )
         )
+        allowed_write = allowed_write or (streams and request.url.path == "/__fixture/advance")
         if (
             request.method not in {"GET", "HEAD"}
             and not allowed_write
@@ -206,7 +238,7 @@ async def fixture_app(*, writes: bool = False) -> FastAPI:
         return await call_next(request)
 
     @application.get("/__fixture/status")
-    async def status() -> dict[str, int]:
+    async def status() -> dict[str, int | str]:
         async with sessions() as session:
             jobs = await session.scalar(select(func.count()).select_from(WorkflowJobRow))
         return {
@@ -215,6 +247,7 @@ async def fixture_app(*, writes: bool = False) -> FastAPI:
             "api_requests": api_requests,
             "task_jobs": int(jobs or 0),
             "indexed_chunks": index.indexed,
+            "stream_task_id": stream_task,
         }
 
     def fixture_authorization(request: Request) -> None:
@@ -231,6 +264,41 @@ async def fixture_app(*, writes: bool = False) -> FastAPI:
     async def process(request: Request) -> dict[str, bool]:
         fixture_authorization(request)
         return {"handled": await worker.run_once()}
+
+    @application.post("/__fixture/advance")
+    async def advance(request: Request, finish: bool = False) -> dict[str, int]:
+        fixture_authorization(request)
+        assert streams and stream_task
+        async with sessions() as session:
+            task = await session.get(AgentTaskRow, stream_task)
+            job = await session.get(WorkflowJobRow, stream_task)
+            assert task is not None and job is not None
+            checkpoint = await session.scalar(
+                select(WorkflowCheckpointRow).where(
+                    WorkflowCheckpointRow.task_id == stream_task,
+                    WorkflowCheckpointRow.sequence == job.checkpoint_sequence,
+                )
+            )
+            assert task is not None and job is not None and checkpoint is not None
+            task.status = job.status = "succeeded" if finish else "running"
+            job.usage = {"total_tokens": 24, "model_calls": 1}
+            stage = "done" if finish else "writer"
+            checkpoint.payload = dict(checkpoint.payload) | {"stage": stage}
+            checkpoint.sha256 = digest(checkpoint.payload)
+            if finish:
+                task.answer = "中文事件验收完成：仅夹具状态变化，没有执行模型。"  # noqa: RUF001
+            await application.state.durable_service.repository.event(
+                session,
+                stream_task,
+                "checkpoint_saved",
+                stage=stage,
+                status=task.status,
+                sequence=job.checkpoint_sequence,
+                reason="PRIVATE_FIXTURE_PARAMETER",
+            )
+            await session.commit()
+            await session.refresh(task)
+            return {"sequence": task.event_sequence}
 
     @application.post("/__fixture/stop")
     async def stop(request: Request) -> dict[str, bool]:
@@ -249,9 +317,11 @@ async def fixture_app(*, writes: bool = False) -> FastAPI:
             try:
                 await engine.dispose()
             finally:
+                if stream_patch is not None:
+                    stream_patch.stop()
                 if temporary is not None:
                     assert temporary_root.resolve().parent == data_root
-                    assert temporary_root.name.startswith("phase9c-")
+                    assert temporary_root.name.startswith(("phase9c-", "phase9d-"))
                     temporary.cleanup()
             assert not provider.calls and not sandbox.requests
             if temporary is not None:
@@ -262,7 +332,7 @@ async def fixture_app(*, writes: bool = False) -> FastAPI:
 
 
 async def main() -> None:
-    app = await fixture_app(writes="--writes" in sys.argv[1:])
+    app = await fixture_app(writes="--writes" in sys.argv[1:], streams="--streams" in sys.argv[1:])
     server = uvicorn.Server(
         uvicorn.Config(
             app,

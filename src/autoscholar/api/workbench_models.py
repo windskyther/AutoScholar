@@ -109,3 +109,21 @@ class WorkbenchSessionResponse(BaseModel):
     authentication: str = "single_operator_bearer"
     api_version: str
     capabilities: dict[str, Any]
+
+
+class WorkflowEventSummary(BaseModel):
+    task_id: str
+    sequence: int
+    kind: str
+    payload: dict[str, str | int | bool]
+    created_at: datetime
+
+
+class WorkflowEventPage(BaseModel):
+    task_id: str
+    status: TaskStatus
+    durable: bool
+    items: list[WorkflowEventSummary]
+    next_cursor: int
+    has_more: bool
+    has_older: bool
