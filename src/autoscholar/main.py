@@ -20,6 +20,7 @@ from autoscholar.api.routes.health import router as health_router
 from autoscholar.api.routes.memory import router as memory_router
 from autoscholar.api.routes.projects import router as projects_router
 from autoscholar.api.routes.rag import router as rag_router
+from autoscholar.api.routes.workbench import router as workbench_router
 from autoscholar.api.routes.workflows import router as workflows_router
 from autoscholar.coding import (
     CodingAgent,
@@ -449,6 +450,7 @@ def create_app(
     application.include_router(rag_router)
     application.include_router(workflows_router)
     application.include_router(memory_router)
+    application.include_router(workbench_router)
     return application
 
 

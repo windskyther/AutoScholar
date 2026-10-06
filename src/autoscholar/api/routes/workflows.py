@@ -48,7 +48,8 @@ async def submit(
         "task_id": task_id,
         "status": job.status,
         "created": created,
-        "status_url": f"/agent/tasks/{task_id}",
+        "status_url": ("/workbench" if request.url.path.startswith("/workbench/") else "")
+        + f"/agent/tasks/{task_id}",
     }
 
 

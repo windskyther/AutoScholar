@@ -810,6 +810,22 @@ if ($LASTEXITCODE -ne 0) { throw 'Phase 8 全链路验收失败' }
 
 2026-10-06 真实 API 补测：经项目所有者授权，先执行 1 组轻量联测，再执行 10 组连续联测。每组通过本地独立 Research MCP 调用 Tavily 基础检索，再使用现有 LLM Provider 生成简短中文回答；仅发送公开 MNIST 查询和检索摘录。两轮合计 Tavily 11 次、LLM 11 次，全部 HTTP 200、无重试；批量 10 组全部通过来源、回答、引用标记及用量校验，LLM 输入 2380、输出 334、合计 2714 tokens，耗时 35.81 秒。每次 LLM 输出上限 128 tokens，测试时关闭深度思考，不运行训练、不修改正常部署。原始报告和本地测试脚本保留在 Git 忽略的 `data/` 目录，不上传密钥、`.env` 或设计文档。这是小规模顺序调用验证，不代表完整付费工作流、并发压力、真实 GitHub 工具访问或 GPU 验收。
 
+## Phase 9：Web 工作台（实施中）
+
+### 9A：浏览器 API 与只读汇总
+
+新增 `/workbench` 入口，其下所有项目、文档、任务、控制、审批、Memory、健康检查与产物接口统一要求现有 `EXPERIMENT_API_TOKEN` 的 Bearer 鉴权。返回内容禁止浏览器缓存，不返回运行时凭据；`GET /workbench/session` 只提供版本、配置布尔值和后端类型，不调用模型或搜索供应商。现有 REST 路径保留原行为，**这不是对旧接口的全局鉴权升级，也不提供多用户权限；当前只支持可信本地单操作者，不能直接对公网暴露 Core API**。
+
+新增只读查询：
+
+- `GET /workbench/projects/{project_id}/tasks`：项目根任务列表，支持 `status`、`mode`、`q`、`limit`、`offset`，排除子任务。
+- `GET /workbench/tasks/{task_id}/overview`：根任务、分页子任务、最新结构化计划、执行摘要、产物计数与回答。汇总只纳入相同项目的直接子任务；回答超过 262144 字符会标明截断。
+- `GET /workbench/tasks/{task_id}/{evidence|experiments|artifacts}`：按根任务及相同项目直接子任务分页查询资源，保留所属任务身份。
+
+所有分页最多 100 项。用量保留根任务单一共享预算，不累加子任务造成重复计数；没有供应商账单时金额返回 `null`。完整检查点、Worker 身份和内部未完成调用参数不会进入执行摘要。本模块无数据库迁移，不升级已有业务数据库、不领取任务、不调用付费 API。SSE 尚未实现，连接响应明确返回 `task_streaming: false`。
+
+9A 定向测试 23 项通过，完整后端回归 **313 passed、3 skipped**；Ruff、mypy 通过。跳过项仍为未启用的现有 Compose smoke 与 Windows 符号链接权限限制；该结果不代表已经启用前端或完成 Phase 9 全阶段验收。
+
 ## 开发路线
 
 | 阶段 | 重点 |

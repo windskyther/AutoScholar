@@ -205,7 +205,8 @@ async def upload_document(
             code="duplicate_document",
             message="This PDF already exists in the project",
         ) from exc
-    response.headers["Location"] = f"/projects/{project_id}/documents/{document_id}"
+    prefix = "/workbench" if request.url.path.startswith("/workbench/") else ""
+    response.headers["Location"] = f"{prefix}/projects/{project_id}/documents/{document_id}"
     return _document_response(record)
 
 
