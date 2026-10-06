@@ -17,7 +17,7 @@ from autoscholar.orchestration.durable_models import (
     WorkflowEventRow,
     WorkflowJobRow,
 )
-from autoscholar.rag.database_models import ProjectRow
+from autoscholar.rag.database_models import DocumentRow, ProjectRow
 
 TERMINAL = {"succeeded", "failed", "budget_exceeded", "cancelled"}
 
@@ -109,6 +109,22 @@ class DurableRepository:
                 raise AppError(
                     status_code=404, code="project_not_found", message="Project not found"
                 )
+            if snapshot.document_ids:
+                ready_ids = set(
+                    await session.scalars(
+                        select(DocumentRow.id).where(
+                            DocumentRow.id.in_(snapshot.document_ids),
+                            DocumentRow.project_id == snapshot.project_id,
+                            DocumentRow.status == "ready",
+                        )
+                    )
+                )
+                if not snapshot.project_id or ready_ids != set(snapshot.document_ids):
+                    raise AppError(
+                        status_code=422,
+                        code="selected_documents_unavailable",
+                        message="Selected documents must be ready and belong to the project",
+                    )
             session.add(
                 AgentTaskRow(
                     id=snapshot.task_id,

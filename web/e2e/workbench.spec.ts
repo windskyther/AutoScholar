@@ -33,6 +33,7 @@ async function mockAPI(page: Page, sessionStatus = 200) {
       body = status === 200 ? session : { error: { code: status === 401 ? 'experiment_auth_required' : 'experiment_api_not_configured' } };
     } else if (url.pathname === '/api/workbench/projects') body = { items: [project], total: 1, limit: 20, offset: 0 };
     else if (url.pathname === `/api/workbench/projects/${project.id}`) body = project;
+    else if (url.pathname === `/api/workbench/projects/${project.id}/documents`) body = { items: [], total: 0, limit: 20, offset: 0 };
     else if (url.pathname === `/api/workbench/projects/${project.id}/tasks`) {
       const items = url.searchParams.get('status') === 'failed' ? [] : [task];
       body = { items, total: items.length, limit: 20, offset: 0 };

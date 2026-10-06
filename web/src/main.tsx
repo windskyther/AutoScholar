@@ -15,7 +15,7 @@ const cache = new QueryClient({ defaultOptions: {
 } });
 
 createRoot(document.getElementById('root')!).render(<StrictMode>
-  <ConfigProvider locale={zhCN} theme={{ token: {
+  <ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }} theme={{ token: {
     colorPrimary: '#1f7165', borderRadius: 6, fontSize: 14,
     fontFamily: '"Segoe UI", "Microsoft YaHei", system-ui, sans-serif',
   } }}>

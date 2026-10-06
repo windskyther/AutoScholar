@@ -1,11 +1,14 @@
 import { useState } from 'react';
-import { Alert, Breadcrumb, Descriptions, Empty, Input, Select, Space, Table, Tag } from 'antd';
+import { Alert, Breadcrumb, Button, Descriptions, Empty, Input, Select, Space, Table, Tag } from 'antd';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError } from './api';
 import { useConnection } from './auth';
 import { dateLabel, Loading, Metric, PageHeading, QueryError, Status, statusLabels } from './components';
 import type { Project, Task, TaskStatus } from './types';
+import CreateProject from './create-project';
+import Documents from './documents';
+import { useSubmission } from './task-submission';
 
 export function ProjectsPage() {
   const { api, session } = useConnection();
@@ -13,12 +16,12 @@ export function ProjectsPage() {
   const query = useQuery({ queryKey: ['projects', page], queryFn: ({ signal }) => api!.projects(page, signal) });
   return <>
     <PageHeading title="项目" subtitle="从项目进入研究任务，所有数据来自当前连接的 API。" refresh={() => void query.refetch()} />
-    <div className="capability-strip"><Tag>单操作者</Tag><Tag>只读查询</Tag>
+    <div className="capability-strip"><CreateProject /><Tag>单操作者</Tag><Tag>手动确认提交</Tag>
       <span>LLM：{session?.capabilities.llm_configured ? '已配置，未进行联测' : '未配置'}</span>
       <span>检索后端：{session?.capabilities.research_backend}</span></div>
     {query.isPending ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
       : <Table<Project> rowKey="id" dataSource={query.data.items} scroll={{ x: 650 }}
-        locale={{ emptyText: <Empty description="暂无项目，可先使用现有 API 创建；浏览器创建功能将在 9C 提供。" /> }}
+        locale={{ emptyText: <Empty description="暂无项目，点击“新建项目”开始。" /> }}
         columns={[
           { title: '项目', dataIndex: 'name', render: (name: string, item) => <Link to={`/projects/${encodeURIComponent(item.id)}`}>{name}</Link> },
           { title: '说明', dataIndex: 'description', ellipsis: true, render: (value: string | null) => value || '未填写' },
@@ -30,7 +33,8 @@ export function ProjectsPage() {
 
 export function ProjectPage() {
   const projectId = useParams().projectId!;
-  const { api } = useConnection();
+  const { api, session } = useConnection();
+  const submission = useSubmission();
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<TaskStatus | undefined>();
   const [search, setSearch] = useState('');
@@ -42,6 +46,11 @@ export function ProjectPage() {
   return <>
     <Breadcrumb items={[{ title: <Link to="/">项目</Link> }, { title: project.data.name }]} />
     <PageHeading title={project.data.name} subtitle={project.data.description || '该项目尚未填写说明。'} refresh={() => void tasks.refetch()} />
+    <div className="section-heading"><h2>研究任务</h2><Button type="primary"
+      disabled={!session?.capabilities.llm_configured || !session.capabilities.budget_limits}
+      onClick={() => submission.openProject(project.data)}>创建研究任务</Button></div>
+    {!session?.capabilities.llm_configured && <Alert type="warning" title="LLM 尚未配置，任务提交暂不可用；只读查询和 PDF 管理不受影响。" />}
+    {!session?.capabilities.budget_limits && <Alert type="warning" title="后端尚未提供 9C 预算配置，请先升级 API。" />}
     <Space className="filters" wrap>
       <Input.Search placeholder="搜索研究目标" aria-label="搜索研究目标" allowClear maxLength={200}
         onSearch={(value) => { setSearch(value.trim()); setPage(1); }} style={{ width: 280 }} />
@@ -60,6 +69,7 @@ export function ProjectPage() {
           { title: 'Tokens', width: 100, render: (_, item) => (item.metrics.total_tokens ?? 0).toLocaleString('zh-CN') },
           { title: '更新时间', dataIndex: 'updated_at', width: 210, render: dateLabel },
         ]} pagination={{ current: page, pageSize: 20, total: tasks.data.total, showSizeChanger: false, onChange: setPage }} />}
+    <Documents projectId={projectId} />
   </>;
 }
 

@@ -51,6 +51,9 @@ async def session(request: Request) -> WorkbenchSessionResponse:
             "filesystem_backend": settings.filesystem_tool_backend,
             "experiment_backend": settings.experiment_tool_backend,
             "task_streaming": False,
+            "document_max_bytes": settings.document_max_bytes,
+            "document_max_pages": settings.document_max_pages,
+            "budget_limits": settings.autonomous_budget.model_dump(),
         },
     )
 

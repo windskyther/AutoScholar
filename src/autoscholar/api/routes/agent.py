@@ -40,7 +40,9 @@ class AgentRunRequest(BaseModel):
     objective: ObjectiveText
     mode: AgentMode = "auto"
     project_id: str | None = None
-    document_ids: list[str] | None = None
+    document_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] | None = (
+        Field(default=None, max_length=100)
+    )
     retrieval_mode: RetrievalMode = "hybrid_rerank"
     experiment_specification: ExperimentSpecification | None = None
     budget: BudgetLimits | None = None
@@ -54,6 +56,13 @@ class AgentRunRequest(BaseModel):
         if len(sources) != len(set(sources)):
             raise ValueError("research_sources must not contain duplicates")
         return sources
+
+    @field_validator("document_ids")
+    @classmethod
+    def validate_document_ids(cls, ids: list[str] | None) -> list[str] | None:
+        if ids is not None and len(ids) != len(set(ids)):
+            raise ValueError("document_ids must not contain duplicates")
+        return ids
 
 
 class AgentMetricsResponse(BaseModel):
@@ -267,7 +276,8 @@ async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunRespo
         specification = payload.experiment_specification or ExperimentSpecification()
         if cost_units(specification) >= request.app.state.settings.workflow_approval_threshold:
             raise AppError(
-                status_code=409, code="durable_approval_required",
+                status_code=409,
+                code="durable_approval_required",
                 message="This experiment requires approval; submit via POST /agent/tasks",
             )
     if payload.mode == "autonomous":

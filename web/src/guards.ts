@@ -1,4 +1,4 @@
-import type { Overview, Page, Project, Session, Task } from './types';
+import type { BudgetLimits, Overview, Page, PDFDocument, Project, Session, SubmissionReceipt, Task } from './types';
 
 type RecordValue = Record<string, unknown>;
 function record(value: unknown): value is RecordValue {
@@ -17,7 +17,26 @@ export function isSession(value: unknown): value is Session {
     || !string(value.api_version) || !record(value.capabilities)) return false;
   const caps = value.capabilities;
   return ['llm_configured', 'web_search_configured', 'task_streaming'].every((key) => typeof caps[key] === 'boolean')
-    && ['research_backend', 'filesystem_backend', 'experiment_backend'].every((key) => string(caps[key]));
+    && ['research_backend', 'filesystem_backend', 'experiment_backend'].every((key) => string(caps[key]))
+    && (caps.document_max_bytes === undefined || (integer(caps.document_max_bytes) && caps.document_max_bytes > 0))
+    && (caps.document_max_pages === undefined || (integer(caps.document_max_pages) && caps.document_max_pages > 0))
+    && (caps.budget_limits === undefined || isBudget(caps.budget_limits));
+}
+export function isBudget(value: unknown): value is BudgetLimits {
+  return record(value) && ['steps', 'replans', 'model_calls', 'tool_calls', 'search_queries', 'code_repairs',
+    'training_runs', 'sandbox_runs', 'total_tokens', 'wall_seconds'].every((key) => integer(value[key]));
+}
+export function isDocument(value: unknown): value is PDFDocument {
+  return record(value) && ['id', 'project_id', 'original_filename', 'title', 'content_type', 'sha256',
+    'created_at', 'updated_at'].every((key) => string(value[key])) && integer(value.size_bytes)
+    && string(value.status) && ['queued', 'processing', 'ready', 'failed', 'deleting'].includes(value.status)
+    && (value.page_count === null || integer(value.page_count)) && integer(value.chunk_count)
+    && integer(value.index_version) && nullableString(value.embedding_model)
+    && nullableString(value.error_code) && nullableString(value.error_message);
+}
+export function isReceipt(value: unknown): value is SubmissionReceipt {
+  return record(value) && string(value.task_id) && string(value.status) && statuses.has(value.status)
+    && typeof value.created === 'boolean' && string(value.status_url);
 }
 export function isProject(value: unknown): value is Project {
   return record(value) && string(value.id) && string(value.name) && nullableString(value.description)

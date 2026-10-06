@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from autoscholar.core.errors import AppError
 from autoscholar.rag.database_models import (
     DocumentChunkRow,
     DocumentJobRow,
@@ -190,9 +191,22 @@ class KnowledgeRepository:
         self, document_id: str, *, kind: DocumentJobKind
     ) -> DocumentRecord:
         async with self._sessions() as session:
-            row = await session.get(DocumentRow, document_id)
+            row = await session.scalar(
+                select(DocumentRow).where(DocumentRow.id == document_id).with_for_update()
+            )
             if row is None:
                 raise LookupError(f"Unknown document: {document_id}")
+            # Recheck under the row lock; route-level reads can be stale across browsers.
+            if kind == "delete" and row.status == "deleting":
+                return self._document_record(row)
+            if kind in {"ingest", "reindex"}:
+                expected = "failed" if kind == "ingest" else "ready"
+                if row.status != expected:
+                    raise AppError(
+                        status_code=409,
+                        code="document_not_failed" if kind == "ingest" else "document_not_ready",
+                        message="Document state changed; refresh before requesting another job",
+                    )
             row.status = "deleting" if kind == "delete" else "queued"
             row.error_code = None
             row.error_message = None

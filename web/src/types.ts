@@ -6,11 +6,29 @@ export interface Page<T> { items: T[]; total: number; limit: number; offset: num
 export interface Project {
   id: string; name: string; description: string | null; created_at: string; updated_at: string;
 }
+export interface BudgetLimits {
+  steps: number; replans: number; model_calls: number; tool_calls: number; search_queries: number;
+  code_repairs: number; training_runs: number; sandbox_runs: number; total_tokens: number; wall_seconds: number;
+}
+export type DocumentStatus = 'queued' | 'processing' | 'ready' | 'failed' | 'deleting';
+export interface PDFDocument {
+  id: string; project_id: string; original_filename: string; title: string; content_type: string;
+  sha256: string; size_bytes: number; status: DocumentStatus; page_count: number | null; chunk_count: number;
+  embedding_model: string | null; index_version: number; error_code: string | null;
+  error_message: string | null; created_at: string; updated_at: string;
+}
+export interface TaskSubmission {
+  objective: string; mode: 'autonomous'; project_id: string; document_ids: string[] | null;
+  retrieval_mode: 'dense' | 'sparse' | 'hybrid' | 'hybrid_rerank'; research_sources: ('web' | 'paper')[];
+  budget: BudgetLimits;
+}
+export interface SubmissionReceipt { task_id: string; status: TaskStatus; created: boolean; status_url: string }
 export interface Session {
   status: 'connected'; authentication: 'single_operator_bearer'; api_version: string;
   capabilities: {
     llm_configured: boolean; web_search_configured: boolean; research_backend: string;
     filesystem_backend: string; experiment_backend: string; task_streaming: boolean;
+    document_max_bytes?: number; document_max_pages?: number; budget_limits?: BudgetLimits;
   };
 }
 export interface Task {
