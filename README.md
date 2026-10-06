@@ -826,6 +826,46 @@ if ($LASTEXITCODE -ne 0) { throw 'Phase 8 全链路验收失败' }
 
 9A 定向测试 23 项通过，完整后端回归 **313 passed、3 skipped**；Ruff、mypy 通过。跳过项仍为未启用的现有 Compose smoke 与 Windows 符号链接权限限制；该结果不代表已经启用前端或完成 Phase 9 全阶段验收。
 
+### 9B：本地只读工作台
+
+`web/` 使用 React、TypeScript、Ant Design 与 TanStack Query，提供连接页、分页项目列表、任务搜索/状态筛选、根任务详情、最新结构化计划、子任务列表、共享预算和安全纯文本输出。所有页面读取真实 API，不内置示例业务数据；当前不提交任务、不执行训练，也不提供实时流或控制按钮。
+
+先确保后端包含 9A 的 `/workbench` 路由，并已配置现有 `EXPERIMENT_API_TOKEN`。升级 Docker 中的 API 需要自行重建 API 镜像；本轮不会替你切换正常部署。已有任务在运行时不要随意重启相关服务。然后在新的 PowerShell 窗口运行（Node.js 24 LTS，项目已有安装）：
+
+```powershell
+Set-Location D:\98281\deepscholar\web
+npm.cmd ci --ignore-scripts --cache D:\98281\deepscholar\data\tooling\npm-cache
+if ($LASTEXITCODE -ne 0) { throw '前端依赖安装失败' }
+npm.cmd run dev
+```
+
+打开 `http://127.0.0.1:5173`，在连接页输入 **EXPERIMENT_API_TOKEN，不是 LLM/Tavily API Key**。默认只将 `/api/workbench` 转发至本机 `127.0.0.1:8000`；如 API 使用其他本地端口，可在启动前执行 `$env:WORKBENCH_API_PORT = '你的端口'`，只允许 1–65535 的端口号，不接受外部主机。连接和刷新都是只读请求，不产生模型/搜索调用。
+
+Token 只存于内存，不放入 URL、浏览器 Storage、Cookie 或前端 `.env`；刷新页面需重新连接。断开连接或收到 401/403 时清除凭据及查询缓存。客户端限制响应为 4 MiB，校验 UTF-8/返回结构，不自动重试，不执行回答中的 HTML/脚本。Vite 不读取项目根目录 `.env`，并禁止直接访问前端目录以外的仓库文件。前端和预览均只绑定回环地址；Vite 预览不是生产部署方案。
+
+本地验证（在 `web/` 执行）：
+
+```powershell
+npm.cmd run build
+if ($LASTEXITCODE -ne 0) { throw '类型检查或构建失败' }
+npm.cmd test
+if ($LASTEXITCODE -ne 0) { throw 'API 客户端单测失败' }
+npm.cmd run install:browser
+if ($LASTEXITCODE -ne 0) { throw '测试浏览器安装失败' }
+npm.cmd run test:browser
+if ($LASTEXITCODE -ne 0) { throw '浏览器夹具验收失败' }
+npm.cmd run test:local
+if ($LASTEXITCODE -ne 0) { throw '本地 HTTP 联测失败' }
+```
+
+测试前先用 Ctrl+C 停止自己的 5173 前端进程；验收脚本遇到端口占用会停止，不复用未知服务。Chromium 默认下载到 D 盘的 `data/tooling/playwright`，若显式设置过 `PLAYWRIGHT_BROWSERS_PATH` 则沿用该路径。浏览器报告保存在被 Git 忽略的 `web/playwright-report` 和 `web/test-results`。
+
+`test:browser` 截获 API 请求，使用公开夹具测试页面导航、中文、安全输出、筛选、鉴权、缓存清理、异常响应与移动端。`test:local` 需要项目根目录已有包含开发依赖的 `.venv`；自动构建前端、启动本地预览及 18009 端口的独立 FastAPI，使用内存 SQLite 和公开 Token 验证真实 HTTP/代理/鉴权，不加载 `.env`、不连接已有数据库、不领取任务、不访问模型/搜索供应商。两类测试完成后只结束自己启动的服务。
+
+2026-10-06 验证：前端 **26 项单测、7 项浏览器测试、2 项真实本地 HTTP 联测全部通过**；生产构建及 TypeScript 类型检查通过，生产依赖审计无已知漏洞。后端再次完整回归 **313 passed、3 skipped**，Ruff、mypy 通过。浏览器联测实测模型/沙箱调用均为 0；没有付费 API 请求，没有切换现有部署。
+
+9A、9B 是当前完成范围；项目/PDF/任务提交（9C）、SSE/事件回放（9D）、任务控制与审批（9E）、资源浏览与导出（9F）、完整 PostgreSQL/Docker 浏览器验收（9G）尚未完成。9B 的 HTTP 联测不等同于 9G 的全链路验收。
+
 ## 开发路线
 
 | 阶段 | 重点 |

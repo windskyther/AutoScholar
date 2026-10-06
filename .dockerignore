@@ -17,3 +17,8 @@ outputs
 data
 tests
 AutoScholar_总体设计文档_V1.0.md
+node_modules
+web/dist
+web/test-results
+web/playwright-report
+web/coverage
