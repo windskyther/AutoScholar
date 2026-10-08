@@ -1,0 +1,1 @@
+# Deliberately empty public Compose environment; never load the repository .env.

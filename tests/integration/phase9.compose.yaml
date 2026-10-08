@@ -1,0 +1,110 @@
+# Use only with an explicit, unique autoscholar-phase9g-* project name.
+# No provider secrets, root .env, external network, or normal database volumes.
+x-runtime: &runtime
+  image: autoscholar-api:phase9-acceptance
+  build:
+    context: ../..
+    target: api
+  working_dir: /app
+  environment: &environment
+    APP_ENV: test
+    LOG_LEVEL: WARNING
+    DATABASE_URL: postgresql+asyncpg://acceptance:public-test-only@postgres:5432/acceptance
+    REDIS_URL: redis://redis:6379/0
+    QDRANT_URL: http://qdrant:6333
+    QDRANT_COLLECTION: phase9_public_fixture
+    EMBEDDING_DIMENSIONS: '8'
+    EXPERIMENT_API_TOKEN: public-phase9g-token
+    LLM_API_KEY: public-offline-placeholder
+    LLM_MODEL: offline-scripted-coordinator
+    LLM_BASE_URL: http://unreachable.invalid
+    WORKSPACE_ROOT: /validation/workspaces
+    DOCUMENT_STORAGE_PATH: /validation/documents
+    SANDBOX_MANAGER_URL: http://sandbox-manager:8090
+    WORKFLOW_WORKER_POLL_SECONDS: '0.2'
+    WORKFLOW_JOB_LEASE_SECONDS: '10'
+    WORKFLOW_APPROVAL_THRESHOLD: '0'
+  volumes:
+    - ../../src:/app/src:ro
+    - ../../migrations:/app/migrations:ro
+    - ../../alembic.ini:/app/alembic.ini:ro
+    - ./phase9_stack_runtime.py:/acceptance/runtime.py:ro
+    - validation:/validation
+  networks: [isolated]
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: acceptance
+      POSTGRES_USER: acceptance
+      POSTGRES_PASSWORD: public-test-only
+    volumes: [postgres:/var/lib/postgresql/data]
+    networks: [isolated]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U acceptance -d acceptance']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    networks: [isolated]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  qdrant:
+    image: qdrant/qdrant:v1.19.0
+    volumes: [qdrant:/qdrant/storage]
+    networks: [isolated]
+  migrate:
+    <<: *runtime
+    command: [alembic, upgrade, head]
+  api:
+    <<: *runtime
+    command: [python, /acceptance/runtime.py, api]
+  ingress:
+    <<: *runtime
+    command: [python, /acceptance/runtime.py, ingress]
+    ports: ['127.0.0.1:18019:8000']
+    networks: [isolated, ingress]
+  workflow-worker:
+    <<: *runtime
+    command: [python, /acceptance/runtime.py, workflow]
+  document-worker:
+    <<: *runtime
+    command: [python, /acceptance/runtime.py, documents]
+  dataset-copy:
+    image: autoscholar-api:phase9-acceptance
+    command: [python, /acceptance/runtime.py, dataset-copy]
+    volumes:
+      - ./phase9_stack_runtime.py:/acceptance/runtime.py:ro
+      - public-mnist:/public:ro
+      - mnist:/datasets/mnist
+    network_mode: none
+  sandbox-manager:
+    <<: *runtime
+    command: [uvicorn, autoscholar.sandbox.manager:app, --host, 0.0.0.0, --port, '8090', --no-access-log]
+    environment:
+      SANDBOX_IMAGE: autoscholar-python-sandbox:phase4
+      SANDBOX_DATASET_VOLUME: '${COMPOSE_PROJECT_NAME}_mnist'
+    volumes:
+      - ../../src:/app/src:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - mnist:/datasets/mnist:ro
+
+networks:
+  isolated:
+    internal: true
+  ingress:
+    driver: bridge
+volumes:
+  postgres:
+  qdrant:
+  validation:
+  mnist:
+  # Read-only source of public MNIST only; never included in teardown.
+  public-mnist:
+    external: true
+    name: autoscholar_mnist_data

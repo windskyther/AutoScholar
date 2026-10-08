@@ -3,7 +3,7 @@
 > 面向 AI/ML 研究与实验的自主智能体平台  
 > Autonomous AI/ML Research & Experiment Agent Platform
 
-AutoScholar 的目标是把复杂研究目标转化为可追踪、可恢复、可评测、可复现的研究流程。当前支持 Web/论文研究、项目知识库、隔离代码执行与 MNIST 实验，已具备持久化自主工作流与 MCP 工具平台；Phase 9 正在分模块构建本地 Web 工作台。
+AutoScholar 的目标是把复杂研究目标转化为可追踪、可恢复、可评测、可复现的研究流程。当前支持 Web/论文研究、项目知识库、隔离代码执行与 MNIST 实验，已具备持久化自主工作流、MCP 工具平台及本地单操作者 Web 工作台。
 
 ## 当前能力
 
@@ -811,7 +811,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Phase 8 全链路验收失败' }
 
 2026-10-06 真实 API 补测：经项目所有者授权，先执行 1 组轻量联测，再执行 10 组连续联测。每组通过本地独立 Research MCP 调用 Tavily 基础检索，再使用现有 LLM Provider 生成简短中文回答；仅发送公开 MNIST 查询和检索摘录。两轮合计 Tavily 11 次、LLM 11 次，全部 HTTP 200、无重试；批量 10 组全部通过来源、回答、引用标记及用量校验，LLM 输入 2380、输出 334、合计 2714 tokens，耗时 35.81 秒。每次 LLM 输出上限 128 tokens，测试时关闭深度思考，不运行训练、不修改正常部署。原始报告和本地测试脚本保留在 Git 忽略的 `data/` 目录，不上传密钥、`.env` 或设计文档。这是小规模顺序调用验证，不代表完整付费工作流、并发压力、真实 GitHub 工具访问或 GPU 验收。
 
-## Phase 9：Web 工作台（实施中）
+## Phase 9：Web 工作台（本地无付费 CPU 验收通过）
 
 ### 9A：浏览器 API 与只读汇总
 
@@ -970,7 +970,32 @@ npm run test:resources
 
 夹具使用独立文件 SQLite、公开报告/PDF/证据，无模型或沙箱调用，结束后清理自有数据。新增 17 项后端安全测试、15 项前端单测和 2 项真实 HTTP 浏览器测试通过；完整后端 **397 passed、3 skipped**，前端 **97 项单测**通过；TypeScript、生产构建、Ruff、mypy 通过。
 
-9A–9F 是当前完成范围；完整 PostgreSQL/Docker 浏览器验收（9G）仍在推进。上述 HTTP 联测不等同于 9G 的全链路验收。
+### 9G：独立 PostgreSQL / Docker / 浏览器验收
+
+`scripts/Test-Phase9Stack.ps1` 创建随机 `autoscholar-phase9g-*` Compose 项目，使用独立 PostgreSQL、Redis、Qdrant、API、文档 Worker、工作流 Worker、沙箱管理器及数据卷。它显式读取空的公开配置文件，不加载根目录 `.env`，不挂载设计文档或正常数据库；已有公开 MNIST 源卷只读复制到测试卷，并验证数据摘要。
+
+API 和 Worker 保持在内部网络，测试入口仅绑定 `127.0.0.1:18019`，固定转发到测试 API；浏览器使用 `127.0.0.1:5183`。入口单独接入 bridge 发布本地端口，不让 Core/Worker 获得外网；端口行为参见 [Docker 官方说明](https://docs.docker.com/engine/network/port-publishing/)。不停止占用这些端口的既有服务。
+
+前置条件：Docker Desktop 已启动、Node.js 24 与 Chromium 已安装、`web/node_modules` 已就绪，公开 `autoscholar_mnist_data` 卷已完成 MNIST 初始化，`autoscholar-python-sandbox:phase4` 镜像存在。该测试不自动下载 MNIST，不读取供应商密钥；首次构建可能下载锁定的 Python 依赖。
+
+```powershell
+Set-Location D:\98281\deepscholar
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-Phase9Stack.ps1
+```
+
+验证范围：
+
+- 新库迁移至 `20261006_0013`；消费者未启动时降级至 `20261005_0012`，再升级并验证历史事件回填。
+- 8 个 PostgreSQL 并发写入者生成 24 条连续事件，事务回滚不留空洞；同编号并发提交只创建一个根任务；同状态并发控制仅接受一次，单独追加事件也使旧状态令牌失效。
+- 浏览器创建项目 → 上传公开 PDF → 真实文档 Worker 解析并写入 Qdrant → 提交任务 → 观察 SSE → 审阅并批准 → 保持暂停 → 单独恢复 → 真实 Docker MNIST 训练 → 实验对比、PNG 曲线预览 → 报告下载摘要校验。
+- 重启测试 API 与两类 Worker 后，任务状态、报告和事件可回放，训练次数仍为 1；真实 Qdrant 项目/文档过滤的混合检索及 Redis 读写通过。
+- 每个完整成功流程执行 1 次真实训练，登记 10 个产物；未授权下载拒绝，刷新不会重跑。
+
+2026-10-08 验收：9A–9G 的当前本地 CPU 范围通过。完整后端 **397 passed、3 skipped**；前端 **97 单测、21 模拟浏览器用例、14 本地 HTTP 浏览器用例**通过，并通过独立 Docker/PostgreSQL 的完整浏览器链路及重启核验；Ruff、mypy（174 文件）、TypeScript、生产构建通过。三项跳过仍为未启用的旧正常 Compose smoke 与 Windows 符号链接权限限制，不影响单独执行的 9G 栈验收。
+
+验收使用脚本化协调器、确定性测试向量和测试重排器，外部 API 调用为 0；**不代表真实 LLM 规划、Tavily/论文供应商可用性或向量语义质量验收**。付费联测、GPU、多用户鉴权及公网安全不属于本轮范围。默认完成/失败后仅清理自有测试容器和卷；正常数据及公开 MNIST 源卷保留，测试镜像保留以复用。可加 `-KeepStack` 保留测试栈排查，需自行清理输出的随机项目。
+
+正常部署尚未替你切换。启用新版本前仍需备份数据库、停止旧消费者、迁移至 `20261006_0013`，并同时更新 API、工作流 Worker、文档 Worker 及其他数据库使用者；不能混用旧事件写入器。开发继续使用 `dev`；合并 `main` 需项目所有者单独批准。
 
 ## 开发路线
 
@@ -985,7 +1010,7 @@ npm run test:resources
 | Phase 6 | 结构化 DAG、Reviewer/Replanning、共享预算、版本历史 |
 | Phase 7 | 持久化队列、Checkpoint、暂停恢复、人工审批、项目/经验 Memory |
 | Phase 8 | MCP 工具平台（无付费 CPU 验收、轻量真实 LLM/Tavily 补测通过） |
-| Phase 9 | Web 工作台 |
+| Phase 9 | 本地 Web 工作台（9A–9G 无付费 CPU 验收通过） |
 | Phase 10–11 | 全链路评测、安全加固、CI/CD 与部署 |
 
 ## 分支与提交约定
