@@ -997,6 +997,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-Phase9Stack.p
 
 正常部署尚未替你切换。启用新版本前仍需备份数据库、停止旧消费者、迁移至 `20261006_0013`，并同时更新 API、工作流 Worker、文档 Worker 及其他数据库使用者；不能混用旧事件写入器。开发继续使用 `dev`；合并 `main` 需项目所有者单独批准。
 
+## Phase 10：AutoScholar-Eval（构建中）
+
+Phase 10 建立统一的 RAG、Research、Tool、Coding、Experiment 与端到端评测，及 Planner、Reranker、Reviewer、Memory、Replanning 消融。工程夹具、本地真实组件与真实供应商能力结果必须分开；当前不执行付费联测，不把固定模型响应的成功率当成真实模型能力。
+
+### 10A：统一评测契约与运行记录
+
+新增 `autoscholar.evaluation` 数据集校验入口，以及可注入适配器的串行评测运行器。数据集使用版本化 JSON，包含唯一用例 ID、类别、公开来源说明、执行输入和独立标准答案；执行方法不会收到标准答案。拒绝重复 JSON 键、非法 UTF-8、非有限数、未知字段、重复 ID 和超过 8 MiB 的输入。
+
+运行器每次新建 `eval-<UUID>` 目录，输出 `manifest.json`、`cases.jsonl`、`summary.json` 与 `evaluation_report.md`，记录数据摘要、适配器/资源摘要、代码版本及工作区是否有未提交修改、种子、重复次数和逐用例耗时。失败、超时和取消均保留记录；错误不输出异常原文或提示内容。取消后保存部分报告并继续向调用者传播取消，不自动恢复或重跑。
+
+规则检查通过率与端到端任务成功率分别统计；所有计划执行的用例保留在检查通过率分母中。指标均值展示实际计分/计划数量，缺失用量及没有价格依据的费用保持未知。实际供应商 Token 与预算保护计数分开，不重复累加根/子任务。当前基础 CLI 只提供 `validate`；可直接运行的 RAG 夹具与 `run` 入口在 10B 补齐。
+
+```powershell
+Set-Location D:\98281\deepscholar
+.venv\Scripts\python.exe -m autoscholar.evaluation validate --dataset <版本化数据集.json>
+```
+
+评测运行记录应保存至被 Git 忽略的 `data/evaluation/`，不提交实际运行数据、密钥、`.env` 或设计文档。新入口不自动加载应用 Settings 或 `.env`。后续真实组件及付费模式不会隐式启用；CI/CD、正式部署与全局安全加固仍留给 Phase 11。
+
 ## 开发路线
 
 | 阶段 | 重点 |
@@ -1011,7 +1030,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-Phase9Stack.p
 | Phase 7 | 持久化队列、Checkpoint、暂停恢复、人工审批、项目/经验 Memory |
 | Phase 8 | MCP 工具平台（无付费 CPU 验收、轻量真实 LLM/Tavily 补测通过） |
 | Phase 9 | 本地 Web 工作台（9A–9G 无付费 CPU 验收通过） |
-| Phase 10–11 | 全链路评测、安全加固、CI/CD 与部署 |
+| Phase 10 | AutoScholar-Eval：统一评测、基准数据、消融与报告（构建中） |
+| Phase 11 | 安全加固、CI/CD 与部署 |
 
 ## 分支与提交约定
 
