@@ -16,7 +16,7 @@ from autoscholar.evaluation.models import (
     RunConfiguration,
     ScoreCard,
 )
-from autoscholar.evaluation.runner import run_evaluation
+from autoscholar.evaluation.runner import _case, run_evaluation
 
 
 def suite() -> BenchmarkSuite:
@@ -240,3 +240,10 @@ async def test_invalid_cases_and_duplicate_variants_fail_before_creating_run(
             repo_root=tmp_path,
         )
     assert not (tmp_path / "runs").exists()
+
+
+async def test_latency_uses_high_resolution_timer(monkeypatch: pytest.MonkeyPatch) -> None:
+    ticks = iter([10.0, 10.0004])
+    monkeypatch.setattr("autoscholar.evaluation.runner.time.perf_counter", lambda: next(ticks))
+    result = await _case(Adapter(), suite().cases[0], RunConfiguration(), 1)
+    assert result.status == "passed" and result.duration_ms == 0.4

@@ -1,26 +1,26 @@
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
-import math
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from autoscholar.agent.repository import AgentTaskRepository
-from autoscholar.core.config import Settings, get_settings
-from autoscholar.infrastructure import Database, Qdrant
-from autoscholar.llm import create_llm_provider
-from autoscholar.rag import (
-    FastEmbedReranker,
-    FastEmbedSparseProvider,
-    KnowledgeRepository,
-    QdrantChunkIndex,
-    RAGQueryService,
-    RetrievalMode,
-    RetrievedChunk,
+from autoscholar.evaluation.datasets import decode_json, read_bounded
+from autoscholar.evaluation.ranking import (
+    RankingAggregate,
+    RankingScore,
+    aggregate_rankings,
+    normalize_ks,
+    score_ranking,
+    validate_ids,
 )
-from autoscholar.rag.worker import create_embedding_provider
+from autoscholar.rag.models import RetrievalMode, RetrievedChunk
+
+if TYPE_CHECKING:
+    from autoscholar.core.config import Settings
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +28,14 @@ class RAGBenchmarkItem:
     question: str
     relevant_document_ids: tuple[str, ...] = ()
     relevant_chunk_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.question, str) or not self.question.strip():
+            raise ValueError("Benchmark needs a question")
+        if not (self.relevant_document_ids or self.relevant_chunk_ids):
+            raise ValueError("Benchmark needs relevant IDs")
+        validate_ids(self.relevant_document_ids)
+        validate_ids(self.relevant_chunk_ids)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +46,8 @@ class RAGBenchmarkResult:
     hit_rate_at_k: dict[int, float]
     mrr: float
     ndcg_at_k: dict[int, float]
+    document_metrics: RankingAggregate | None = None
+    chunk_metrics: RankingAggregate | None = None
 
 
 class BenchmarkRetriever(Protocol):
@@ -54,21 +64,32 @@ class BenchmarkRetriever(Protocol):
 
 def load_rag_benchmark(path: Path) -> list[RAGBenchmarkItem]:
     items: list[RAGBenchmarkItem] = []
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, raw_line in enumerate(
+        read_bounded(path).decode("utf-8").splitlines(), start=1
+    ):
         line = raw_line.strip()
         if not line:
             continue
         try:
-            payload = json.loads(line)
-        except json.JSONDecodeError as exc:
+            payload = decode_json(line.encode("utf-8"))
+            if not isinstance(payload, dict) or set(payload) - {
+                "question",
+                "relevant_document_ids",
+                "relevant_document_id",
+                "relevant_chunk_ids",
+                "relevant_chunk_id",
+            }:
+                raise ValueError("Unsupported benchmark fields")
+        except ValueError as exc:
             raise ValueError(f"Invalid JSON on benchmark line {line_number}") from exc
-        question = str(payload.get("question") or "").strip()
+        question = payload.get("question")
+        if not isinstance(question, str):
+            raise ValueError(f"Benchmark line {line_number} needs a string question")
+        question = question.strip()
         document_ids = _ids(payload, "relevant_document_ids", "relevant_document_id")
         chunk_ids = _ids(payload, "relevant_chunk_ids", "relevant_chunk_id")
         if not question or not (document_ids or chunk_ids):
-            raise ValueError(
-                f"Benchmark line {line_number} needs a question and relevant IDs"
-            )
+            raise ValueError(f"Benchmark line {line_number} needs a question and relevant IDs")
         items.append(
             RAGBenchmarkItem(
                 question=question,
@@ -91,14 +112,11 @@ async def evaluate_rag(
 ) -> RAGBenchmarkResult:
     if not items:
         raise ValueError("RAG benchmark dataset is empty")
-    normalized_ks = tuple(sorted(set(ks)))
-    if not normalized_ks or normalized_ks[0] < 1:
-        raise ValueError("Benchmark K values must be positive")
+    normalized_ks = normalize_ks(ks)
     max_k = normalized_ks[-1]
-    recalls = {k: 0.0 for k in normalized_ks}
-    hits = {k: 0.0 for k in normalized_ks}
-    ndcgs = {k: 0.0 for k in normalized_ks}
-    reciprocal_ranks = 0.0
+    primary: list[RankingScore] = []
+    documents: list[RankingScore] = []
+    chunks: list[RankingScore] = []
     for item in items:
         retrieved = await retriever.retrieve(
             item.question,
@@ -106,52 +124,68 @@ async def evaluate_rag(
             retrieval_mode=mode,
             top_k=max_k,
         )
-        relevant_chunks = set(item.relevant_chunk_ids)
-        relevant_documents = set(item.relevant_document_ids)
-        ranked_ids = [
-            chunk.id if relevant_chunks else chunk.document_id for chunk in retrieved
-        ]
-        relevant_ids = relevant_chunks or relevant_documents
-        relevance = [identifier in relevant_ids for identifier in ranked_ids]
-        first_rank = next(
-            (rank for rank, is_relevant in enumerate(relevance, start=1) if is_relevant),
-            None,
-        )
-        reciprocal_ranks += 1 / first_rank if first_rank is not None else 0.0
-        for k in normalized_ks:
-            prefix_ids = set(ranked_ids[:k])
-            relevant_count = len(prefix_ids & relevant_ids)
-            recalls[k] += relevant_count / len(relevant_ids)
-            hits[k] += float(relevant_count > 0)
-            gains = relevance[:k]
-            dcg = sum(
-                1 / math.log2(rank + 1)
-                for rank, is_relevant in enumerate(gains, start=1)
-                if is_relevant
+        if any(chunk.project_id != project_id for chunk in retrieved):
+            raise ValueError("Retriever returned chunks from another project")
+        if item.relevant_document_ids:
+            documents.append(
+                score_ranking(
+                    [chunk.document_id for chunk in retrieved],
+                    item.relevant_document_ids,
+                    ks=normalized_ks,
+                )
             )
-            ideal_count = min(len(relevant_ids), k)
-            ideal_dcg = sum(1 / math.log2(rank + 1) for rank in range(1, ideal_count + 1))
-            ndcgs[k] += dcg / ideal_dcg if ideal_dcg else 0.0
-    count = len(items)
+        if item.relevant_chunk_ids:
+            chunks.append(
+                score_ranking(
+                    [chunk.id for chunk in retrieved], item.relevant_chunk_ids, ks=normalized_ks
+                )
+            )
+        primary.append(chunks[-1] if item.relevant_chunk_ids else documents[-1])
+    aggregate = aggregate_rankings(primary)
+    assert aggregate is not None
     return RAGBenchmarkResult(
         mode=mode,
-        count=count,
-        recall_at_k={k: value / count for k, value in recalls.items()},
-        hit_rate_at_k={k: value / count for k, value in hits.items()},
-        mrr=reciprocal_ranks / count,
-        ndcg_at_k={k: value / count for k, value in ndcgs.items()},
+        count=len(items),
+        recall_at_k=aggregate.recall_at_k,
+        hit_rate_at_k=aggregate.hit_rate_at_k,
+        mrr=aggregate.mrr,
+        ndcg_at_k=aggregate.ndcg_at_k,
+        document_metrics=aggregate_rankings(documents),
+        chunk_metrics=aggregate_rankings(chunks),
     )
 
 
 def _ids(payload: dict[str, object], plural: str, singular: str) -> tuple[str, ...]:
     raw_plural = payload.get(plural)
-    if isinstance(raw_plural, list):
-        return tuple(dict.fromkeys(str(item) for item in raw_plural if str(item)))
     raw_singular = payload.get(singular)
-    return (str(raw_singular),) if raw_singular else ()
+    if raw_plural is not None and not isinstance(raw_plural, list):
+        raise ValueError("Relevance IDs must be a list")
+    if raw_singular is not None and not isinstance(raw_singular, str):
+        raise ValueError("Relevance ID must be a string")
+    values = (
+        raw_plural
+        if raw_plural is not None
+        else ([raw_singular] if raw_singular is not None else [])
+    )
+    validate_ids(values)
+    if raw_plural is not None and raw_singular is not None and values != [raw_singular]:
+        raise ValueError("Singular/plural relevance labels disagree")
+    return tuple(dict.fromkeys(values))
 
 
 async def _run_cli(args: argparse.Namespace, settings: Settings) -> None:
+    from autoscholar.agent.repository import AgentTaskRepository
+    from autoscholar.infrastructure import Database, Qdrant
+    from autoscholar.llm import create_llm_provider
+    from autoscholar.rag import (
+        FastEmbedReranker,
+        FastEmbedSparseProvider,
+        KnowledgeRepository,
+        QdrantChunkIndex,
+        RAGQueryService,
+    )
+    from autoscholar.rag.worker import create_embedding_provider
+
     database = Database(settings.database_url)
     qdrant_key = settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None
     qdrant = Qdrant(settings.qdrant_url, api_key=qdrant_key)
@@ -218,6 +252,8 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    from autoscholar.core.config import get_settings
+
     args = _parser().parse_args()
     asyncio.run(_run_cli(args, get_settings()))
 

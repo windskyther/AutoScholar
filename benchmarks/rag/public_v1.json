@@ -1,0 +1,309 @@
+{
+  "schema_version": 1,
+  "id": "rag-public-v1",
+  "category": "rag",
+  "description": "Twenty self-authored public query/label fixtures for evaluating RAG scoring and replay contracts. Not a real-model semantic benchmark.",
+  "provenance": "Self-authored engineering fixtures describing the documented CPU acceptance workflow. No private documents, live provider outputs or external copyrighted corpus.",
+  "cases": [
+    {
+      "id": "mnist-subset",
+      "prompt": "验收实验使用多少训练和测试样本？",
+      "inputs": {
+        "query_id": "mnist-subset"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-mnist"
+        ],
+        "relevant_chunk_ids": [
+          "mnist-subset"
+        ]
+      }
+    },
+    {
+      "id": "mnist-epochs",
+      "prompt": "工程验收默认训练多少轮？",
+      "inputs": {
+        "query_id": "mnist-epochs"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-mnist"
+        ],
+        "relevant_chunk_ids": [
+          "mnist-epochs"
+        ]
+      }
+    },
+    {
+      "id": "mnist-seed",
+      "prompt": "验收实验使用什么随机种子？",
+      "inputs": {
+        "query_id": "mnist-seed"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-mnist"
+        ],
+        "relevant_chunk_ids": [
+          "mnist-seed"
+        ]
+      }
+    },
+    {
+      "id": "mnist-batch",
+      "prompt": "验收训练的默认 batch size 是多少？",
+      "inputs": {
+        "query_id": "mnist-batch"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-mnist"
+        ],
+        "relevant_chunk_ids": [
+          "mnist-batch"
+        ]
+      }
+    },
+    {
+      "id": "mnist-comparison",
+      "prompt": "验收比较哪两种模型？",
+      "inputs": {
+        "query_id": "mnist-comparison"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-mnist"
+        ],
+        "relevant_chunk_ids": [
+          "mnist-comparison"
+        ]
+      }
+    },
+    {
+      "id": "sandbox-network",
+      "prompt": "实验代码能否直接访问外网？",
+      "inputs": {
+        "query_id": "sandbox-network"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-sandbox"
+        ],
+        "relevant_chunk_ids": [
+          "sandbox-network"
+        ]
+      }
+    },
+    {
+      "id": "sandbox-secrets",
+      "prompt": "供应商密钥应该放入训练沙箱吗？",
+      "inputs": {
+        "query_id": "sandbox-secrets"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-sandbox"
+        ],
+        "relevant_chunk_ids": [
+          "sandbox-secrets"
+        ]
+      }
+    },
+    {
+      "id": "sandbox-timeout",
+      "prompt": "执行超过沙箱时间上限时应如何处理？",
+      "inputs": {
+        "query_id": "sandbox-timeout"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-sandbox"
+        ],
+        "relevant_chunk_ids": [
+          "sandbox-timeout"
+        ]
+      }
+    },
+    {
+      "id": "sandbox-source",
+      "prompt": "如何验证实验使用的是交接的源码？",
+      "inputs": {
+        "query_id": "sandbox-source"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-sandbox"
+        ],
+        "relevant_chunk_ids": [
+          "sandbox-source"
+        ]
+      }
+    },
+    {
+      "id": "sandbox-artifacts",
+      "prompt": "如何确认报告文件未被修改？",
+      "inputs": {
+        "query_id": "sandbox-artifacts"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-sandbox"
+        ],
+        "relevant_chunk_ids": [
+          "sandbox-artifacts"
+        ]
+      }
+    },
+    {
+      "id": "workflow-approval",
+      "prompt": "批准实验后会立即自动恢复任务吗？",
+      "inputs": {
+        "query_id": "workflow-approval"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-workflow"
+        ],
+        "relevant_chunk_ids": [
+          "workflow-approval"
+        ]
+      }
+    },
+    {
+      "id": "workflow-idempotency",
+      "prompt": "任务提交回执丢失后如何避免重复任务？",
+      "inputs": {
+        "query_id": "workflow-idempotency"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-workflow"
+        ],
+        "relevant_chunk_ids": [
+          "workflow-idempotency"
+        ]
+      }
+    },
+    {
+      "id": "workflow-budget",
+      "prompt": "父任务和子任务的预算应该怎样统计？",
+      "inputs": {
+        "query_id": "workflow-budget"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-workflow"
+        ],
+        "relevant_chunk_ids": [
+          "workflow-budget"
+        ]
+      }
+    },
+    {
+      "id": "workflow-events",
+      "prompt": "事件流中断后从哪里继续读取？",
+      "inputs": {
+        "query_id": "workflow-events"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-workflow"
+        ],
+        "relevant_chunk_ids": [
+          "workflow-events"
+        ]
+      }
+    },
+    {
+      "id": "workflow-memory",
+      "prompt": "不同项目的经验记忆是否应该混用？",
+      "inputs": {
+        "query_id": "workflow-memory"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-workflow"
+        ],
+        "relevant_chunk_ids": [
+          "workflow-memory"
+        ]
+      }
+    },
+    {
+      "id": "retrieval-dense",
+      "prompt": "Dense 检索主要使用哪种表示？",
+      "inputs": {
+        "query_id": "retrieval-dense"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-retrieval"
+        ],
+        "relevant_chunk_ids": [
+          "retrieval-dense"
+        ]
+      }
+    },
+    {
+      "id": "retrieval-sparse",
+      "prompt": "当前稀疏检索配置使用什么模型？",
+      "inputs": {
+        "query_id": "retrieval-sparse"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-retrieval"
+        ],
+        "relevant_chunk_ids": [
+          "retrieval-sparse"
+        ]
+      }
+    },
+    {
+      "id": "retrieval-hybrid",
+      "prompt": "Hybrid 检索组合哪些检索信号？",
+      "inputs": {
+        "query_id": "retrieval-hybrid"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-retrieval"
+        ],
+        "relevant_chunk_ids": [
+          "retrieval-hybrid"
+        ]
+      }
+    },
+    {
+      "id": "retrieval-reranker",
+      "prompt": "Reranker 在检索流程中负责什么？",
+      "inputs": {
+        "query_id": "retrieval-reranker"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-retrieval"
+        ],
+        "relevant_chunk_ids": [
+          "retrieval-reranker"
+        ]
+      }
+    },
+    {
+      "id": "retrieval-citation",
+      "prompt": "PDF 引用应保留哪些定位信息？",
+      "inputs": {
+        "query_id": "retrieval-citation"
+      },
+      "expected": {
+        "relevant_document_ids": [
+          "public-retrieval"
+        ],
+        "relevant_chunk_ids": [
+          "retrieval-citation"
+        ]
+      }
+    }
+  ]
+}

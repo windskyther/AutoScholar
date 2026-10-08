@@ -1007,7 +1007,7 @@ Phase 10 建立统一的 RAG、Research、Tool、Coding、Experiment 与端到�
 
 运行器每次新建 `eval-<UUID>` 目录，输出 `manifest.json`、`cases.jsonl`、`summary.json` 与 `evaluation_report.md`，记录数据摘要、适配器/资源摘要、代码版本及工作区是否有未提交修改、种子、重复次数和逐用例耗时。失败、超时和取消均保留记录；错误不输出异常原文或提示内容。取消后保存部分报告并继续向调用者传播取消，不自动恢复或重跑。
 
-规则检查通过率与端到端任务成功率分别统计；所有计划执行的用例保留在检查通过率分母中。指标均值展示实际计分/计划数量，缺失用量及没有价格依据的费用保持未知。实际供应商 Token 与预算保护计数分开，不重复累加根/子任务。当前基础 CLI 只提供 `validate`；可直接运行的 RAG 夹具与 `run` 入口在 10B 补齐。
+规则检查通过率与端到端任务成功率分别统计；所有计划执行的用例保留在检查通过率分母中。指标均值展示实际计分/计划数量，缺失用量及没有价格依据的费用保持未知。实际供应商 Token 与预算保护计数分开。`validate` 校验数据契约，10B 的 `run` 提供可直接执行的离线 RAG 夹具。实际端到端用量归集适配器仍待 10E 实现。
 
 ```powershell
 Set-Location D:\98281\deepscholar
@@ -1015,6 +1015,26 @@ Set-Location D:\98281\deepscholar
 ```
 
 评测运行记录应保存至被 Git 忽略的 `data/evaluation/`，不提交实际运行数据、密钥、`.env` 或设计文档。新入口不自动加载应用 Settings 或 `.env`。后续真实组件及付费模式不会隐式启用；CI/CD、正式部署与全局安全加固仍留给 Phase 11。
+
+### 10B：RAG 计分与公开排序回放
+
+新增 20 条自编公开查询及独立文档/chunk 标签，详见 [评测数据说明](benchmarks/README.md)。默认回放 Dense、Sparse、Hybrid、Hybrid＋Reranker 四种**预设排序标签**，共 80 条记录；这些不是实际算法的检索输出，也不证明语义质量、供应商能力或某种模式优于另一种。原始文本和排序均是公开工程夹具，不来自私有设计文档。
+
+```powershell
+Set-Location D:\98281\deepscholar
+.venv\Scripts\python.exe -m autoscholar.evaluation validate --dataset benchmarks/rag/public_v1.json
+if ($LASTEXITCODE -ne 0) { throw '评测数据无效' }
+.venv\Scripts\python.exe -m autoscholar.evaluation run
+if ($LASTEXITCODE -ne 0) { throw '离线评测失败；检查本轮报告' }
+```
+
+`run` 支持 `--modes dense hybrid`、`--ks 1 5 10`、`--repeats 2`、`--seed 42` 和 `--timeout 30`；可用 `--output-root data/evaluation/custom` 分组保存。CLI 只允许 `--profile offline`，输出必须留在本项目 `data/evaluation/` 中，不读取 `.env`、不初始化 HTTP 客户端、数据库或模型权重，也不调用 LLM、检索供应商或训练。退出码 0 表示检查通过，1 表示存在失败/超时/运行错误，2 表示配置或 IO 错误，130 表示用户取消。两轮重复的实际种子分别记录，按 32 位范围递增；重复回放不代表两个独立模型样本。
+
+指标分别输出文档级和 chunk 级 Recall@K、HitRate@K、MRR 与 NDCG@K。K 以实际返回的 chunk 位置计数，文档身份投影到这些位置；重复 ID 消耗排名位置但仅首次获得相关性增益，避免重复结果抬高 NDCG。MRR 截止最大 K；没有对应级别的标签时不计分，不补 0。旧 JSONL 入口保留 chunk 优先、缺失时按文档计分的兼容字段，并新增独立 `document_metrics` / `chunk_metrics` 及各自样本数；其旧式混合均值不能当成同一粒度的指标。
+
+提供显式注入检索器的 RAG 适配器，但不会自动创建检索器；通用运行器默认 `offline` 拒绝注入组件，调用方需显式指定 `injected` 并自行建立受控组件。新 CLI 不开放该模式。注入组件的 Embedding/供应商用量保持未知，不从检索结果推算费用。真实检索、Research/Tool、Coding/Experiment、端到端、消融和全阶段验收仍未完成，不将 10A/10B 当作 Phase 10 总验收。
+
+2026-10-08 验证：新增 **58 项评测基础/RAG 测试**通过；完整后端 **455 passed、3 skipped**，Ruff、mypy（183 文件）通过。CLI 默认 80 条回放及 `--ks 1 5 10 --repeats 2` 的 160 条回放均通过，实际外部 API 调用为 0。覆盖标准答案隔离、错误/超时/取消收尾、重复计分、跨项目结果、非法配置拒绝、失败退出码、种子范围、高精度计时和报告汇总。跳过项仍是未启用的旧 Compose smoke 与 Windows 符号链接权限限制；本轮未重跑浏览器或 Docker 整栈，未切换正常部署、迁移现有数据库或调用真实模型。
 
 ## 开发路线
 

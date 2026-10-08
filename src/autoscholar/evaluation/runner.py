@@ -77,19 +77,18 @@ def _git_state(repo_root: Path) -> tuple[str | None, bool | None]:
 async def _case(
     adapter: EvaluationAdapter, case: BenchmarkCase, configuration: RunConfiguration, repeat: int
 ) -> CaseResult:
-    started = time.monotonic()
+    started = time.perf_counter()
     observation: Observation | None = None
     score: ScoreCard | None = None
     status: CaseStatus = "error"
     reason: CaseReason | None = "adapter_error"
+    seed = (configuration.seed + repeat - 1) % (2**32)
     try:
         # Gold labels are never passed to the execution method. Per-run copies prevent
         # adapters from modifying the dataset or contaminating later variants/repeats.
         async with asyncio.timeout(configuration.case_timeout_seconds):
             observation = Observation.model_validate(
-                await adapter.execute(
-                    case.prompt, deepcopy(case.inputs), seed=configuration.seed + repeat - 1
-                )
+                await adapter.execute(case.prompt, deepcopy(case.inputs), seed=seed)
             )
             score = ScoreCard.model_validate(adapter.score(observation, deepcopy(case.expected)))
             if score.task_success is not None and adapter.identity.category != "end_to_end":
@@ -109,9 +108,10 @@ async def _case(
         category=adapter.identity.category,
         adapter=adapter.identity,
         repeat=repeat,
+        seed=seed,
         status=status,
         reason=reason,
-        duration_ms=round((time.monotonic() - started) * 1000, 3),
+        duration_ms=round((time.perf_counter() - started) * 1000, 3),
         score=score,
         usage=observation.usage if observation else MeasuredUsage(),
         input_sha256=payload_digest({"prompt": case.prompt, "inputs": case.inputs}),
@@ -133,6 +133,8 @@ async def run_evaluation(
     if len({adapter.identity.variant for adapter in adapters}) != len(adapters):
         raise ValueError("Adapter variant IDs must be unique")
     for adapter in adapters:
+        if configuration.profile == "offline" and adapter.identity.execution != "fixture":
+            raise ValueError("Offline runs only accept known fixture adapters")
         if adapter.identity.category != suite.category:
             raise ValueError("Adapter and dataset categories differ")
         for case in suite.cases:

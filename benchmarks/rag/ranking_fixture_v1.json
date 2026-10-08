@@ -1,0 +1,1131 @@
+{
+  "schema_version": 1,
+  "suite_id": "rag-public-v1",
+  "description": "Fixed ranking replay, not an implementation of Dense, BM25, Hybrid or reranking. Balanced artificial rank positions avoid implying any algorithm is better. Repeated IDs deliberately exercise duplicate handling.",
+  "chunks": [
+    {
+      "id": "mnist-subset",
+      "document_id": "public-mnist",
+      "text": "The CPU acceptance experiment uses 2048 training samples and 1024 test samples."
+    },
+    {
+      "id": "mnist-epochs",
+      "document_id": "public-mnist",
+      "text": "The small MNIST acceptance comparison trains for two epochs."
+    },
+    {
+      "id": "mnist-seed",
+      "document_id": "public-mnist",
+      "text": "The acceptance specification fixes the random seed to 42."
+    },
+    {
+      "id": "mnist-batch",
+      "document_id": "public-mnist",
+      "text": "The acceptance specification uses batch size 64."
+    },
+    {
+      "id": "mnist-comparison",
+      "document_id": "public-mnist",
+      "text": "The experiment compares an MLP with a CNN; a lower CNN accuracy is not itself an engineering failure."
+    },
+    {
+      "id": "sandbox-network",
+      "document_id": "public-sandbox",
+      "text": "Experiment code runs in a Docker sandbox with networking disabled."
+    },
+    {
+      "id": "sandbox-secrets",
+      "document_id": "public-sandbox",
+      "text": "LLM and search credentials are not provided to the training sandbox."
+    },
+    {
+      "id": "sandbox-timeout",
+      "document_id": "public-sandbox",
+      "text": "A sandbox timeout ends the execution and records a timeout outcome instead of waiting indefinitely."
+    },
+    {
+      "id": "sandbox-source",
+      "document_id": "public-sandbox",
+      "text": "Compare the source snapshot SHA-256 with the registered source digest before trusting the experiment."
+    },
+    {
+      "id": "sandbox-artifacts",
+      "document_id": "public-sandbox",
+      "text": "Verify both the registered byte length and SHA-256 of an artifact before exporting it."
+    },
+    {
+      "id": "workflow-approval",
+      "document_id": "public-workflow",
+      "text": "Approval leaves a task paused. Resuming it requires a separate explicit control action."
+    },
+    {
+      "id": "workflow-idempotency",
+      "document_id": "public-workflow",
+      "text": "Confirm the original submission using the same idempotency identifier; do not submit a new identifier blindly."
+    },
+    {
+      "id": "workflow-budget",
+      "document_id": "public-workflow",
+      "text": "An autonomous root task and its children share one budget; summing both would double count usage."
+    },
+    {
+      "id": "workflow-events",
+      "document_id": "public-workflow",
+      "text": "Resume persisted task events after the last delivered sequence using Last-Event-ID."
+    },
+    {
+      "id": "workflow-memory",
+      "document_id": "public-workflow",
+      "text": "Experience memory is project-scoped and must retain verifiable task and review provenance."
+    },
+    {
+      "id": "retrieval-dense",
+      "document_id": "public-retrieval",
+      "text": "Dense retrieval compares dense embedding vectors for queries and stored chunks."
+    },
+    {
+      "id": "retrieval-sparse",
+      "document_id": "public-retrieval",
+      "text": "The configured sparse provider uses the Qdrant/bm25 model."
+    },
+    {
+      "id": "retrieval-hybrid",
+      "document_id": "public-retrieval",
+      "text": "Hybrid retrieval combines dense and sparse retrieval rankings."
+    },
+    {
+      "id": "retrieval-reranker",
+      "document_id": "public-retrieval",
+      "text": "A reranker reorders an existing candidate set before returning the selected results."
+    },
+    {
+      "id": "retrieval-citation",
+      "document_id": "public-retrieval",
+      "text": "PDF evidence preserves document and chunk identifiers, with page and section information where available."
+    }
+  ],
+  "queries": {
+    "mnist-subset": "验收实验使用多少训练和测试样本？",
+    "mnist-epochs": "工程验收默认训练多少轮？",
+    "mnist-seed": "验收实验使用什么随机种子？",
+    "mnist-batch": "验收训练的默认 batch size 是多少？",
+    "mnist-comparison": "验收比较哪两种模型？",
+    "sandbox-network": "实验代码能否直接访问外网？",
+    "sandbox-secrets": "供应商密钥应该放入训练沙箱吗？",
+    "sandbox-timeout": "执行超过沙箱时间上限时应如何处理？",
+    "sandbox-source": "如何验证实验使用的是交接的源码？",
+    "sandbox-artifacts": "如何确认报告文件未被修改？",
+    "workflow-approval": "批准实验后会立即自动恢复任务吗？",
+    "workflow-idempotency": "任务提交回执丢失后如何避免重复任务？",
+    "workflow-budget": "父任务和子任务的预算应该怎样统计？",
+    "workflow-events": "事件流中断后从哪里继续读取？",
+    "workflow-memory": "不同项目的经验记忆是否应该混用？",
+    "retrieval-dense": "Dense 检索主要使用哪种表示？",
+    "retrieval-sparse": "当前稀疏检索配置使用什么模型？",
+    "retrieval-hybrid": "Hybrid 检索组合哪些检索信号？",
+    "retrieval-reranker": "Reranker 在检索流程中负责什么？",
+    "retrieval-citation": "PDF 引用应保留哪些定位信息？"
+  },
+  "rankings": {
+    "mnist-subset": {
+      "dense": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "mnist-subset",
+        "sandbox-artifacts"
+      ],
+      "sparse": [
+        "mnist-epochs",
+        "mnist-subset",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "mnist-epochs",
+        "sandbox-artifacts"
+      ],
+      "hybrid": [
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-subset",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "mnist-epochs",
+        "sandbox-artifacts"
+      ],
+      "hybrid_rerank": [
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-subset",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "mnist-epochs",
+        "sandbox-artifacts"
+      ]
+    },
+    "mnist-epochs": {
+      "dense": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "mnist-seed",
+        "mnist-epochs",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-epochs",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "hybrid_rerank": [
+        "mnist-epochs",
+        "mnist-subset",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ]
+    },
+    "mnist-seed": {
+      "dense": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-batch",
+        "mnist-seed",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "hybrid": [
+        "mnist-seed",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "mnist-seed",
+        "mnist-epochs",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ]
+    },
+    "mnist-batch": {
+      "dense": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "sparse": [
+        "mnist-batch",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "mnist-batch",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-batch",
+        "mnist-seed",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ]
+    },
+    "mnist-comparison": {
+      "dense": [
+        "mnist-comparison",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "mnist-comparison",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-comparison",
+        "mnist-seed",
+        "mnist-batch",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-comparison",
+        "mnist-batch",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ]
+    },
+    "sandbox-network": {
+      "dense": [
+        "mnist-subset",
+        "sandbox-network",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "mnist-subset",
+        "sandbox-artifacts"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "mnist-epochs",
+        "sandbox-network",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "mnist-subset",
+        "sandbox-artifacts"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "sandbox-network",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "mnist-subset",
+        "sandbox-artifacts"
+      ],
+      "hybrid_rerank": [
+        "sandbox-network",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-network",
+        "sandbox-artifacts"
+      ]
+    },
+    "sandbox-secrets": {
+      "dense": [
+        "mnist-subset",
+        "mnist-epochs",
+        "sandbox-secrets",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "sandbox-secrets",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "hybrid": [
+        "sandbox-secrets",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "sandbox-secrets",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-timeout",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ]
+    },
+    "sandbox-timeout": {
+      "dense": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "sandbox-timeout",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "sparse": [
+        "sandbox-timeout",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "sandbox-timeout",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "mnist-epochs",
+        "sandbox-timeout",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-source",
+        "sandbox-artifacts"
+      ]
+    },
+    "sandbox-source": {
+      "dense": [
+        "sandbox-source",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-artifacts"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "sandbox-source",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-artifacts"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "mnist-epochs",
+        "sandbox-source",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-artifacts"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "sandbox-source",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-artifacts"
+      ]
+    },
+    "sandbox-artifacts": {
+      "dense": [
+        "mnist-subset",
+        "sandbox-artifacts",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "mnist-epochs",
+        "sandbox-artifacts",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "sandbox-artifacts",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid_rerank": [
+        "sandbox-artifacts",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ]
+    },
+    "workflow-approval": {
+      "dense": [
+        "mnist-subset",
+        "mnist-epochs",
+        "workflow-approval",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "mnist-subset",
+        "sandbox-source"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "workflow-approval",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "mnist-subset",
+        "sandbox-source"
+      ],
+      "hybrid": [
+        "workflow-approval",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "workflow-approval",
+        "sandbox-source"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "workflow-approval",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "mnist-subset",
+        "sandbox-source"
+      ]
+    },
+    "workflow-idempotency": {
+      "dense": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "workflow-idempotency",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "sparse": [
+        "workflow-idempotency",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "workflow-idempotency",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "mnist-epochs",
+        "workflow-idempotency",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ]
+    },
+    "workflow-budget": {
+      "dense": [
+        "workflow-budget",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "workflow-budget",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "mnist-epochs",
+        "workflow-budget",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "workflow-budget",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ]
+    },
+    "workflow-events": {
+      "dense": [
+        "mnist-subset",
+        "workflow-events",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "mnist-epochs",
+        "workflow-events",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "workflow-events",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid_rerank": [
+        "workflow-events",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ]
+    },
+    "workflow-memory": {
+      "dense": [
+        "mnist-subset",
+        "mnist-epochs",
+        "workflow-memory",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "workflow-memory",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid": [
+        "workflow-memory",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "workflow-memory",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ]
+    },
+    "retrieval-dense": {
+      "dense": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "retrieval-dense",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "mnist-subset",
+        "sandbox-source"
+      ],
+      "sparse": [
+        "retrieval-dense",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "retrieval-dense",
+        "sandbox-source"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "retrieval-dense",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "mnist-subset",
+        "sandbox-source"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "mnist-epochs",
+        "retrieval-dense",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "mnist-subset",
+        "sandbox-source"
+      ]
+    },
+    "retrieval-sparse": {
+      "dense": [
+        "retrieval-sparse",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "retrieval-sparse",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "mnist-epochs",
+        "retrieval-sparse",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "retrieval-sparse",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ]
+    },
+    "retrieval-hybrid": {
+      "dense": [
+        "mnist-subset",
+        "retrieval-hybrid",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "mnist-epochs",
+        "retrieval-hybrid",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "retrieval-hybrid",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid_rerank": [
+        "retrieval-hybrid",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ]
+    },
+    "retrieval-reranker": {
+      "dense": [
+        "mnist-subset",
+        "mnist-epochs",
+        "retrieval-reranker",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "sparse": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "retrieval-reranker",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid": [
+        "retrieval-reranker",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "retrieval-reranker",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ]
+    },
+    "retrieval-citation": {
+      "dense": [
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "retrieval-citation",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "sparse": [
+        "retrieval-citation",
+        "mnist-subset",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid": [
+        "mnist-subset",
+        "retrieval-citation",
+        "mnist-epochs",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ],
+      "hybrid_rerank": [
+        "mnist-subset",
+        "mnist-epochs",
+        "retrieval-citation",
+        "mnist-seed",
+        "mnist-batch",
+        "mnist-comparison",
+        "sandbox-network",
+        "sandbox-secrets",
+        "sandbox-timeout",
+        "sandbox-source"
+      ]
+    }
+  }
+}

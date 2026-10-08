@@ -4,6 +4,7 @@ from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 from statistics import mean
+from typing import TypedDict
 
 from autoscholar.evaluation.models import CaseResult, MeasuredUsage, RunManifest
 
@@ -12,26 +13,41 @@ def _cell(value: object) -> str:
     return str(value).replace("|", "\\|").replace("\n", " ").replace("\r", " ")
 
 
+class MetricStatistics(TypedDict):
+    mean: float | None
+    scored: int
+    planned: int
+
+
+def _metrics(cases: Sequence[CaseResult], planned: int) -> dict[str, MetricStatistics]:
+    names = sorted({key for result in cases if result.score for key in result.score.metrics})
+    result: dict[str, MetricStatistics] = {}
+    for name in names:
+        numbers = [
+            score.metrics[name]
+            for case in cases
+            if (score := case.score) and score.metrics.get(name) is not None
+        ]
+        known = [number for number in numbers if number is not None]
+        result[name] = {
+            "mean": mean(known) if known else None,
+            "scored": len(known),
+            "planned": planned,
+        }
+    return result
+
+
+def _display(value: int | float | None) -> str:
+    return "unknown" if value is None else f"{value:.6g}"
+
+
 def summarize(
     manifest: RunManifest, results: Sequence[CaseResult], planned_per_variant: int
 ) -> dict[str, object]:
     groups: list[dict[str, object]] = []
     for adapter in manifest.adapters:
         cases = [result for result in results if result.adapter.variant == adapter.variant]
-        metrics = sorted({key for result in cases if result.score for key in result.score.metrics})
-        metric_summary: dict[str, object] = {}
-        for name in metrics:
-            values = [
-                result.score.metrics[name]
-                for result in cases
-                if result.score and result.score.metrics.get(name) is not None
-            ]
-            numbers = [value for value in values if value is not None]
-            metric_summary[name] = {
-                "mean": mean(numbers) if numbers else None,
-                "scored": len(numbers),
-                "planned": planned_per_variant,
-            }
+        metric_summary = _metrics(cases, planned_per_variant)
         usage: dict[str, int | float | None] = {}
         for key in MeasuredUsage.model_fields:
             usage_values = [getattr(result.usage, key) for result in cases]
@@ -86,6 +102,8 @@ def write_report(
         "",
         f"Run: `{manifest.run_id}`",
         f"Suite: `{manifest.suite_id}`; state: `{manifest.state}`",
+        f"Profile: `{manifest.configuration.profile}`; "
+        f"seed: `{manifest.configuration.seed}`; repeats: `{manifest.configuration.repeats}`",
         f"Code: `{manifest.git_revision or 'unknown'}`; dirty: `{manifest.git_dirty}`",
         f"Dataset SHA-256: `{manifest.dataset_sha256}`",
         "",
@@ -99,6 +117,8 @@ def write_report(
         "Durations include execution and scoring, exclude environment setup and report writing. "
         "Small-sample differences are descriptive, not statistically significant findings.",
         "Measured usage is separate from budget counters. No pricing assumptions are made.",
+        "A dirty working tree cannot be reproduced from the Git revision alone. "
+        "Use a clean committed source tree for comparable benchmark results.",
         "",
         "## Coverage",
         "",
@@ -117,10 +137,42 @@ def write_report(
     lines.extend(
         [
             "",
+            "## Aggregated metrics",
+            "",
+            "Means describe the scored cases only; the coverage column exposes missing results. "
+            "Fixture mode labels do not represent measured retrieval algorithms.",
+            "",
+            "| Variant | Metric | Mean | Scored / planned |",
+            "|---|---|---:|---:|",
+        ]
+    )
+    for adapter in manifest.adapters:
+        cases = [result for result in results if result.adapter.variant == adapter.variant]
+        for name, metric in _metrics(cases, planned).items():
+            lines.append(
+                f"| {adapter.variant} | {name} | {_display(metric['mean'])} | "
+                f"{metric['scored']} / {metric['planned']} |"
+            )
+    lines.extend(
+        [
+            "",
+            "## Latency",
+            "",
+            "| Variant | Mean duration ms | Recorded / planned |",
+            "|---|---:|---:|",
+        ]
+    )
+    for adapter in manifest.adapters:
+        cases = [result for result in results if result.adapter.variant == adapter.variant]
+        duration = mean(result.duration_ms for result in cases) if cases else None
+        lines.append(f"| {adapter.variant} | {_display(duration)} | {len(cases)} / {planned} |")
+    lines.extend(
+        [
+            "",
             "## Case results",
             "",
-            "| Variant | Case | Repeat | Outcome | Duration ms | Checks | Metrics |",
-            "|---|---|---:|---|---:|---|---|",
+            "| Variant | Case | Repeat | Outcome | Duration ms | Checks |",
+            "|---|---|---:|---|---:|---|",
         ]
     )
     for result in results:
@@ -129,15 +181,10 @@ def write_report(
             if result.score
             else "unknown"
         )
-        metrics = (
-            ", ".join(f"{key}={value}" for key, value in result.score.metrics.items())
-            if result.score
-            else "unknown"
-        )
         lines.append(
             f"| {result.adapter.variant} | {result.case_id} | {result.repeat} | "
             f"{result.status} | {result.duration_ms} | "
-            f"{_cell(checks)} | {_cell(metrics)} |"
+            f"{_cell(checks)} |"
         )
     lines.extend(
         [
