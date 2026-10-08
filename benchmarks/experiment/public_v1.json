@@ -1,0 +1,12 @@
+{
+  "schema_version":1,"id":"public-experiment-v1","category":"experiment",
+  "description":"Five bounded real CPU MNIST comparisons: two accepted runs, malformed metrics, mismatched metadata and structurally valid fabricated accuracy detected by checkpoint recomputation.",
+  "provenance":"Original public fault fixtures around trusted local templates. Uses cached public MNIST read-only, no downloads or paid providers. Checkpoints deserialize only inside Docker with weights_only=True.",
+  "cases":[
+    {"id":"mnist-seed42","prompt":"在固定 MNIST 小子集上训练 MLP/CNN 并独立验证检查点。","inputs":{"query_id":"mnist-seed42"},"expected":{"status":"accepted","artifact_count":10}},
+    {"id":"mnist-seed7","prompt":"使用种子 7 验证另一组真实训练、指标和产物。","inputs":{"query_id":"mnist-seed7"},"expected":{"status":"accepted","artifact_count":10}},
+    {"id":"invalid-metrics","prompt":"训练后产生缺失 runs 的指标文件时，必须拒绝发布。","inputs":{"query_id":"invalid-metrics"},"expected":{"status":"service_rejected","error_code":"experiment_metrics_invalid","artifact_count":0}},
+    {"id":"wrong-seed","prompt":"训练指标与配置种子不符时，必须拒绝发布。","inputs":{"query_id":"wrong-seed"},"expected":{"status":"service_rejected","error_code":"experiment_metrics_invalid","artifact_count":0}},
+    {"id":"fabricated-accuracy","prompt":"指标格式正确但准确率伪造时，检查点复算必须识别。","inputs":{"query_id":"fabricated-accuracy"},"expected":{"status":"oracle_rejected","error_code":"checkpoint_mismatch","artifact_count":10}}
+  ]
+}

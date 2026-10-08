@@ -1,0 +1,17 @@
+{
+  "schema_version":1,"id":"public-coding-v1","category":"coding",
+  "description":"Ten real local CodingAgent flows: six functions, two successful repairs, repair exhaustion and deceptive self-tests detected by a separate Docker oracle.",
+  "provenance":"Original public sources and held-out checks. The scripted author never receives oracle vectors or suite expected labels. Code executes only through an explicitly injected Docker controller, never on the host.",
+  "cases":[
+    {"id":"sum","prompt":"实现 sum_values(values)，返回数值列表之和并编写测试。","inputs":{"query_id":"sum"},"expected":{"status":"accepted","compile_passed":true,"tests_passed":true,"repairs":0}},
+    {"id":"mean","prompt":"实现 mean(values)，空列表抛出 ValueError。","inputs":{"query_id":"mean"},"expected":{"status":"accepted","compile_passed":true,"tests_passed":true,"repairs":0}},
+    {"id":"clamp","prompt":"实现 clamp(value, low, high)，并拒绝倒置边界。","inputs":{"query_id":"clamp"},"expected":{"status":"accepted","compile_passed":true,"tests_passed":true,"repairs":0}},
+    {"id":"dot","prompt":"实现 dot(left, right)，长度不一致抛出 ValueError。","inputs":{"query_id":"dot"},"expected":{"status":"accepted","compile_passed":true,"tests_passed":true,"repairs":0}},
+    {"id":"factorial","prompt":"实现 factorial(n)，拒绝负数和非整数。","inputs":{"query_id":"factorial"},"expected":{"status":"accepted","compile_passed":true,"tests_passed":true,"repairs":0}},
+    {"id":"whitespace","prompt":"实现 normalize(text)，压缩多余空白字符。","inputs":{"query_id":"whitespace"},"expected":{"status":"accepted","compile_passed":true,"tests_passed":true,"repairs":0}},
+    {"id":"syntax-repair","prompt":"修复 sum_values 的语法错误并通过独立检查。","inputs":{"query_id":"syntax-repair"},"expected":{"status":"accepted","compile_passed":true,"tests_passed":true,"repairs":1}},
+    {"id":"logic-repair","prompt":"修复 sum_values 的错误结果并通过独立检查。","inputs":{"query_id":"logic-repair"},"expected":{"status":"accepted","compile_passed":true,"tests_passed":true,"repairs":1}},
+    {"id":"repair-exhausted","prompt":"验证无法修复的语法错误不会被宣告成功。","inputs":{"query_id":"repair-exhausted"},"expected":{"status":"agent_failed","error_code":"code_repair_exhausted","compile_passed":false,"tests_passed":false,"repairs":1}},
+    {"id":"deceptive-tests","prompt":"验证恒定返回零却只测试零的 sum_values 不通过独立验收。","inputs":{"query_id":"deceptive-tests"},"expected":{"status":"oracle_rejected","error_code":"oracle_mismatch","compile_passed":true,"tests_passed":true,"repairs":0}}
+  ]
+}

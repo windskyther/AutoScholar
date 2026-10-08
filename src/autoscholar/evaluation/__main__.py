@@ -1,10 +1,11 @@
-"""Offline evaluation entry point. Never autoload application .env/settings."""
+"""Bounded evaluation entry point. Never autoload application .env/settings."""
 
 import argparse
 import asyncio
 import json
 from pathlib import Path
 
+from autoscholar.coding.sandbox import SandboxError
 from autoscholar.evaluation.datasets import load_suite
 from autoscholar.evaluation.models import RunConfiguration
 
@@ -12,7 +13,18 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 async def _run(args: argparse.Namespace) -> int:
+    from autoscholar.evaluation.coding_adapter import (
+        CodingFixture,
+        CodingOracleFixture,
+        InjectedCodingAdapter,
+    )
     from autoscholar.evaluation.component_fixture import load_fixture
+    from autoscholar.evaluation.docker_sandbox import DockerEvaluationSandbox
+    from autoscholar.evaluation.experiment_adapter import (
+        ExperimentFixture,
+        InjectedExperimentAdapter,
+    )
+    from autoscholar.evaluation.isolated_components import sandbox_resources
     from autoscholar.evaluation.rag_adapter import ReplayRAGAdapter, load_ranking_fixture
     from autoscholar.evaluation.research_adapter import FixtureResearchAdapter, ResearchFixture
     from autoscholar.evaluation.runner import EvaluationAdapter, run_evaluation
@@ -28,6 +40,8 @@ async def _run(args: argparse.Namespace) -> int:
         "rag": "ranking_fixture_v1.json",
         "research": "provider_fixture_v1.json",
         "tool": "call_fixture_v1.json",
+        "coding": "source_fixture_v1.json",
+        "experiment": "experiment_fixture_v1.json",
     }.get(category)
     if fixture_name is None:
         raise ValueError("Evaluation category is not implemented")
@@ -43,6 +57,15 @@ async def _run(args: argparse.Namespace) -> int:
         case_timeout_seconds=args.timeout,
     )
     adapters: list[EvaluationAdapter]
+    if category in ("coding", "experiment"):
+        if args.profile != "injected" or not args.sandbox_container:
+            raise ValueError(
+                "Coding/Experiment require explicit injected Docker controller; no host fallback"
+            )
+        if args.ks is not None or args.modes not in (None, ["baseline"]):
+            raise ValueError("Isolated component evaluations use baseline without K")
+    elif args.profile != "offline" or args.sandbox_container or args.oracle:
+        raise ValueError("Only Coding/Experiment expose sandbox injection")
     if category == "rag":
         fixture, fixture_digest = load_ranking_fixture(fixture_path)
         modes = args.modes or ["dense", "sparse", "hybrid", "hybrid_rerank"]
@@ -53,6 +76,48 @@ async def _run(args: argparse.Namespace) -> int:
             for mode in modes
         ]
         fixture_suite = fixture.suite_id
+    elif category == "coding":
+        coding, fixture_digest = load_fixture(fixture_path, CodingFixture)
+        oracle_path = args.oracle or REPO_ROOT / "benchmarks/coding/oracle_fixture_v1.json"
+        oracle, oracle_digest = load_fixture(oracle_path, CodingOracleFixture)
+        sandbox = DockerEvaluationSandbox(args.sandbox_container)
+        resources = sandbox_resources(await sandbox.health(), dataset=False)
+        workspace_root = (root / "component-workspaces").resolve()
+        if not workspace_root.is_relative_to(root):
+            raise ValueError("Component workspace escaped evaluation output scope")
+        adapters = [
+            InjectedCodingAdapter(
+                coding,
+                oracle,
+                fixture_sha256=fixture_digest,
+                oracle_sha256=oracle_digest,
+                sandbox=sandbox,
+                resources=resources,
+                workspace_root=workspace_root,
+            )
+        ]
+        fixture_suite = coding.suite_id
+    elif category == "experiment":
+        if args.oracle:
+            raise ValueError(
+                "Experiment uses a fixed checkpoint oracle, not arbitrary oracle files"
+            )
+        experiment, fixture_digest = load_fixture(fixture_path, ExperimentFixture)
+        sandbox = DockerEvaluationSandbox(args.sandbox_container)
+        resources = sandbox_resources(await sandbox.health(), dataset=True)
+        workspace_root = (root / "component-workspaces").resolve()
+        if not workspace_root.is_relative_to(root):
+            raise ValueError("Component workspace escaped evaluation output scope")
+        adapters = [
+            InjectedExperimentAdapter(
+                experiment,
+                fixture_sha256=fixture_digest,
+                sandbox=sandbox,
+                resources=resources,
+                workspace_root=workspace_root,
+            )
+        ]
+        fixture_suite = experiment.suite_id
     else:
         if args.ks is not None or args.modes not in (None, ["baseline"]):
             raise ValueError("Research/Tool only support baseline; K is a RAG option")
@@ -82,8 +147,8 @@ async def _run(args: argparse.Namespace) -> int:
     )
     print(f"Evaluation {'checks failed' if failed else 'checks passed'}: {directory}")
     print(
-        f"Profile: offline {category} fixtures; external API calls: 0. "
-        "These are scorer/local engineering results, NOT real retrieval or model performance. "
+        f"Profile: {args.profile} {category}; external API calls: 0. "
+        "Scripted responses do NOT measure real LLM ability; RAG replay is NOT real retrieval. "
         "Expected refusals passing checks are not completed research/numerical tasks."
     )
     return 1 if failed else 0
@@ -95,10 +160,12 @@ def main() -> int:
     validate = commands.add_parser("validate", help="Validate a versioned benchmark dataset")
     validate.add_argument("--dataset", type=Path, required=True)
     run = commands.add_parser("run", help="Run controlled public fixtures (no provider requests)")
-    run.add_argument("--category", choices=["rag", "research", "tool"])
+    run.add_argument("--category", choices=["rag", "research", "tool", "coding", "experiment"])
     run.add_argument("--dataset", type=Path)
     run.add_argument("--fixture", type=Path)
-    run.add_argument("--profile", choices=["offline"], default="offline")
+    run.add_argument("--profile", choices=["offline", "injected"], default="offline")
+    run.add_argument("--sandbox-container", help="Explicit autoscholar-eval-* dedicated controller")
+    run.add_argument("--oracle", type=Path, help="Separate held-out Coding oracle fixture")
     run.add_argument(
         "--modes",
         nargs="+",
@@ -114,7 +181,7 @@ def main() -> int:
         if args.command == "run":
             return asyncio.run(_run(args))
         suite, digest = load_suite(args.dataset)
-    except (OSError, ValueError):
+    except (OSError, ValueError, SandboxError):
         print(
             "Evaluation configuration/IO invalid. Check schema, case/query bindings, "
             "supported categories, K values and data/evaluation output scope."

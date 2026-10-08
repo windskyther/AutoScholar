@@ -1,0 +1,10 @@
+{
+  "schema_version":1,"suite_id":"public-experiment-v1",
+  "scripts":{
+    "mnist-seed42":{"prompt":"在固定 MNIST 小子集上训练 MLP/CNN 并独立验证检查点。","specification":{"seed":42,"epochs":1,"train_samples":128,"test_samples":128}},
+    "mnist-seed7":{"prompt":"使用种子 7 验证另一组真实训练、指标和产物。","specification":{"seed":7,"epochs":1,"train_samples":128,"test_samples":128}},
+    "invalid-metrics":{"prompt":"训练后产生缺失 runs 的指标文件时，必须拒绝发布。","specification":{"seed":42,"epochs":1,"train_samples":128,"test_samples":128},"fault":"invalid_metrics"},
+    "wrong-seed":{"prompt":"训练指标与配置种子不符时，必须拒绝发布。","specification":{"seed":42,"epochs":1,"train_samples":128,"test_samples":128},"fault":"wrong_seed"},
+    "fabricated-accuracy":{"prompt":"指标格式正确但准确率伪造时，检查点复算必须识别。","specification":{"seed":42,"epochs":1,"train_samples":128,"test_samples":128},"fault":"tampered_accuracy"}
+  }
+}
