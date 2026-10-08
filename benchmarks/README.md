@@ -1,9 +1,10 @@
 # AutoScholar-Eval benchmark contracts
 
 Versioned suites separate `inputs` from `expected` gold labels. Execution adapters receive only
-the prompt and inputs. All included Phase 10A/10B cases are self-authored public engineering
+the prompt and inputs. All included Phase 10A/10B/10C cases are self-authored public engineering
 fixtures; no provider requests, private design documents, credentials or runtime records are
-included. Other evaluation categories are planned, not implemented by the CLI yet.
+included. The CLI implements RAG replay and controlled Research/Tool component execution;
+Coding/Experiment, E2E and ablations remain unfinished.
 
 ## Public RAG scoring suite
 
@@ -25,7 +26,8 @@ Optional arguments: `--modes dense sparse hybrid hybrid_rerank`, `--ks 1 5 10`, 
 `--seed 42`, `--timeout 30`, and `--output-root data/evaluation/custom`. Duplicate modes, more
 than 10 distinct cutoffs, nonpositive cutoffs, cutoffs above 50 and invalid query/gold bindings
 are rejected before starting a run. This CLI supports only `--profile offline` and does not
-load `.env`, provision models, connect to a database, or accept dynamic execution plugins.
+load `.env`, provision models, connect to the application database, or accept dynamic plugins.
+Research uses a fresh in-memory SQLite database for each case, with development `aiosqlite`.
 
 Results go into a fresh ignored `data/evaluation/…/eval-<UUID>` directory. Four modes over 20
 cases produce 80 records at the default repeat count. Exit codes: 0 checks passed, 1 one or
@@ -49,9 +51,63 @@ failure is reported even though the metric calculation completed. Per-case score
 outcomes are kept. Metric averages always state scored/planned coverage. No E2E task-success
 rate or monetary cost is inferred from a successful RAG replay.
 
+## Research and Tool component suites
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation run --category research --repeats 2
+if ($LASTEXITCODE -ne 0) { throw 'Research checks failed' }
+.venv\Scripts\python.exe -m autoscholar.evaluation run --category tool --repeats 2
+if ($LASTEXITCODE -ne 0) { throw 'Tool checks failed' }
+```
+
+`--category` chooses the bundled dataset/fixture defaults. An explicit `--dataset` can infer
+the category; a conflicting explicit category is rejected. Research/Tool only use `baseline`;
+RAG modes and `--ks` are rejected rather than silently ignored. Input prompts must match the
+fixture exactly. Source snapshot mismatches and unsafe benchmark input bounds fail preflight.
+
+Research executes the real Planner, query planner, search orchestration, evidence selection,
+citation validation and repository, using scripted provider responses. URLs on `example.org`
+are fictional identifiers, never fetched. Six successful reports exercise language prompts,
+evidence ordering, duplicate search results, duplicate citations and Markdown. Four cases
+expect refusal on missing providers, provider errors, empty evidence and nonexistent E99.
+Provider failures, evidence unavailability and citation protocol errors have separate metrics.
+
+Research scoring is independent of Agent status. Citation validity checks inline IDs against
+persisted evidence and claim mappings. Citation correctness is the fraction of unique
+claim/evidence pairs supported by the explicit gold claim/source annotation, with exact
+source-snapshot SHA-256 binding and whitespace-normalized exact claim presence in the answer,
+with the matching inline marker immediately following that claim. Swapping inline markers
+cannot be masked by a correct structured mapping elsewhere in the report.
+Claim support uses all required annotated claims as its denominator, including missing ones.
+Duplicate references add no credit. Unannotated or changed sources get zero relevance/quality;
+source means use unique selected sources. Empty selections have unknown relevance/quality.
+Quality values (1.0 and 0.8) are illustrative manual fixture annotations exercising aggregation
+and thresholds, **not measured website authority**. Exact annotated claims do not evaluate
+arbitrary paraphrases, negation, uncited extra prose or general entailment. Independent
+adversarial tests prove structurally valid wrong-source/unsupported reports are scored failed.
+
+Tool fixtures predefine the tool name and arguments, then run the real local Calculator after
+the existing Gateway schema validator. Twelve numeric cases and eight expected refusals cover
+arithmetic, powers, functions, forbidden imports/attributes, bad syntax, zero division, bad
+argument shapes and unavailable tools. Selection and arguments are scored separately; numeric
+accuracy requires both plus the expected finite result within an absolute tolerance. Unknown
+tools are not resolved dynamically. No shell, Python execution tool or external tools run.
+The harness bounds expressions to 1000 characters/100 AST nodes and requires literal exponent
+magnitude <=1000 for both `**` and `^`, before the synchronous Calculator executes. This limits
+benchmark inputs and does not certify the production Calculator against arbitrary expressions.
+
+All 30 contract cases can pass while Research completion and Tool execution success each
+remain 0.6: expected refusals are not completed tasks. Tool result accuracy excludes cases
+without an expected numeric answer (coverage 12/20). Research claim support includes missing
+claims in expected failures; citation correctness without any citation is unknown, not perfect.
+Do not interpret scripted selection accuracy as LLM ability. `model_calls` counts actual script
+callbacks, vendor tokens and external calls are zero; monetary cost remains unknown. Raw
+answers, tool output, exception messages and source bodies are not exported to run reports.
+Runtime artifacts remain ignored under `data/evaluation`.
+
 ## Next stages
 
-Research/Tool, Coding/Experiment, E2E, ablation and independent real-component verification
+Coding/Experiment, E2E, ablation and independent real semantic/provider verification
 remain separate Phase 10 modules. The injected RAG adapter accepts an explicitly provisioned
 retriever; it does not create one from environment settings and does not infer its API cost.
 Real-model semantic comparisons require actual labeled corpus retrieval, actual model/resource

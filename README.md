@@ -1032,7 +1032,26 @@ if ($LASTEXITCODE -ne 0) { throw '离线评测失败；检查本轮报告' }
 
 指标分别输出文档级和 chunk 级 Recall@K、HitRate@K、MRR 与 NDCG@K。K 以实际返回的 chunk 位置计数，文档身份投影到这些位置；重复 ID 消耗排名位置但仅首次获得相关性增益，避免重复结果抬高 NDCG。MRR 截止最大 K；没有对应级别的标签时不计分，不补 0。旧 JSONL 入口保留 chunk 优先、缺失时按文档计分的兼容字段，并新增独立 `document_metrics` / `chunk_metrics` 及各自样本数；其旧式混合均值不能当成同一粒度的指标。
 
-提供显式注入检索器的 RAG 适配器，但不会自动创建检索器；通用运行器默认 `offline` 拒绝注入组件，调用方需显式指定 `injected` 并自行建立受控组件。新 CLI 不开放该模式。注入组件的 Embedding/供应商用量保持未知，不从检索结果推算费用。真实检索、Research/Tool、Coding/Experiment、端到端、消融和全阶段验收仍未完成，不将 10A/10B 当作 Phase 10 总验收。
+提供显式注入检索器的 RAG 适配器，但不会自动创建检索器；通用运行器默认 `offline` 拒绝注入组件，调用方需显式指定 `injected` 并自行建立受控组件。新 CLI 不开放该模式。注入组件的 Embedding/供应商用量保持未知，不从检索结果推算费用。真实语义检索比较仍未完成，不将排序回放当作真实检索验收。
+
+### 10C：Research / Tool 本地组件评测
+
+新增 10 个 Research 和 20 个 Tool 公开工程用例，接入统一运行器、重复执行、摘要及 Markdown 报告。运行器不读取 `.env`，不创建真实供应商客户端，不执行外部 API 调用。
+
+Research 用固定原生工具响应及公开搜索夹具驱动真实 `AgentRunner`，每个用例使用独立内存 SQLite；需要已安装开发依赖中的 `aiosqlite`。验证引用编号、正文引用位置、主张与来源的标注绑定、证据快照、证据相关性和来源质量。主张支持采用封闭语料的明确标注及文本匹配，不是通用语义/NLI 判断；质量值是人工工程标注，不代表真实网站信誉。负例确保 Agent 状态成功或引用编号有效不等于内容正确。
+
+Tool 使用预设选择调用真实 Calculator，分别计分工具选择、参数一致性、JSON Schema、执行结果与数值准确度；未知工具不会执行，参数错误不会进入工具。评测层使用现有 Gateway 的 schema 校验，不声称已改造 Agent 的所有工具分发路径。同步计算前限制表达式长度、节点及 `**`/`^` 的字面量指数；这是评测输入边界，不是通用沙箱安全结论。
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation run --category research
+if ($LASTEXITCODE -ne 0) { throw 'Research engineering checks failed' }
+.venv\Scripts\python.exe -m autoscholar.evaluation run --category tool
+if ($LASTEXITCODE -ne 0) { throw 'Tool engineering checks failed' }
+```
+
+Research 包含 6 个有支持的报告及 4 个预期失败（供应商未配置、搜索错误、空证据、无效引用）；Tool 包含 12 个数值答案及 8 个预期拒绝。拒绝路径检查通过不计为任务完成，结果指标及计分覆盖单独展示；脚本回调次数不是真实 LLM 请求次数，费用保持未知。可用 `--repeats 2` 验证重复记录。
+
+10A、10B 排序计分及 10C 本地工程评测已实现；真实供应商/语义能力评测、10D Coding/Experiment、10E 端到端、10F 消融、10G 全阶段验收仍未完成。Phase 10 尚未总验收，不自动合并 `main`。
 
 2026-10-08 验证：新增 **58 项评测基础/RAG 测试**通过；完整后端 **455 passed、3 skipped**，Ruff、mypy（183 文件）通过。CLI 默认 80 条回放及 `--ks 1 5 10 --repeats 2` 的 160 条回放均通过，实际外部 API 调用为 0。覆盖标准答案隔离、错误/超时/取消收尾、重复计分、跨项目结果、非法配置拒绝、失败退出码、种子范围、高精度计时和报告汇总。跳过项仍是未启用的旧 Compose smoke 与 Windows 符号链接权限限制；本轮未重跑浏览器或 Docker 整栈，未切换正常部署、迁移现有数据库或调用真实模型。
 
