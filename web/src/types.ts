@@ -27,7 +27,7 @@ export interface Session {
   status: 'connected'; authentication: 'single_operator_bearer'; api_version: string;
   capabilities: {
     llm_configured: boolean; web_search_configured: boolean; research_backend: string;
-    filesystem_backend: string; experiment_backend: string; task_streaming: boolean; task_controls?: boolean;
+    filesystem_backend: string; experiment_backend: string; task_streaming: boolean; task_controls?: boolean; resource_browser?: boolean;
     document_max_bytes?: number; document_max_pages?: number; budget_limits?: BudgetLimits;
   };
 }
@@ -86,3 +86,24 @@ export interface ApprovalDecision {
   action: ApprovalAction; operation_sha256: string; reason: string;
   specification?: ExperimentSpecification; expected: ExpectedState;
 }
+
+export interface EvidenceResource {
+  id: string; task_id: string; citation_key: string; source_type: string; title: string; url: string | null;
+  authors: string[]; year: number | null; claim: string; excerpt: string; text_truncated: boolean;
+  document_id: string | null; page: number | null; section: string | null;
+}
+export interface ModelRun {
+  model: 'mlp' | 'cnn'; train_loss: number[]; train_accuracy: number[]; test_accuracy: number;
+  parameters: number; duration_seconds: number;
+}
+export interface ExperimentResource {
+  id: string; task_id: string; name: string; status: string; specification: ExperimentSpecification | null;
+  runs: ModelRun[]; winner: 'mlp' | 'cnn' | 'tie' | null; accuracy_delta: number | null; error_code: string | null;
+  created_at: string; started_at: string | null; finished_at: string | null;
+}
+export interface ArtifactResource {
+  id: string; task_id: string; experiment_id: string; type: string; path: string; media_type: string;
+  size_bytes: number; sha256: string; created_at: string; previewable: boolean;
+}
+export interface ResourcePage<T> extends Page<T> { task_id: string }
+export interface ArtifactPreview { task_id: string; artifact_id: string; sha256: string; text: string; truncated: boolean }

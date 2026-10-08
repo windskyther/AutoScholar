@@ -29,9 +29,12 @@ sys.path.insert(0, str(ROOT))
 from autoscholar.agent.database_models import AgentTaskRow, Base  # noqa: E402
 from autoscholar.agent.repository import AgentTaskRepository  # noqa: E402
 from autoscholar.coding.workspace import WorkspaceManager  # noqa: E402
+from autoscholar.core.budget import current_parent  # noqa: E402
 from autoscholar.core.config import Settings  # noqa: E402
 from autoscholar.core.errors import AppError  # noqa: E402
 from autoscholar.core.responses import UTF8JSONResponse  # noqa: E402
+from autoscholar.experiment.artifacts import ArtifactManager  # noqa: E402
+from autoscholar.experiment.models import ExperimentSpecification  # noqa: E402
 from autoscholar.orchestration.checkpoints import digest  # noqa: E402
 from autoscholar.orchestration.durable_models import (  # noqa: E402
     WorkflowApprovalRow,
@@ -93,14 +96,22 @@ def public_pdf(*, blank: bool = False) -> bytes:
 
 
 async def fixture_app(
-    *, writes: bool = False, streams: bool = False, controls: bool = False
+    *, writes: bool = False, streams: bool = False, controls: bool = False, resources: bool = False
 ) -> FastAPI:
     data_root = (ROOT / "data" / "validation").resolve()
     assert data_root.is_relative_to(ROOT.resolve())
     temporary = None
-    if writes or streams or controls:
+    if writes or streams or controls or resources:
         data_root.mkdir(parents=True, exist_ok=True)
-        prefix = "phase9e-" if controls else "phase9d-" if streams else "phase9c-"
+        prefix = (
+            "phase9f-"
+            if resources
+            else "phase9e-"
+            if controls
+            else "phase9d-"
+            if streams
+            else "phase9c-"
+        )
         temporary = TemporaryDirectory(prefix=prefix, dir=data_root)
     temporary_root = Path(temporary.name) if temporary else ROOT / "data" / "phase9-fixture-unused"
     settings = Settings(
@@ -199,6 +210,50 @@ async def fixture_app(
         sandbox_executor=sandbox,
         research_services=[],
     )
+    if resources:
+        parent = current_parent.set("task-a")
+        try:
+            await tasks.create_task(
+                task_id="experiment-child",
+                objective="public",
+                mode="experiment",
+                project_id="project-a",
+            )
+        finally:
+            current_parent.reset(parent)
+        workspace = application.state.workspace_manager
+        workspace.initialize("experiment-child")
+        experiment = await tasks.create_experiment(
+            task_id="experiment-child",
+            name="public-browser-mnist",
+            specification=ExperimentSpecification().model_dump(),
+        )
+        manager = ArtifactManager(workspace, tasks)
+        await manager.save(
+            "experiment-child",
+            experiment.id,
+            "reports/report.md",
+            "# 中文公开报告\n<script>window.resourceXSS = true</script>\n仅限工程验收。".encode(),
+        )
+        await manager.save(
+            "experiment-child", experiment.id, "outputs/metrics.json", b'{"public": true}'
+        )
+        await tasks.add_evidence(
+            task_id="experiment-child",
+            citation_key="S1",
+            source_type="web",
+            provider="fixture",
+            title="公开 MNIST 证据",
+            url="https://example.org/paper",
+            authors=("Public Author",),
+            year=2026,
+            external_id=None,
+            query="public",
+            topic="MNIST",
+            claim="公开测试主张",
+            excerpt="<script>window.resourceXSS = true</script>",
+            relevance=0.8,
+        )
     stream_task = ""
     control_task = ""
     stream_patch = None
@@ -417,7 +472,9 @@ async def fixture_app(
                     stream_patch.stop()
                 if temporary is not None:
                     assert temporary_root.resolve().parent == data_root
-                    assert temporary_root.name.startswith(("phase9c-", "phase9d-", "phase9e-"))
+                    assert temporary_root.name.startswith(
+                        ("phase9c-", "phase9d-", "phase9e-", "phase9f-")
+                    )
                     temporary.cleanup()
             assert not provider.calls and not sandbox.requests
             if temporary is not None:
@@ -432,6 +489,7 @@ async def main() -> None:
         writes="--writes" in sys.argv[1:],
         streams="--streams" in sys.argv[1:],
         controls="--controls" in sys.argv[1:],
+        resources="--resources" in sys.argv[1:],
     )
     server = uvicorn.Server(
         uvicorn.Config(

@@ -31,7 +31,7 @@ function WorkspaceLayout() {
       <Menu mode="inline" selectedKeys={['projects']} items={[
         { key: 'projects', icon: <FolderOutlined />, label: <Link to="/">项目与任务</Link> },
       ]} />
-      <div className="sidebar-foot">Phase 9E · 本地研究工作台</div>
+      <div className="sidebar-foot">Phase 9F · 本地研究工作台</div>
     </Layout.Sider>
     <Layout>
       <Layout.Header className="app-header"><Space><Tag color="success">已连接</Tag>

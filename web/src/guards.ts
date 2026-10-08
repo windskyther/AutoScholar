@@ -48,7 +48,8 @@ export function isSession(value: unknown): value is Session {
     && (caps.document_max_bytes === undefined || (integer(caps.document_max_bytes) && caps.document_max_bytes > 0))
     && (caps.document_max_pages === undefined || (integer(caps.document_max_pages) && caps.document_max_pages > 0))
     && (caps.budget_limits === undefined || isBudget(caps.budget_limits))
-    && (caps.task_controls === undefined || typeof caps.task_controls === 'boolean');
+    && (caps.task_controls === undefined || typeof caps.task_controls === 'boolean')
+    && (caps.resource_browser === undefined || typeof caps.resource_browser === 'boolean');
 }
 export function isBudget(value: unknown): value is BudgetLimits {
   return record(value) && ['steps', 'replans', 'model_calls', 'tool_calls', 'search_queries', 'code_repairs',

@@ -51,6 +51,7 @@ export default function Events({ taskId, projectId }: { taskId: string; projectI
           void cache.invalidateQueries({ queryKey: ['tasks', projectId] });
           void cache.invalidateQueries({ queryKey: ['controls', taskId] });
           void cache.invalidateQueries({ queryKey: ['approvals', taskId] });
+          void cache.invalidateQueries({ queryKey: ['resources', taskId] });
         }
       }, 500);
     }

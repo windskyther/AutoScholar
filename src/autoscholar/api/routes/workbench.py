@@ -3,10 +3,11 @@
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from autoscholar import __version__
-from autoscholar.agent.records import ResolvedAgentMode, TaskStatus
+from autoscholar.agent.records import ArtifactRecord, ResolvedAgentMode, TaskStatus
 from autoscholar.agent.repository import AgentTaskRepository
 from autoscholar.api.experiment_auth import require_experiment_token
 from autoscholar.api.routes.agent import router as agent_router
@@ -31,7 +32,14 @@ from autoscholar.api.workbench_models import (
     WorkflowEventPage,
 )
 from autoscholar.api.workbench_repository import WorkbenchRepository
+from autoscholar.api.workbench_resources import (
+    ArtifactPreview,
+    ResourcePage,
+    ResourceRepository,
+    preview,
+)
 from autoscholar.core.errors import AppError
+from autoscholar.experiment.artifacts import ArtifactError, ArtifactManager
 from autoscholar.orchestration.approvals import ApprovalDecision
 
 router = APIRouter(
@@ -63,6 +71,7 @@ async def session(request: Request) -> WorkbenchSessionResponse:
             "experiment_backend": settings.experiment_tool_backend,
             "task_streaming": True,
             "task_controls": True,
+            "resource_browser": True,
             "document_max_bytes": settings.document_max_bytes,
             "document_max_pages": settings.document_max_pages,
             "budget_limits": settings.autonomous_budget.model_dump(),
@@ -212,6 +221,62 @@ async def artifacts(
     result = await store(request).resources(task_id, "artifacts", limit=limit, offset=offset)
     assert isinstance(result, FamilyArtifactResponse)
     return result
+
+
+@router.get("/tasks/{task_id}/resources/{kind}", response_model=ResourcePage)
+async def resource_page(
+    task_id: str,
+    kind: Literal["evidence", "experiments", "artifacts"],
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> ResourcePage:
+    return await ResourceRepository(store(request)).page(task_id, kind, limit=limit, offset=offset)
+
+
+async def verified_content(
+    task_id: str, artifact_id: str, request: Request
+) -> tuple[ArtifactRecord, bytes]:
+    record = await ResourceRepository(store(request)).artifact(task_id, artifact_id)
+    manager = request.app.state.artifact_manager
+    if not isinstance(manager, ArtifactManager):
+        raise AppError(
+            status_code=503,
+            code="artifact_store_not_available",
+            message="Artifact storage is unavailable",
+        )
+    try:
+        content = await run_in_threadpool(manager.read_verified, record.task_id, record)
+    except ArtifactError as exc:
+        raise AppError(status_code=409, code=exc.code, message=exc.message) from exc
+    return record, content
+
+
+@router.get(
+    "/tasks/{task_id}/resources/artifacts/{artifact_id}/preview", response_model=ArtifactPreview
+)
+async def artifact_preview(task_id: str, artifact_id: str, request: Request) -> ArtifactPreview:
+    record, content = await verified_content(task_id, artifact_id, request)
+    return preview(record, content, task_id)
+
+
+@router.get("/tasks/{task_id}/resources/artifacts/{artifact_id}/content")
+async def artifact_content(task_id: str, artifact_id: str, request: Request) -> Response:
+    record, content = await verified_content(task_id, artifact_id, request)
+    path, sha256 = record.path, record.sha256
+    # Never trust media types or filenames supplied by generated metadata.
+    media_type = ArtifactManager.allowed[path][1]
+    return Response(
+        content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{path.rsplit("/", 1)[-1]}"',
+            "X-Content-SHA256": sha256,
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+        },
+    )
 
 
 for existing in (

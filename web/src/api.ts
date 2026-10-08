@@ -1,6 +1,8 @@
 import type { ApprovalDecision, ApprovalPage, ControlAction, ControlReceipt, ControlState, EventPage, ExpectedState, Overview, Page, PDFDocument, Project, Session, StreamMessage, SubmissionReceipt, Task, TaskStatus, TaskSubmission } from './types';
 import { isApproval, isControlReceipt, isControlState, isDocument, isEventPage, isExpectedState, isOverview, isPage, isProject, isReceipt, isSession, isSpecification, isTask, isTaskStatus, isWorkflowEvent } from './guards';
 import { consumeSSE, StreamProtocolError } from './sse';
+import type { ArtifactPreview, ArtifactResource, EvidenceResource, ExperimentResource, ResourcePage } from './types';
+import { isArtifact, isEvidence, isExperiment, isPreview } from './resource-guards';
 
 export class ApiError extends Error {
   constructor(public code: string, public status = 0, public requestId: string | null = null) {
@@ -40,6 +42,12 @@ const messages: Record<string, string> = {
   approval_not_found: '审批不存在，或不属于当前任务。',
   approval_expired_or_decided: '审批已过期或已处理，请核查最新状态。',
   approval_already_decided: '审批已处理，不能更改此决定。',
+  workbench_artifact_not_found: '产物不存在，或不属于当前根任务。',
+  artifact_integrity_failed: '产物大小或摘要不一致，已阻止预览和下载。',
+  artifact_manifest_invalid: '产物清单不合法，已阻止下载。',
+  artifact_text_invalid: '产物不是有效 UTF-8 文本。',
+  artifact_preview_unsupported: '此产物不支持文本预览。',
+  artifact_store_not_available: '产物存储暂不可用。',
 };
 export function isWriteUncertain(error: unknown): boolean {
   return error instanceof ApiError && (error.code === 'write_result_unknown' || error.status >= 500);
@@ -199,6 +207,75 @@ export class ApiClient {
   }
   overview(id: string, page: number, signal?: AbortSignal): Promise<Overview> {
     return this.checked(`/tasks/${encodeURIComponent(id)}/overview?limit=20&offset=${(page - 1) * 20}`, isOverview, signal);
+  }
+  private resourcePage<T>(id: string, kind: string, page: number, guard: (value: unknown) => value is T,
+                          signal?: AbortSignal): Promise<ResourcePage<T>> {
+    return this.checked(`/tasks/${encodeURIComponent(id)}/resources/${kind}?limit=20&offset=${(page - 1) * 20}`,
+      (value): value is ResourcePage<T> => isPage(value, guard) && (value as ResourcePage<T>).task_id === id, signal);
+  }
+  evidence(id: string, page: number, signal?: AbortSignal): Promise<ResourcePage<EvidenceResource>> {
+    return this.resourcePage(id, 'evidence', page, isEvidence, signal);
+  }
+  experiments(id: string, page: number, signal?: AbortSignal): Promise<ResourcePage<ExperimentResource>> {
+    return this.resourcePage(id, 'experiments', page, isExperiment, signal);
+  }
+  artifacts(id: string, page: number, signal?: AbortSignal): Promise<ResourcePage<ArtifactResource>> {
+    return this.resourcePage(id, 'artifacts', page, isArtifact, signal);
+  }
+  previewArtifact(id: string, artifact: ArtifactResource, signal?: AbortSignal): Promise<ArtifactPreview> {
+    if (!isArtifact(artifact)) throw new ApiError('artifact_manifest_invalid');
+    return this.checked(`/tasks/${encodeURIComponent(id)}/resources/artifacts/${encodeURIComponent(artifact.id)}/preview`,
+      (value): value is ArtifactPreview => isPreview(value) && value.task_id === id
+        && value.artifact_id === artifact.id && value.sha256 === artifact.sha256, signal);
+  }
+  async downloadArtifact(id: string, artifact: ArtifactResource, signal?: AbortSignal): Promise<Blob> {
+    if (!isArtifact(artifact) || !/^[A-Za-z0-9_-]{1,64}$/.test(id) || !/^[A-Za-z0-9_-]{1,64}$/.test(artifact.id)) {
+      throw new ApiError('artifact_manifest_invalid');
+    }
+    if (!this.connected) throw new ApiError('experiment_auth_required', 401);
+    const controller = new AbortController(); this.#streams.add(controller);
+    const combined = AbortSignal.any([controller.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]);
+    let response: Response | undefined;
+    try {
+      response = await fetch(`/api/workbench/tasks/${id}/resources/artifacts/${artifact.id}/content`, {
+        headers: { Authorization: 'Bearer ' + this.#token }, signal: combined,
+        credentials: 'omit', cache: 'no-store', redirect: 'error',
+      });
+      if ([401, 403].includes(response.status)) {
+        this.clear(); this.unauthorized(); throw new ApiError('experiment_auth_required', response.status);
+      }
+      if (!response.ok) {
+        const payload = await readJSON(response) as { error?: { code?: unknown } };
+        throw new ApiError(typeof payload?.error?.code === 'string' ? payload.error.code : 'request_failed', response.status);
+      }
+      if (response.headers.get('x-content-sha256') !== artifact.sha256
+          || response.headers.get('content-type')?.split(';')[0] !== artifact.media_type.split(';')[0]) {
+        throw new ApiError('artifact_integrity_failed');
+      }
+      const reader = response.body?.getReader();
+      if (!reader) throw new ApiError('invalid_response');
+      const bytes = new Uint8Array(artifact.size_bytes); let size = 0;
+      try {
+        while (true) {
+          const chunk = await reader.read(); if (chunk.done) break;
+          if (size + chunk.value.length > bytes.length) throw new ApiError('artifact_integrity_failed');
+          bytes.set(chunk.value, size); size += chunk.value.length;
+        }
+      } finally { await reader.cancel(); reader.releaseLock(); }
+      const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+        .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+      if (size !== artifact.size_bytes || digest !== artifact.sha256) throw new ApiError('artifact_integrity_failed');
+      if (!this.connected) throw new ApiError('experiment_auth_required', 401);
+      if (combined.aborted) throw combined.reason;
+      return new Blob([bytes], { type: artifact.media_type });
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      if (signal?.aborted) throw signal.reason;
+      throw new ApiError(this.connected ? 'network_unavailable' : 'experiment_auth_required');
+    } finally {
+      await response?.body?.cancel().catch(() => {});
+      this.#streams.delete(controller);
+    }
   }
   controls(id: string, signal?: AbortSignal): Promise<ControlState> {
     return this.checked(`/tasks/${encodeURIComponent(id)}/controls`,

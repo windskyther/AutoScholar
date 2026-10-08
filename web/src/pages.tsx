@@ -11,6 +11,7 @@ import Documents from './documents';
 import { useSubmission } from './task-submission';
 import Events from './events';
 import Controls from './controls';
+import Resources from './resources';
 
 export function ProjectsPage() {
   const { api, session } = useConnection();
@@ -96,7 +97,7 @@ export function TaskPage() {
     <Space wrap data-testid="task-status"><Status value={data.execution?.status ?? data.task.status} />
       <Tag>{data.task.mode}</Tag><span className="identifier">{data.task.task_id}</span></Space>
     <Alert className="snapshot-note" type="info" showIcon title={session?.capabilities.task_streaming ? '任务快照随持久化事件刷新' : '当前为只读快照，不是实时流'}
-      description="刷新页面不会重新执行任务。控制与审批需要单独确认；资源详情浏览将在后续模块接入，旧后端仍可手动刷新快照。" />
+      description="刷新页面不会重新执行任务。控制与审批需要单独确认；资源浏览和下载不会触发模型或训练调用。" />
     {session?.capabilities.task_controls && <Controls key={taskId} taskId={taskId!} projectId={projectId!} />}
     <div className="metrics-grid">
       <Metric label="模型调用" value={usage.model_calls ?? 0} limit={limits?.model_calls} />
@@ -129,6 +130,7 @@ export function TaskPage() {
     {data.answer_truncated && <Alert type="warning" title="输出超过大小上限，下方仅展示部分内容。" />}
     {data.answer ? <pre className="plain-output">{data.answer}</pre> : <Empty description="任务尚未产生最终输出。" />}
     {session?.capabilities.task_streaming && <Events taskId={taskId!} projectId={projectId!} />}
+    {session?.capabilities.resource_browser && <Resources key={taskId} taskId={taskId!} />}
     <p className="usage-note">以上用量仅采用根任务记录，不累加子任务的同一份共享预算。</p>
   </>;
 }
