@@ -1,10 +1,10 @@
 # AutoScholar-Eval benchmark contracts
 
 Versioned suites separate `inputs` from `expected` gold labels. Execution adapters receive only
-the prompt and inputs. All included Phase 10A/10B/10C/10D cases are self-authored public engineering
+the prompt and inputs. All included Phase 10A/10B/10C/10D/10E cases are self-authored public engineering
 fixtures; no provider requests, private design documents, credentials or runtime records are
 included. The CLI implements RAG replay, controlled Research/Tool component execution and
-explicitly injected real Docker Coding/Experiment execution. E2E and ablations remain unfinished.
+explicitly injected real Docker Coding/Experiment and durable E2E execution. Ablations remain unfinished.
 
 ## Public RAG scoring suite
 
@@ -189,9 +189,95 @@ task-success rate is scored here. Script callback counts are not vendor requests
 forward passes are not LLM calls; vendor tokens/external API calls remain zero and price is
 not assumed. Source, oracle, template, image and dataset digests identify the measured resources.
 
+## Durable end-to-end workflow suite
+
+`end_to_end/public_v1.json` has five public engineering cases. The separate workflow fixture
+contains only execution decisions and public sources; gold labels are never supplied to the
+coordinator or author. The adapter runs the actual durable Planner -> Research -> Coding ->
+Experiment -> Reviewer/Replanner -> Writer services. SQLite is fresh and file-backed per case
+under `data/evaluation/workflow-workspaces/evale-<UUID>`; no application DB is used. The coding
+node receives its real full-source snapshot (no unavailable read/list tool calls), and its
+mandatory compileall/Ruff/pytest requests are bound to the exact source digest. Real code and
+tensor execution occur only in the dedicated Docker children, never on the Windows host.
+
+| Case | Workflow result | Independent task completion | Key check |
+|---|---|---|---|
+| normal | succeeded | true | Saved metrics, source, plots, checkpoints and report agree |
+| restart | succeeded | true | Reopen committed DB and rebuild services after coding; preserve source and usage |
+| recover | succeeded | true | Rules override scripted PASS; rerun experiment only; report latest reviewed output |
+| budget | budget_exceeded | false | One callback budget; no training or final report |
+| deception | succeeded | false | Schema-valid fabricated accuracy disagrees with actual checkpoint inference |
+
+Restart is database/connection/service reconstruction BETWEEN committed units, with a new
+worker owner, not full-process crash or cluster recovery. The invalid-metrics and fabricated-
+accuracy faults are fixed transport mutations AFTER actual training. Original code is not
+silently replaced. The checker re-reads ten saved artifacts and uses the separate trusted
+checkpoint oracle; missing oracle measurements stay unknown and cannot count as detected
+deception. Parent-child/history links, evidence/citations, source handoff and final/latest-only
+report bindings must also pass. This closed-world source-snapshot check is not general semantic
+entailment. The benchmark exposes the distinction between a coherent reported workflow and
+actual measured correctness; it does not retrofit a general tamper-proof production Reviewer.
+
+Expected check-pass rate is 1.0, workflow completion 4/5 and independently verified task
+completion 3/5. Only the E2E adapter populates `task_success`; refusal/negative-case detection
+never earns task-completion credit. Default 128/128 samples and one epoch are engineering
+subsets, not scientific accuracy targets. Repeats retain the explicitly fixed input seeds
+(42 and 7), not independent randomized scientific trials.
+
+Persistent usage is checked against actual callback/search/sandbox/training counts. Script
+responses intentionally declare synthetic `TokenUsage(2, 1, 3)` to exercise accounting: only
+`budget_tokens` reports these units. No vendor tokenized/generated the response, so measured
+vendor tokens and external API requests remain zero; script callbacks are not paid visits.
+Price remains unknown. Independent grading sandbox runs are separately counted and excluded
+from the task's execution budget. Interrupted cases without a returned observation retain
+unknown measured usage rather than inventing zero.
+
+Use the same cached images/data as 10D. This complete PowerShell block pins a local Docker
+context before starting a unique controller, never uses `.env`, never downloads/builds images,
+and removes only that temporary project. Docker Desktop must already be running.
+
+```powershell
+Set-Location D:\98281\deepscholar
+$evalProject = 'autoscholar-eval-10e-' + [guid]::NewGuid().ToString('N').Substring(0, 10)
+$controller = "$evalProject-sandbox-manager-1"
+$evalContext = (docker context show).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Docker context unavailable' }
+$evalEndpoint = docker context inspect $evalContext --format '{{json .Endpoints.docker.Host}}' | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or $evalEndpoint -notmatch '^(npipe|unix)://') { throw 'Local Docker context required' }
+$priorEvalManager = $env:AUTOSCHOLAR_EVAL_MANAGER_IMAGE
+$priorEvalSandbox = $env:AUTOSCHOLAR_EVAL_SANDBOX_IMAGE
+try {
+  $env:AUTOSCHOLAR_EVAL_MANAGER_IMAGE = docker --context $evalContext image inspect autoscholar-api:phase9-acceptance --format '{{.Id}}'
+  if ($LASTEXITCODE -ne 0) { throw 'Cached controller image missing' }
+  $env:AUTOSCHOLAR_EVAL_SANDBOX_IMAGE = docker --context $evalContext image inspect autoscholar-python-sandbox:phase4 --format '{{.Id}}'
+  if ($LASTEXITCODE -ne 0) { throw 'Cached sandbox image missing' }
+  docker --context $evalContext volume inspect autoscholar_mnist_data --format '{{.Name}}'
+  if ($LASTEXITCODE -ne 0) { throw 'Cached public MNIST missing' }
+  docker --context $evalContext compose --env-file benchmarks/phase10d.defaults -f benchmarks/phase10d.compose.yaml -p $evalProject up -d --pull never --no-build
+  if ($LASTEXITCODE -ne 0) { throw 'Dedicated controller startup failed' }
+  .venv\Scripts\python.exe -m autoscholar.evaluation run --category end_to_end --profile injected --sandbox-container $controller --timeout 360 --repeats 2
+  if ($LASTEXITCODE -ne 0) { throw 'E2E engineering checks failed' }
+  .venv\Scripts\python.exe tests/integration/phase10e_acceptance.py --sandbox-container $controller
+  if ($LASTEXITCODE -ne 0) { throw 'Real E2E cancellation/cleanup checks failed' }
+  .venv\Scripts\python.exe tests/integration/phase10d_acceptance.py --sandbox-container $controller
+  if ($LASTEXITCODE -ne 0) { throw 'Shared isolation/timeout/cancellation checks failed' }
+} finally {
+  docker --context $evalContext compose --env-file benchmarks/phase10d.defaults -f benchmarks/phase10d.compose.yaml -p $evalProject down --remove-orphans
+  $env:AUTOSCHOLAR_EVAL_MANAGER_IMAGE = $priorEvalManager
+  $env:AUTOSCHOLAR_EVAL_SANDBOX_IMAGE = $priorEvalSandbox
+}
+```
+
+The E2E cancellation script waits for a REAL running training child before cancelling. It
+verifies joined cleanup, zero owned child containers/volumes, a re-openable local DB, durable
+`recovery_required` with unresolved operation accounting, and no automatic training replay.
+The normal service/DB stack is never recreated or migrated; cached images/public data and
+local reports/SQLite/workspaces are retained. This does not exercise HTTP/browser deployment,
+real provider reasoning, real semantic RAG, or all possible hostile-code/checkpoint attacks.
+
 ## Next stages
 
-E2E, ablation and independent real semantic/provider verification
+Ablation and independent real semantic/provider verification
 remain separate Phase 10 modules. The injected RAG adapter accepts an explicitly provisioned
 retriever; it does not create one from environment settings and does not infer its API cost.
 Real-model semantic comparisons require actual labeled corpus retrieval, actual model/resource

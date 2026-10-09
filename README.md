@@ -1007,7 +1007,7 @@ Phase 10 建立统一的 RAG、Research、Tool、Coding、Experiment 与端到�
 
 运行器每次新建 `eval-<UUID>` 目录，输出 `manifest.json`、`cases.jsonl`、`summary.json` 与 `evaluation_report.md`，记录数据摘要、适配器/资源摘要、代码版本及工作区是否有未提交修改、种子、重复次数和逐用例耗时。失败、超时和取消均保留记录；错误不输出异常原文或提示内容。取消后保存部分报告并继续向调用者传播取消，不自动恢复或重跑。
 
-规则检查通过率与端到端任务成功率分别统计；所有计划执行的用例保留在检查通过率分母中。指标均值展示实际计分/计划数量，缺失用量及没有价格依据的费用保持未知。实际供应商 Token 与预算保护计数分开。`validate` 校验数据契约，10B 的 `run` 提供可直接执行的离线 RAG 夹具。实际端到端用量归集适配器仍待 10E 实现。
+规则检查通过率与端到端任务成功率分别统计；所有计划执行的用例保留在检查通过率分母中。指标均值展示实际计分/计划数量，缺失用量及没有价格依据的费用保持未知。实际供应商 Token 与预算保护计数分开。`validate` 校验数据契约，10B 的 `run` 提供可直接执行的离线 RAG 夹具。10E 已归集持久化工作流预算，并分开记录脚本模拟 Token 与真实供应商 Token；付费供应商能力／用量验证仍需单独授权。
 
 ```powershell
 Set-Location D:\98281\deepscholar
@@ -1028,11 +1028,11 @@ if ($LASTEXITCODE -ne 0) { throw '评测数据无效' }
 if ($LASTEXITCODE -ne 0) { throw '离线评测失败；检查本轮报告' }
 ```
 
-`run` 支持 `--modes dense hybrid`、`--ks 1 5 10`、`--repeats 2`、`--seed 42` 和 `--timeout 30`；可用 `--output-root data/evaluation/custom` 分组保存。CLI 只允许 `--profile offline`，输出必须留在本项目 `data/evaluation/` 中，不读取 `.env`、不初始化 HTTP 客户端、数据库或模型权重，也不调用 LLM、检索供应商或训练。退出码 0 表示检查通过，1 表示存在失败/超时/运行错误，2 表示配置或 IO 错误，130 表示用户取消。两轮重复的实际种子分别记录，按 32 位范围递增；重复回放不代表两个独立模型样本。
+RAG 的 `run` 支持 `--modes dense hybrid`、`--ks 1 5 10`、`--repeats 2`、`--seed 42` 和 `--timeout 30`；可用 `--output-root data/evaluation/custom` 分组保存。RAG CLI 只允许 `--profile offline`，输出必须留在本项目 `data/evaluation/` 中，不读取 `.env`、不初始化 HTTP 客户端、数据库或模型权重，也不调用 LLM、检索供应商或训练。退出码 0 表示检查通过，1 表示存在失败/超时/运行错误，2 表示配置或 IO 错误，130 表示用户取消。两轮重复的实际种子分别记录，按 32 位范围递增；重复回放不代表两个独立模型样本。
 
 指标分别输出文档级和 chunk 级 Recall@K、HitRate@K、MRR 与 NDCG@K。K 以实际返回的 chunk 位置计数，文档身份投影到这些位置；重复 ID 消耗排名位置但仅首次获得相关性增益，避免重复结果抬高 NDCG。MRR 截止最大 K；没有对应级别的标签时不计分，不补 0。旧 JSONL 入口保留 chunk 优先、缺失时按文档计分的兼容字段，并新增独立 `document_metrics` / `chunk_metrics` 及各自样本数；其旧式混合均值不能当成同一粒度的指标。
 
-提供显式注入检索器的 RAG 适配器，但不会自动创建检索器；通用运行器默认 `offline` 拒绝注入组件，调用方需显式指定 `injected` 并自行建立受控组件。新 CLI 不开放该模式。注入组件的 Embedding/供应商用量保持未知，不从检索结果推算费用。真实语义检索比较仍未完成，不将排序回放当作真实检索验收。
+提供显式注入检索器的 RAG 适配器，但不会自动创建检索器；通用运行器默认 `offline` 拒绝注入组件，调用方需显式指定 `injected` 并自行建立受控组件。RAG CLI 仍不开放注入检索器模式。注入组件的 Embedding/供应商用量保持未知，不从检索结果推算费用。真实语义检索比较仍未完成，不将排序回放当作真实检索验收。
 
 ### 10C：Research / Tool 本地组件评测
 
@@ -1061,7 +1061,21 @@ Experiment 在 CPU 上实际训练 MLP/CNN（默认各 128 个训练／测试样
 
 完整 PowerShell 启动／验收／清理流程见 [公开评测说明](benchmarks/README.md#coding--experiment-isolated-component-suites)。真实隔离补测验证非 root、权限／资源限制、只读数据集、无外网、超时与取消后仅本轮临时容器和卷清理为零；运行记录及产物保留在忽略的 `data/` 内，不上传 GitHub。
 
-10A、10B 排序计分、10C 本地工程与 10D 真实隔离组件评测已实现。脚本作者、固定故障和独立计分不能证明真实 LLM 能力；真实语义检索／供应商评测、10E 端到端、10F 消融、10G 全阶段验收仍未完成。Phase 10 尚未总验收，不自动合并 `main`。
+### 10E：持久化端到端工作流评测
+
+新增 5 个公开用例，以固定决策／检索脚本驱动真实 `DurableService`、Planner、Research、Coding、Experiment、Reviewer/Replanner 和确定性 Writer。每例新建独立文件 SQLite 和工作区，仅保存在 `data/evaluation/workflow-workspaces/`，不连接应用数据库，不启用真实供应商。代码检查、MLP/CNN 训练及检查点校验均在 10D 的独立受限 Docker 中执行，没有宿主机代码执行回退。
+
+覆盖正常完成、种子 7 的已提交检查点恢复、无效指标后的单步重规划、一次脚本调用预算中止，以及合法 JSON 中伪造准确率的独立识别。恢复会关闭并重新打开数据库连接、重建服务及 worker owner，验证既有源码和预算未重置；不是整进程／集群灾难恢复测试。故障在真实训练后注入，不伪造训练已执行。
+
+完成标准包含父子任务／历史绑定、证据与引用快照、静态检查及 pytest 对应的源码、Coding→Experiment 源码 SHA、全部产物重读、真实检查点准确率复算，以及最终报告只引用最新已审核结果。故意伪造指标的例子会出现工作流状态成功但 `task_success=false`：评测 oracle 能发现该问题，不表示已给生产 Reviewer 增加防止所有指标造假的通用能力。
+
+用量取自持久化预算与实际执行记录交叉核验；脚本回调不是供应商请求，模拟的每回调 3 个 Token 仅记入 `budget_tokens`，真实供应商 Token／外部 API 调用均为 0，费用保持未知。5 个用例的预期为检查通过率 1.0、实际任务完成率 3/5（另含预算中止与造假负例）。中断用例保留未完成记录与人工恢复要求，不自动重跑，缺失用量保持未知。
+
+完整独立启动、两轮重复验收、执行中取消及资源清理流程见 [端到端评测说明](benchmarks/README.md#durable-end-to-end-workflow-suite)。这是 CLI→持久化工作流→沙箱的工程评测，不是浏览器／HTTP 部署、真实模型或语义检索能力总验收。
+
+10A、10B 排序计分、10C 本地工程、10D 真实隔离组件与 10E 端到端工程评测已实现。真实语义检索／供应商评测、10F 消融、10G 全阶段验收仍未完成。Phase 10 尚未总验收，不自动合并 `main`。
+
+2026-10-09 10E 验证：新增 **43 项端到端测试**通过；完整后端 **577 passed、3 skipped**，Ruff、mypy（201 文件）通过。首轮 5 个真实 Docker 工作流达到预期（3 个任务完成、预算中止与造假负例各 1），原 10D 的 5 个 Experiment 用例回归通过。另在真实运行的训练容器中取消完整工作流，验证退出后无本轮临时容器／卷、SQLite 可重开、状态为 `recovery_required` 且没有自动重跑；共用沙箱隔离／超时／取消检查也通过。外部 API 请求为 0，未迁移应用数据库或合并 `main`；3 个跳过项仍为旧 Compose smoke 开关及 Windows 符号链接权限限制。
 
 2026-10-08 10D 验证：完整后端 **534 passed、3 skipped**，Ruff、mypy（196 文件）通过；真实 Docker 重复验收完成 **20 条 Coding、10 条 Experiment** 记录，均达到各自预期（含故障拒绝），另验证隔离、超时、取消及本轮临时资源清理。外部 API 调用为 0；跳过项仍为未启用的旧 Compose smoke 与 Windows 符号链接权限限制。未重启正常部署、迁移应用数据库或合并 `main`。
 

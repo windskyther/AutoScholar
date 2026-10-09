@@ -8,7 +8,9 @@ from typing import Literal
 
 from pydantic import ConfigDict, Field, JsonValue, field_validator, model_validator
 
+from autoscholar.agent.repository import AgentTaskRepository
 from autoscholar.coding.sandbox import SandboxExecutor, SandboxRunRequest
+from autoscholar.coding.workspace import WorkspaceManager
 from autoscholar.evaluation.component_fixture import QueryInputs, VersionedFixture, fixture_usage
 from autoscholar.evaluation.datasets import decode_json
 from autoscholar.evaluation.isolated_components import (
@@ -214,6 +216,129 @@ def _oracle_files(
     return files
 
 
+class ExperimentVerification(EvaluationModel):
+    metric_extraction_valid: bool = False
+    artifact_set_valid: bool = False
+    artifact_integrity_valid: bool = False
+    artifact_count: int = Field(default=0, ge=0, le=10)
+    verified_artifact_count: int = Field(default=0, ge=0, le=10)
+    oracle: CheckpointOracle | None = None
+
+    @property
+    def accepted(self) -> bool:
+        return (
+            self.metric_extraction_valid
+            and self.artifact_set_valid
+            and self.artifact_integrity_valid
+            and self.artifact_count == self.verified_artifact_count == len(ArtifactManager.allowed)
+            and self.oracle is not None
+            and self.oracle.dataset_verified
+            and self.oracle.plots_verified
+            and all(item.verified for item in self.oracle.models)
+        )
+
+
+async def verify_completed_experiment(
+    *,
+    task_id: str,
+    store: AgentTaskRepository,
+    workspace: WorkspaceManager,
+    sandbox: SandboxExecutor,
+    resources: dict[str, str],
+    specification: ExperimentSpecification,
+    train_source: str,
+    oracle_source: str,
+) -> ExperimentVerification:
+    """Re-read saved artifacts and grade in a separate sandbox, outside task budgets."""
+    records = await store.list_artifacts(task_id)
+    artifacts = ArtifactManager(workspace, store)
+    contents: dict[str, bytes] = {}
+    for record in records:
+        try:
+            contents[record.path] = artifacts.read_verified(task_id, record)
+        except ArtifactError:
+            continue
+    set_valid = (
+        len(records) == len(ArtifactManager.allowed)
+        and {record.path for record in records} == ArtifactManager.allowed.keys()
+    )
+    verified = ExperimentVerification(
+        artifact_count=len(records),
+        verified_artifact_count=len(contents),
+        artifact_set_valid=set_valid,
+        artifact_integrity_valid=len(contents) == len(records) and set_valid,
+    )
+    if not verified.artifact_integrity_valid:
+        return verified
+    raw = RawExperimentMetrics.model_validate(decode_json(contents["outputs/raw_metrics.json"]))
+    metrics = decode_json(contents["outputs/metrics.json"])
+    manifest = decode_json(contents["outputs/experiment.json"])
+    experiments = await store.list_experiments(task_id)
+    delta = raw.runs[1].test_accuracy - raw.runs[0].test_accuracy
+    winner = "cnn" if delta > 0 else "mlp" if delta < 0 else "tie"
+    metadata_valid = (
+        raw.dataset == specification.dataset
+        and raw.seed == specification.seed
+        and raw.train_samples == specification.train_samples
+        and raw.test_samples == specification.test_samples
+        and all(len(run.train_loss) == specification.epochs for run in raw.runs)
+    )
+    source_sha = hashlib.sha256(
+        json.dumps(workspace.source_snapshot(task_id), sort_keys=True).encode()
+    ).hexdigest()
+    report = contents["reports/report.md"].decode("utf-8")
+    verified.metric_extraction_valid = (
+        isinstance(metrics, dict)
+        and metadata_valid
+        and all(
+            metrics.get(key) == specification.model_dump()[key]
+            for key in (
+                "dataset",
+                "seed",
+                "train_samples",
+                "test_samples",
+                "epochs",
+                "batch_size",
+                "learning_rate",
+            )
+        )
+        and metrics.get("winner") == winner
+        and metrics.get("cnn_minus_mlp_accuracy") == delta
+        and metrics.get("runs") == [run.model_dump() for run in raw.runs]
+        and len(experiments) == 1
+        and experiments[0].metrics == metrics
+        and experiments[0].specification == specification.model_dump()
+        and experiments[0].source_sha256 == source_sha
+        and experiments[0].dataset_sha256 == resources["dataset"]
+        and decode_json(workspace.read_text(task_id, "experiment_config.json").encode())
+        == specification.model_dump()
+        and isinstance(manifest, dict)
+        and manifest.get("specification") == specification.model_dump()
+        and manifest.get("source_sha256") == source_sha
+        and manifest.get("dataset_sha256") == resources["dataset"]
+        and all(f"{run.test_accuracy:.2%}" in report for run in raw.runs)
+    )
+    checked = await sandbox.run(
+        SandboxRunRequest(
+            task_id=task_id,
+            action="run_python",
+            path="eval_oracle.py",
+            timeout_seconds=60,
+            files=_oracle_files(
+                contents,
+                specification,
+                raw,
+                resources["dataset"],
+                source=train_source,
+                harness=oracle_source,
+            ),
+            collect_artifacts=["outputs/eval_oracle.json"],
+        )
+    )
+    verified.oracle = CheckpointOracle.model_validate(oracle_json(checked))
+    return verified
+
+
 class InjectedExperimentAdapter:
     def __init__(
         self,
@@ -316,100 +441,27 @@ class InjectedExperimentAdapter:
                     raise
             records = await store.list_artifacts(task_id)
             if completed:
-                contents: dict[str, bytes] = {}
-                for record in records:
-                    try:
-                        contents[record.path] = artifacts.read_verified(task_id, record)
-                        verified_count += 1
-                    except ArtifactError:
-                        continue
-                set_valid = (
-                    len(records) == len(ArtifactManager.allowed)
-                    and {record.path for record in records} == ArtifactManager.allowed.keys()
+                verified = await verify_completed_experiment(
+                    task_id=task_id,
+                    store=store,
+                    workspace=workspace,
+                    sandbox=sandbox,
+                    resources=self.resources,
+                    specification=script.specification,
+                    train_source=self.train_source,
+                    oracle_source=self.oracle_source,
                 )
-                integrity = verified_count == len(records) and set_valid
-                if integrity:
-                    raw = RawExperimentMetrics.model_validate(
-                        decode_json(contents["outputs/raw_metrics.json"])
-                    )
-                    metrics = decode_json(contents["outputs/metrics.json"])
-                    manifest = decode_json(contents["outputs/experiment.json"])
-                    experiments = await store.list_experiments(task_id)
-                    delta = raw.runs[1].test_accuracy - raw.runs[0].test_accuracy
-                    winner = "cnn" if delta > 0 else "mlp" if delta < 0 else "tie"
-                    specification = script.specification
-                    metadata_valid = (
-                        raw.dataset == specification.dataset
-                        and raw.seed == specification.seed
-                        and raw.train_samples == specification.train_samples
-                        and raw.test_samples == specification.test_samples
-                        and all(len(run.train_loss) == specification.epochs for run in raw.runs)
-                    )
-                    source_sha = hashlib.sha256(
-                        json.dumps(
-                            workspace.source_snapshot(task_id),
-                            sort_keys=True,
-                        ).encode()
-                    ).hexdigest()
-                    report = contents["reports/report.md"].decode("utf-8")
-                    extraction = (
-                        isinstance(metrics, dict)
-                        and metadata_valid
-                        and all(
-                            metrics.get(key) == specification.model_dump()[key]
-                            for key in (
-                                "dataset",
-                                "seed",
-                                "train_samples",
-                                "test_samples",
-                                "epochs",
-                                "batch_size",
-                                "learning_rate",
-                            )
-                        )
-                        and metrics.get("winner") == winner
-                        and metrics.get("cnn_minus_mlp_accuracy") == delta
-                        and metrics.get("runs") == [run.model_dump() for run in raw.runs]
-                        and len(experiments) == 1
-                        and experiments[0].metrics == metrics
-                        and experiments[0].specification == specification.model_dump()
-                        and experiments[0].source_sha256 == source_sha
-                        and isinstance(manifest, dict)
-                        and manifest.get("specification") == specification.model_dump()
-                        and manifest.get("source_sha256") == source_sha
-                        and manifest.get("dataset_sha256") == self.resources["dataset"]
-                        and all(f"{run.test_accuracy:.2%}" in report for run in raw.runs)
-                    )
-                    checked = await sandbox.run(
-                        SandboxRunRequest(
-                            task_id=task_id,
-                            action="run_python",
-                            path="eval_oracle.py",
-                            timeout_seconds=60,
-                            files=_oracle_files(
-                                contents,
-                                script.specification,
-                                raw,
-                                self.resources["dataset"],
-                                source=self.train_source,
-                                harness=self.oracle_source,
-                            ),
-                            collect_artifacts=["outputs/eval_oracle.json"],
-                        )
-                    )
-                    oracle = CheckpointOracle.model_validate(oracle_json(checked))
-                    if [item.model for item in oracle.models] != ["mlp", "cnn"]:
-                        raise ValueError("Checkpoint oracle model ordering differs")
-                    passed = (
-                        extraction
-                        and oracle.dataset_verified
-                        and oracle.plots_verified
-                        and all(item.verified for item in oracle.models)
-                    )
-                    status = "accepted" if passed else "oracle_rejected"
-                    error = None if passed else "checkpoint_mismatch"
-                else:
-                    status, error = "oracle_rejected", "artifact_integrity_failed"
+                extraction = verified.metric_extraction_valid
+                set_valid = verified.artifact_set_valid
+                integrity = verified.artifact_integrity_valid
+                verified_count = verified.verified_artifact_count
+                oracle = verified.oracle
+                status = "accepted" if verified.accepted else "oracle_rejected"
+                error = (
+                    None
+                    if verified.accepted
+                    else ("checkpoint_mismatch" if integrity else "artifact_integrity_failed")
+                )
             actual = ExperimentObservation(
                 status=status,
                 error_code=error,

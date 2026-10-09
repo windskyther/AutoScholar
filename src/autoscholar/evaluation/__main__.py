@@ -20,6 +20,7 @@ async def _run(args: argparse.Namespace) -> int:
     )
     from autoscholar.evaluation.component_fixture import load_fixture
     from autoscholar.evaluation.docker_sandbox import DockerEvaluationSandbox
+    from autoscholar.evaluation.e2e_adapter import InjectedWorkflowAdapter
     from autoscholar.evaluation.experiment_adapter import (
         ExperimentFixture,
         InjectedExperimentAdapter,
@@ -29,6 +30,7 @@ async def _run(args: argparse.Namespace) -> int:
     from autoscholar.evaluation.research_adapter import FixtureResearchAdapter, ResearchFixture
     from autoscholar.evaluation.runner import EvaluationAdapter, run_evaluation
     from autoscholar.evaluation.tool_adapter import FixtureToolAdapter, ToolFixture
+    from autoscholar.evaluation.workflow_fixture import WorkflowFixture
 
     category = args.category or "rag"
     dataset = args.dataset or REPO_ROOT / f"benchmarks/{category}/public_v1.json"
@@ -42,6 +44,7 @@ async def _run(args: argparse.Namespace) -> int:
         "tool": "call_fixture_v1.json",
         "coding": "source_fixture_v1.json",
         "experiment": "experiment_fixture_v1.json",
+        "end_to_end": "workflow_fixture_v1.json",
     }.get(category)
     if fixture_name is None:
         raise ValueError("Evaluation category is not implemented")
@@ -57,15 +60,16 @@ async def _run(args: argparse.Namespace) -> int:
         case_timeout_seconds=args.timeout,
     )
     adapters: list[EvaluationAdapter]
-    if category in ("coding", "experiment"):
+    if category in ("coding", "experiment", "end_to_end"):
         if args.profile != "injected" or not args.sandbox_container:
             raise ValueError(
-                "Coding/Experiment require explicit injected Docker controller; no host fallback"
+                "Coding/Experiment/E2E require explicit injected Docker controller; "
+                "no host fallback"
             )
         if args.ks is not None or args.modes not in (None, ["baseline"]):
             raise ValueError("Isolated component evaluations use baseline without K")
     elif args.profile != "offline" or args.sandbox_container or args.oracle:
-        raise ValueError("Only Coding/Experiment expose sandbox injection")
+        raise ValueError("Only Coding/Experiment/E2E expose sandbox injection")
     if category == "rag":
         fixture, fixture_digest = load_ranking_fixture(fixture_path)
         modes = args.modes or ["dense", "sparse", "hybrid", "hybrid_rerank"]
@@ -118,6 +122,25 @@ async def _run(args: argparse.Namespace) -> int:
             )
         ]
         fixture_suite = experiment.suite_id
+    elif category == "end_to_end":
+        if args.oracle:
+            raise ValueError("E2E uses a fixed checkpoint oracle, not arbitrary oracle files")
+        workflow, fixture_digest = load_fixture(fixture_path, WorkflowFixture)
+        sandbox = DockerEvaluationSandbox(args.sandbox_container)
+        resources = sandbox_resources(await sandbox.health(), dataset=True)
+        workspace_root = (root / "workflow-workspaces").resolve()
+        if not workspace_root.is_relative_to(root):
+            raise ValueError("Workflow workspace escaped evaluation output scope")
+        adapters = [
+            InjectedWorkflowAdapter(
+                workflow,
+                fixture_sha256=fixture_digest,
+                sandbox=sandbox,
+                resources=resources,
+                workspace_root=workspace_root,
+            )
+        ]
+        fixture_suite = workflow.suite_id
     else:
         if args.ks is not None or args.modes not in (None, ["baseline"]):
             raise ValueError("Research/Tool only support baseline; K is a RAG option")
@@ -160,7 +183,9 @@ def main() -> int:
     validate = commands.add_parser("validate", help="Validate a versioned benchmark dataset")
     validate.add_argument("--dataset", type=Path, required=True)
     run = commands.add_parser("run", help="Run controlled public fixtures (no provider requests)")
-    run.add_argument("--category", choices=["rag", "research", "tool", "coding", "experiment"])
+    run.add_argument(
+        "--category", choices=["rag", "research", "tool", "coding", "experiment", "end_to_end"]
+    )
     run.add_argument("--dataset", type=Path)
     run.add_argument("--fixture", type=Path)
     run.add_argument("--profile", choices=["offline", "injected"], default="offline")
