@@ -345,6 +345,19 @@ All databases, workspaces, artifacts and reports stay ignored under `data/`; sec
 documents must never be staged. Neither CLI enables paid providers or modifies production
 policies: the ablation service subclass is confined to the explicit evaluation path.
 
+2026-10-10 verification on clean source `f04a755`: all 30 actual Docker workflow contracts
+passed (18 independently completed tasks, 10 fabricated-accuracy negatives and 2 explicit
+No Replanning stops); all 20 actual local retrieval contracts passed. Every workflow contrast
+has 6/6 matched/scored pairs. Both retrieval variants have chunk MRR 1.0 on this small closed
+corpus; no ranking gain is claimed. Model/script callbacks total 212, synthetic budget units
+636, actual vendor tokens/API requests zero. Backend regression: 611 passed / 3 skipped;
+34 new ablation tests plus 43 existing E2E tests pass; Ruff and mypy (206 files) pass.
+Local run directories (ignored, never uploaded):
+`data/evaluation/eval-63ea730fb07c4afdbb50e4a4e51d72eb` (workflow),
+`data/evaluation/eval-3ea5f5a2e22d426ab5335dbcfb33de52` (retrieval).
+Temporary controller/network removal preserves cached images, MNIST, SQLite, artifacts and
+reports. No application DB migration, paid request or main merge is part of this verification.
+
 ## Next stages
 
 Phase 10G aggregate acceptance and independent neural semantic/provider verification
