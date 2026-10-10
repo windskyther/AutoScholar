@@ -402,7 +402,34 @@ Exit 0 means the controlled **engineering pack** passed; 1 means incomplete/fail
 2 means configuration/IO error, 130 means cancellation. `phase10_overall_acceptance` remains
 false and `unverified` explicitly names production neural semantic retrieval and real
 provider/model ability. A successful engineering pack does not approve a main merge or prove
-full Phase 10 ability acceptance. Full clean-source runtime verification is still pending.
+full Phase 10 ability acceptance.
+
+2026-10-10 verification on clean source `145af73`: the full eight-suite pack recorded and
+passed all **155/155** engineering checks, with source unchanged throughout execution. E2E
+independent task completion is 3/5; workflow baseline/No Planner/No Reviewer/No Memory each
+complete 2/3, and No Replanning completes 1/3. Four workflow contrasts have 3/3 scored pairs;
+the separate retrieval contrast has 5/5. Expected stops and fabricated-accuracy negatives
+never earn task-completion credit. All 155 records measure zero external requests/vendor
+tokens. There are 209 scripted/fixture calls, not paid visits. Only 20 workflow records expose
+budget units (411 known synthetic units); the grand budget total remains unknown because
+135 other records do not measure it. Monetary cost remains unknown without pricing evidence.
+New pack-contract tests: 37 passed. Full backend: 648 passed / 3 skipped; Ruff, mypy (208 files)
+and changed-file format checks pass. Skips remain the old Compose opt-in and two Windows
+symbolic-link permission limitations, not these dedicated real sandbox checks.
+
+Ignored local evidence, never uploaded:
+
+- `data/evaluation/pack-660be828d0564c7d942fa019458eb1cd/evaluation_report.md` (total report;
+  manifest, recomputed summary, primary hashes and all eight subruns retained beside it).
+- `data/validation/phase10e-0b4e1ce0b3594760916dcd3bc9981523/acceptance.json` (actual running
+  training cancellation, reopened DB, recovery required and no automatic replay).
+- `data/validation/phase10d-7d0976389145410d80f5f6dbf8d8d0bf/acceptance.json` (actual sandbox
+  isolation, timeout, cancellation and joined cleanup).
+
+Both real supplemental checks used the same dedicated controller. Owned child containers
+and volumes were zero before its removal; its controller/network were removed, preserving
+cached images, public MNIST, reports, artifacts and SQLite. No application DB migrations,
+normal deployment rebuild, paid API requests or main merge occurred.
 
 ## Next stages
 
