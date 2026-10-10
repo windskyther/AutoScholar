@@ -28,16 +28,32 @@ async def _run(args: argparse.Namespace) -> int:
     from autoscholar.evaluation.isolated_components import sandbox_resources
     from autoscholar.evaluation.rag_adapter import ReplayRAGAdapter, load_ranking_fixture
     from autoscholar.evaluation.research_adapter import FixtureResearchAdapter, ResearchFixture
+    from autoscholar.evaluation.retrieval_ablation import (
+        RETRIEVAL_VARIANTS,
+        InjectedRetrievalAblationAdapter,
+        RetrievalFixture,
+        RetrievalPairAudit,
+    )
     from autoscholar.evaluation.runner import EvaluationAdapter, run_evaluation
     from autoscholar.evaluation.tool_adapter import FixtureToolAdapter, ToolFixture
+    from autoscholar.evaluation.workflow_ablation import WORKFLOW_VARIANTS
     from autoscholar.evaluation.workflow_fixture import WorkflowFixture
 
     category = args.category or "rag"
-    dataset = args.dataset or REPO_ROOT / f"benchmarks/{category}/public_v1.json"
+    ablations = args.ablations
+    if ablations and category not in ("rag", "end_to_end"):
+        raise ValueError("Ablations support workflow or controlled local retrieval only")
+    dataset = args.dataset or REPO_ROOT / (
+        f"benchmarks/ablations/{'workflow' if category == 'end_to_end' else 'retrieval'}_v1.json"
+        if ablations
+        else f"benchmarks/{category}/public_v1.json"
+    )
     suite, digest = load_suite(dataset)
     if args.category and suite.category != args.category:
         raise ValueError("Dataset category differs from requested category")
     category = suite.category
+    if ablations and category not in ("rag", "end_to_end"):
+        raise ValueError("Ablation dataset has an unsupported category")
     fixture_name = {
         "rag": "ranking_fixture_v1.json",
         "research": "provider_fixture_v1.json",
@@ -48,7 +64,12 @@ async def _run(args: argparse.Namespace) -> int:
     }.get(category)
     if fixture_name is None:
         raise ValueError("Evaluation category is not implemented")
-    fixture_path = args.fixture or REPO_ROOT / f"benchmarks/{category}/{fixture_name}"
+    fixture_path = args.fixture or REPO_ROOT / (
+        f"benchmarks/ablations/{'workflow' if category == 'end_to_end' else 'retrieval'}"
+        "_fixture_v1.json"
+        if ablations
+        else f"benchmarks/{category}/{fixture_name}"
+    )
     root = (REPO_ROOT / "data/evaluation").resolve()
     destination = args.output_root.resolve() if args.output_root else root
     if not root.is_relative_to(REPO_ROOT.resolve()) or not destination.is_relative_to(root):
@@ -68,9 +89,32 @@ async def _run(args: argparse.Namespace) -> int:
             )
         if args.ks is not None or args.modes not in (None, ["baseline"]):
             raise ValueError("Isolated component evaluations use baseline without K")
+    elif ablations and category == "rag":
+        if args.profile != "injected" or args.sandbox_container or args.oracle or args.modes:
+            raise ValueError(
+                "Retrieval ablations require explicit injected profile without Docker/modes/oracle"
+            )
     elif args.profile != "offline" or args.sandbox_container or args.oracle:
         raise ValueError("Only Coding/Experiment/E2E expose sandbox injection")
-    if category == "rag":
+    if category == "rag" and ablations:
+        retrieval, fixture_digest = load_fixture(fixture_path, RetrievalFixture)
+        audit = RetrievalPairAudit()
+        workspace_root = (root / "retrieval-workspaces").resolve()
+        if not workspace_root.is_relative_to(root):
+            raise ValueError("Retrieval workspace escaped evaluation output scope")
+        adapters = [
+            InjectedRetrievalAblationAdapter(
+                retrieval,
+                fixture_sha256=fixture_digest,
+                variant=variant,
+                workspace_root=workspace_root,
+                audit=audit,
+                ks=args.ks or [1, 5, 10],
+            )
+            for variant in RETRIEVAL_VARIANTS
+        ]
+        fixture_suite = retrieval.suite_id
+    elif category == "rag":
         fixture, fixture_digest = load_ranking_fixture(fixture_path)
         modes = args.modes or ["dense", "sparse", "hybrid", "hybrid_rerank"]
         adapters = [
@@ -138,7 +182,10 @@ async def _run(args: argparse.Namespace) -> int:
                 sandbox=sandbox,
                 resources=resources,
                 workspace_root=workspace_root,
+                ablation=ablations,
+                variant=variant,
             )
+            for variant in (WORKFLOW_VARIANTS if ablations else ("baseline",))
         ]
         fixture_suite = workflow.suite_id
     else:
@@ -162,6 +209,10 @@ async def _run(args: argparse.Namespace) -> int:
         output_root=destination,
         repo_root=REPO_ROOT,
     )
+    if ablations:
+        from autoscholar.evaluation.ablation_report import write_comparison
+
+        write_comparison(directory, planned=len(suite.cases) * configuration.repeats)
     summary = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
     failed = any(
         group["status_counts"].get(status, 0)
@@ -189,6 +240,11 @@ def main() -> int:
     run.add_argument("--dataset", type=Path)
     run.add_argument("--fixture", type=Path)
     run.add_argument("--profile", choices=["offline", "injected"], default="offline")
+    run.add_argument(
+        "--ablations",
+        action="store_true",
+        help="Explicit paired workflow or local lexical retrieval execution ablations",
+    )
     run.add_argument("--sandbox-container", help="Explicit autoscholar-eval-* dedicated controller")
     run.add_argument("--oracle", type=Path, help="Separate held-out Coding oracle fixture")
     run.add_argument(

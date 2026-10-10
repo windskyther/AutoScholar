@@ -1,0 +1,21 @@
+{
+  "schema_version":1,
+  "suite_id":"public-reranker-ablation-v1",
+  "chunks":[
+    {"id":"sandbox-network","document_id":"public-sandbox","text":"Docker sandbox networking is disabled. Training code cannot access the external network."},
+    {"id":"sandbox-limits","document_id":"public-sandbox","text":"The sandbox runs as a non-root user with bounded CPU, memory and process limits."},
+    {"id":"artifact-integrity","document_id":"public-artifacts","text":"Verify the artifact SHA digest and registered byte length before exporting or trusting the saved file."},
+    {"id":"checkpoint-accuracy","document_id":"public-artifacts","text":"Independently recompute checkpoint test accuracy by restoring saved tensors and running inference on the matching seeded test subset."},
+    {"id":"workflow-memory","document_id":"public-workflow","text":"Project memory is scoped to one project and its public experiment constraints. It cannot override the current request."},
+    {"id":"workflow-budget","document_id":"public-workflow","text":"The root task and its children share one budget. Summing both root and child counters double counts usage."},
+    {"id":"workflow-approval","document_id":"public-workflow","text":"Approval never automatically resumes a paused task. An explicit control action is required."},
+    {"id":"mnist-subset","document_id":"public-mnist","text":"Small MNIST subsets are engineering checks, not a full scientific accuracy benchmark."}
+  ],
+  "queries":{
+    "network":"What networking is available inside the Docker sandbox?",
+    "digest":"How should an artifact SHA digest and byte length be verified?",
+    "checkpoint":"How is checkpoint test accuracy independently recomputed?",
+    "memory":"Where is project memory scoped?",
+    "budget":"What shared budget applies to the root task and its children?"
+  }
+}

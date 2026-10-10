@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Literal
 
@@ -23,6 +24,12 @@ from autoscholar.evaluation.models import (
     ScoreCard,
 )
 from autoscholar.evaluation.research_adapter import TOPICS
+from autoscholar.evaluation.workflow_ablation import (
+    WORKFLOW_VARIANTS,
+    ObservedWorkflowMemory,
+    WorkflowVariant,
+    public_project_context,
+)
 from autoscholar.evaluation.workflow_fixture import (
     ScriptedWorkflowProvider,
     WorkflowFaultSandbox,
@@ -30,8 +37,12 @@ from autoscholar.evaluation.workflow_fixture import (
     WorkflowSearch,
     workflow_plan,
 )
+from autoscholar.evaluation.workflow_knowledge import PUBLIC_KNOWLEDGE, workflow_knowledge
 from autoscholar.evaluation.workflow_runtime import local_workflow, workflow_service
+from autoscholar.orchestration.durable import DurableService
+from autoscholar.orchestration.memory import ProjectMemoryUpdate
 from autoscholar.orchestration.service import source_digest
+from autoscholar.rag.repository import KnowledgeRepository
 
 
 class StepCounts(EvaluationModel):
@@ -41,8 +52,10 @@ class StepCounts(EvaluationModel):
 
 
 class WorkflowLabels(EvaluationModel):
-    workflow_status: Literal["succeeded", "budget_exceeded"]
-    error_code: Literal["autonomous_budget_exceeded"] | None = None
+    workflow_status: Literal["succeeded", "budget_exceeded", "failed"]
+    error_code: Literal["autonomous_budget_exceeded", "evaluation_replanning_disabled"] | None = (
+        None
+    )
     task_success: bool
     verification: Literal["accepted", "rejected", "not_run"]
     step_runs: StepCounts
@@ -52,8 +65,15 @@ class WorkflowLabels(EvaluationModel):
 
     @model_validator(mode="after")
     def coherent(self) -> "WorkflowLabels":
-        if (self.workflow_status == "budget_exceeded") != bool(self.error_code):
-            raise ValueError("Budget refusal needs its exact error code")
+        if (
+            self.error_code
+            != {
+                "succeeded": None,
+                "budget_exceeded": "autonomous_budget_exceeded",
+                "failed": "evaluation_replanning_disabled",
+            }[self.workflow_status]
+        ):
+            raise ValueError("Refusal needs its exact error code")
         if self.task_success != (
             self.workflow_status == "succeeded" and self.verification == "accepted"
         ):
@@ -61,6 +81,35 @@ class WorkflowLabels(EvaluationModel):
         if self.workflow_status == "budget_exceeded" and self.verification != "not_run":
             raise ValueError("This early budget case cannot claim independent grading")
         return self
+
+
+class WorkflowAblationLabels(EvaluationModel):
+    baseline: WorkflowLabels
+    overrides: dict[WorkflowVariant, WorkflowLabels] = Field(default_factory=dict, max_length=4)
+
+    @model_validator(mode="after")
+    def no_baseline_override(self) -> "WorkflowAblationLabels":
+        if "baseline" in self.overrides:
+            raise ValueError("Baseline cannot override itself")
+        return self
+
+    def for_variant(self, variant: WorkflowVariant) -> dict[str, JsonValue]:
+        return self.overrides.get(variant, self.baseline).model_dump(mode="json")
+
+
+class WorkflowPath(EvaluationModel):
+    planner_calls: int = Field(ge=0, le=2)
+    reviewer_calls: int = Field(ge=0, le=2)
+    replanner_calls: int = Field(ge=0, le=1)
+    memory_reads: int = Field(ge=0, le=2)
+    memory_contexts: int = Field(ge=0, le=2)
+    memory_payloads: int = Field(ge=0, le=2)
+    memory_events: int = Field(ge=0, le=2)
+    memory_learning_calls: int = Field(ge=0, le=1)
+    saved_plans: int = Field(ge=0, le=2)
+    saved_reviews: int = Field(ge=0, le=2)
+    static_plan: bool
+    rules_only_reviews: bool
 
 
 class WorkflowObservation(EvaluationModel):
@@ -84,6 +133,7 @@ class WorkflowObservation(EvaluationModel):
     verification: ExperimentVerification | None = None
     execution_sandbox_runs: int = Field(ge=0, le=16)
     grading_sandbox_runs: int = Field(ge=0, le=1)
+    execution_path: WorkflowPath | None = None
 
     @property
     def task_completed(self) -> bool:
@@ -187,7 +237,13 @@ class InjectedWorkflowAdapter:
         sandbox: SandboxExecutor,
         resources: dict[str, str],
         workspace_root: Path,
+        ablation: bool = False,
+        variant: WorkflowVariant = "baseline",
     ) -> None:
+        if variant not in WORKFLOW_VARIANTS or (variant != "baseline" and not ablation):
+            raise ValueError("Workflow ablation must be explicitly enabled")
+        self.ablation = ablation
+        self.variant = variant
         self.fixture = fixture
         self.sandbox = sandbox
         self.resources = resources
@@ -201,7 +257,7 @@ class InjectedWorkflowAdapter:
         self.identity = AdapterIdentity(
             name="isolated-durable-workflow",
             category="end_to_end",
-            variant="baseline",
+            variant=variant,
             execution="injected",
             model="scripted-public-workflow",
             resources={
@@ -210,12 +266,31 @@ class InjectedWorkflowAdapter:
                 "train_template": hashlib.sha256(self.train_source.encode()).hexdigest(),
                 "test_template": hashlib.sha256(self.test_source.encode()).hexdigest(),
                 "checkpoint_oracle": hashlib.sha256(self.oracle_source.encode()).hexdigest(),
+                **(
+                    {
+                        "ablation_policy": hashlib.sha256(
+                            Path(__file__).with_name("workflow_ablation.py").read_bytes()
+                        ).hexdigest(),
+                        "public_memory": hashlib.sha256(
+                            public_project_context().model_dump_json().encode()
+                        ).hexdigest(),
+                        "project_knowledge": hashlib.sha256(PUBLIC_KNOWLEDGE.encode()).hexdigest(),
+                        "knowledge_algorithm": hashlib.sha256(
+                            Path(__file__).with_name("retrieval_ablation.py").read_bytes()
+                        ).hexdigest(),
+                    }
+                    if ablation
+                    else {}
+                ),
             },
         )
 
     def validate_case(self, case: BenchmarkCase) -> None:
         query = QueryInputs.model_validate(case.inputs)
-        WorkflowLabels.model_validate(case.expected)
+        if self.ablation:
+            WorkflowAblationLabels.model_validate(case.expected)
+        else:
+            WorkflowLabels.model_validate(case.expected)
         script = self.fixture.scripts.get(query.query_id)
         if script is None or script.prompt != case.prompt:
             raise ValueError("Workflow fixture input binding differs")
@@ -225,7 +300,9 @@ class InjectedWorkflowAdapter:
         script = self.fixture.scripts[query.query_id]
         if script.prompt != prompt:
             raise ValueError("Workflow query changed after preflight")
-        provider = ScriptedWorkflowProvider(self.fixture, script)
+        provider = ScriptedWorkflowProvider(
+            self.fixture, script, project_source=PUBLIC_KNOWLEDGE if self.ablation else None
+        )
         search = WorkflowSearch(self.fixture)
         recorded = ObservedSandbox(self.sandbox, self.resources)
         faulted = WorkflowFaultSandbox(recorded, script.fault)
@@ -233,14 +310,43 @@ class InjectedWorkflowAdapter:
         restart_bound: bool | None = None
         saved_code_child: str | None = None
         saved_usage: dict[str, int] = {}
-        async with local_workflow(self.workspace_root) as state:
-            durable = workflow_service(state, provider, search, faulted, script)
+        async with local_workflow(self.workspace_root) as state, AsyncExitStack() as stack:
+            knowledge = None
+
+            def services() -> DurableService:
+                return workflow_service(
+                    state,
+                    provider,
+                    search,
+                    faulted,
+                    script,
+                    variant=self.variant,
+                    observe_memory=self.ablation,
+                    knowledge=knowledge,
+                )
+
+            durable = services()
+            memories = [durable.memory]
+            project_id = None
+            if self.ablation:
+                project = await KnowledgeRepository(state.tasks.session_factory).create_project(
+                    name="Public workflow ablation", description="Isolated evaluation only"
+                )
+                project_id = project.id
+                await durable.memory.update(
+                    project_id,
+                    ProjectMemoryUpdate(expected_version=0, context=public_project_context()),
+                )
+                knowledge = await stack.enter_async_context(workflow_knowledge(state, project_id))
+                durable = services()
+                memories = [durable.memory]
             task_id, _ = await durable.submit(
                 {
                     "objective": prompt,
                     "research_sources": ["web"],
                     "experiment_specification": script.specification.model_dump(),
                     "budget": script.limits.model_dump(),
+                    "project_id": project_id,
                 },
                 "public-case",
             )
@@ -259,7 +365,8 @@ class InjectedWorkflowAdapter:
                     old_owner = durable.owner
                     old_engine = state.engine
                     await state.reopen()
-                    durable = workflow_service(state, provider, search, faulted, script)
+                    durable = services()
+                    memories.append(durable.memory)
                     restored, restored_job = await durable.repository.snapshot(task_id)
                     restarted = 1
                     restart_bound = (
@@ -279,6 +386,27 @@ class InjectedWorkflowAdapter:
             steps = await durable.service.workflows.history(task_id, "steps")
             plans = await durable.service.workflows.history(task_id, "plans")
             checkpoints = await durable.repository.history(task_id, "checkpoints")
+            path = None
+            if self.ablation:
+                observed = [item for item in memories if isinstance(item, ObservedWorkflowMemory)]
+                reviews = await durable.service.workflows.history(task_id, "reviews")
+                events = await durable.repository.history(task_id, "events", limit=500)
+                path = WorkflowPath(
+                    planner_calls=provider.stage_calls.get("submit_task_plan", 0),
+                    reviewer_calls=provider.stage_calls.get("submit_review", 0),
+                    replanner_calls=provider.stage_calls.get("submit_plan_revision", 0),
+                    memory_reads=sum(item.reads for item in observed),
+                    memory_contexts=sum(item.nonempty for item in observed),
+                    memory_payloads=provider.memory_payloads,
+                    memory_events=sum(item["kind"] == "memory_retrieved" for item in events),
+                    memory_learning_calls=sum(item.learns for item in observed),
+                    saved_plans=len(plans),
+                    saved_reviews=len(reviews),
+                    static_plan=bool(plans) and plans[0]["reason"] == "evaluation_static_plan",
+                    rules_only_reviews=self.variant == "no_reviewer"
+                    and bool(reviews)
+                    and "submit_review" not in provider.stage_calls,
+                )
             counts = {
                 key: sum(step["step_id"] == key for step in steps)
                 for key in ("research", "code", "train")
@@ -349,9 +477,11 @@ class InjectedWorkflowAdapter:
                     (self.fixture.sources[topic].content, (f"E{index}",))
                     for index, topic in enumerate(TOPICS, 1)
                 }
+                if self.ablation:
+                    expected_citations.add((PUBLIC_KNOWLEDGE, ("E4",)))
                 evidence_bound = (
-                    len(research.evidence) == 3
-                    and len(research.citations) == 3
+                    len(research.evidence) == (4 if self.ablation else 3)
+                    and len(research.citations) == (4 if self.ablation else 3)
                     and {(item.claim, item.evidence_ids) for item in research.citations}
                     == expected_citations
                     and all(
@@ -361,10 +491,22 @@ class InjectedWorkflowAdapter:
                         and item.url == f"https://example.org/autoscholar-public/{topic}"
                         and f"{item.claim} [{item.citation_key}]" in (research.answer or "")
                         for index, (topic, item) in enumerate(
-                            zip(TOPICS, research.evidence, strict=True), 1
+                            zip(TOPICS, research.evidence[:3], strict=True), 1
                         )
                     )
                 )
+                if self.ablation:
+                    document = research.evidence[-1]
+                    evidence_bound = evidence_bound and (
+                        document.source_type == "document"
+                        and document.claim == document.excerpt == PUBLIC_KNOWLEDGE
+                        and document.citation_key == "E4"
+                        and document.document_id is not None
+                        and document.chunk_id is not None
+                        and document.url
+                        == f"/projects/{project_id}/documents/{document.document_id}/content#page=1"
+                        and f"{PUBLIC_KNOWLEDGE} [E4]" in (research.answer or "")
+                    )
             code_result = snapshot.results.get("code", {})
             if code_result.get("status") == "succeeded":
                 validated = [
@@ -425,7 +567,7 @@ class InjectedWorkflowAdapter:
                     and evidence_bound is True
                     and all(
                         f"{research_result['child_task_id']}:E{index}" in answer
-                        for index in (1, 2, 3)
+                        for index in ((1, 2, 3, 4) if self.ablation else (1, 2, 3))
                     )
                 )
                 earlier = [
@@ -448,7 +590,8 @@ class InjectedWorkflowAdapter:
                 {
                     "workflow_status": parent.status,
                     "error_code": parent.error_code
-                    if parent.error_code in (None, "autonomous_budget_exceeded")
+                    if parent.error_code
+                    in (None, "autonomous_budget_exceeded", "evaluation_replanning_disabled")
                     else "unexpected_workflow_error",
                     "step_runs": counts,
                     "replans": job.usage.get("replans", 0),
@@ -468,6 +611,7 @@ class InjectedWorkflowAdapter:
                     "verification": verification.model_dump(mode="json") if verification else None,
                     "execution_sandbox_runs": execution_count,
                     "grading_sandbox_runs": len(recorded.runs) - execution_count,
+                    "execution_path": path.model_dump(mode="json") if path else None,
                 }
             )
             usage = fixture_usage(model_calls=provider.calls).model_copy(
@@ -476,4 +620,54 @@ class InjectedWorkflowAdapter:
             return Observation(payload=actual.model_dump(mode="json"), usage=usage)
 
     def score(self, observation: Observation, expected: dict[str, JsonValue]) -> ScoreCard:
-        return score_workflow(observation, expected)
+        if not self.ablation:
+            return score_workflow(observation, expected)
+        labels = WorkflowAblationLabels.model_validate(expected).for_variant(self.variant)
+        score = score_workflow(observation, labels)
+        actual = WorkflowObservation.model_validate(observation.payload)
+        path = actual.execution_path
+        if path is None:
+            score.checks["observed_execution_path"] = False
+            return score
+        score.checks.update(
+            {
+                "planner_path": path.planner_calls == (0 if self.variant == "no_planner" else 1)
+                and path.static_plan == (self.variant == "no_planner"),
+                "reviewer_path": path.reviewer_calls
+                == (0 if self.variant == "no_reviewer" else path.saved_reviews)
+                and path.rules_only_reviews
+                == (self.variant == "no_reviewer" and path.saved_reviews > 0),
+                "replanning_path": path.replanner_calls == actual.replans
+                and (self.variant != "no_replanning" or actual.replans == 0),
+                "memory_read_path": path.memory_reads
+                == path.memory_contexts
+                == path.memory_events
+                == (
+                    0
+                    if self.variant == "no_memory"
+                    else 1
+                    + path.replanner_calls
+                    + int(actual.error_code == "evaluation_replanning_disabled")
+                ),
+                "memory_payload_path": path.memory_payloads
+                == (
+                    0 if self.variant == "no_memory" else path.planner_calls + path.replanner_calls
+                ),
+                "memory_learning_path": path.memory_learning_calls
+                == (
+                    int(actual.workflow_status == "succeeded") if self.variant != "no_memory" else 0
+                ),
+            }
+        )
+        for key in (
+            "planner_calls",
+            "reviewer_calls",
+            "replanner_calls",
+            "memory_reads",
+            "memory_contexts",
+            "memory_payloads",
+            "memory_events",
+            "memory_learning_calls",
+        ):
+            score.metrics[key] = float(getattr(path, key))
+        return score

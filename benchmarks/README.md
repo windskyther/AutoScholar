@@ -275,10 +275,80 @@ The normal service/DB stack is never recreated or migrated; cached images/public
 local reports/SQLite/workspaces are retained. This does not exercise HTTP/browser deployment,
 real provider reasoning, real semantic RAG, or all possible hostile-code/checkpoint attacks.
 
+## Controlled execution ablations
+
+`ablations/workflow_v1.json` contains three public cases and independent baseline/override
+labels; `workflow_fixture_v1.json` contains execution inputs only. Five actual variants run
+the same normal, invalid-metrics recovery and fabricated-accuracy inputs. The baseline and
+all variants seed the same real public project Memory and pre-chunked public project document.
+Project-scoped Research requires a document source, so the actual local Qdrant/RAG chain supplies
+a fourth bound evidence/citation in addition to three fixed web sources. No fake knowledge
+retriever, verified historical experiences or private design text is supplied.
+
+| Variant | Actual intervention | Retained checks |
+|---|---|---|
+| baseline | Stock model Planner/Reviewer/Replanner plus actual Memory | All execution and independent grading |
+| no_planner | Validated static DAG instead of root model planning | Child planning, DAG validation, budget, audit |
+| no_reviewer | Rules-only review instead of the model Reviewer | Rules, saved review, Writer recheck, checkpoint oracle |
+| no_memory | Bypass Memory reads and learning | Same seeded project/documents and current specification |
+| no_replanning | Explicit failure before a revision/model/training retry | Failed attempts retained; no failed final report |
+
+Expected checks pass for all 15 records. Baseline/no_planner/no_reviewer/no_memory complete
+2/3 tasks; no_replanning completes 1/3. Fabricated accuracy never earns task success.
+No Reviewer still recovers because deterministic rules detect invalid metrics. This is
+deliberate safety retention, not a full removal of all review/integrity mechanisms. Fixed
+decisions do not measure real planning/review intelligence or Memory's reasoning benefit.
+Seeded Memory contains only current public project constraints. Successful recovery may
+record an actual provenance-backed experience through the stock service; No Memory bypasses
+that learning. No fake previous experience is created to improve results.
+
+`ablations/retrieval_v1.json` has five independent English relevance labels and a separate
+eight-chunk public text fixture. Dense vectors and sparse counts are computed from text by
+bounded bag-of-words algorithms; real Qdrant Local cosine/sparse/RRF searches execute, followed
+by real Jaccard token-overlap sorting or no reranking. There are no canned rankings, model
+downloads or vendor requests. Candidate limit and final retrieval K are identical in both
+variants, and a baseline-first audit compares each actual ordered candidate pool. Stable ties
+retain RRF order. UUID indexing IDs map back to public relevance IDs for document/chunk scoring.
+Relevance outcomes are measured metrics, not acceptance prerequisites: an irrelevant result
+does not get hidden as an adapter error. This does NOT test production neural FastEmbed/
+Cross-Encoder quality, cross-language retrieval or full semantic RAG. Local Qdrant warns that
+payload indexes have no effect; scope filters still execute and are checked.
+
+Workflow and retrieval have separate task/metric denominators. Each completed run retains the
+standard report plus `ablation_comparison.json`; delta direction is **variant minus baseline**.
+Only identical case/repeat/seed, input/gold digests and resource identities are matched. Metric
+differences use only pairs with both measurements and show paired/planned coverage; missing
+measurements are unknown, not zero. These small controlled contrasts are descriptive, not
+statistically significant evidence. Script callbacks and synthetic budget tokens are still
+separate from the zero actual vendor tokens/API requests. Money remains unknown.
+
+No Docker is needed for the retrieval suite:
+
+```powershell
+Set-Location D:\98281\deepscholar
+.venv\Scripts\python.exe -m autoscholar.evaluation run --category rag --ablations --profile injected --repeats 2
+if ($LASTEXITCODE -ne 0) { throw 'Local retrieval ablation checks failed' }
+```
+
+For workflow ablations, use the **complete isolated 10E startup/cleanup block above**, changing
+the unique project prefix to `autoscholar-eval-10f-` and replacing its run command with:
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation run --category end_to_end --ablations --profile injected --sandbox-container $controller --timeout 360 --repeats 2
+if ($LASTEXITCODE -ne 0) { throw 'Workflow ablation checks failed' }
+```
+
+Keep that block's pinned local context, explicit public defaults, cached-image/no-build flags,
+and finally cleanup for only its unique project. Shared live cancellation/isolation checks
+may also be rerun using the same controller; no normal app DB/migrations/stack are involved.
+All databases, workspaces, artifacts and reports stay ignored under `data/`; secrets and design
+documents must never be staged. Neither CLI enables paid providers or modifies production
+policies: the ablation service subclass is confined to the explicit evaluation path.
+
 ## Next stages
 
-Ablation and independent real semantic/provider verification
-remain separate Phase 10 modules. The injected RAG adapter accepts an explicitly provisioned
+Phase 10G aggregate acceptance and independent neural semantic/provider verification
+remain separate Phase 10 work. The generic injected RAG adapter accepts an explicitly provisioned
 retriever; it does not create one from environment settings and does not infer its API cost.
 Real-model semantic comparisons require actual labeled corpus retrieval, actual model/resource
 identities and separate verification. Real paid-provider evaluations require owner approval.

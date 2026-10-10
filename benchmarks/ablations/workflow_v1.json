@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "public-workflow-ablation-v1",
+  "category": "end_to_end",
+  "description": "Paired actual execution-path ablations of scripted public workflows. No Planner uses a validated static DAG; No Reviewer removes only the model reviewer, never deterministic integrity checks; No Memory bypasses real public project-memory reads/learning; No Replanning stops explicitly. Reranker is evaluated separately on a real controlled local retrieval chain.",
+  "provenance": "Self-authored public engineering cases. Fixed decisions do not measure LLM reasoning or memory learning ability. Gold outcomes are independent of execution inputs; all variants share inputs, budget limits and physical grading. No credentials or private design content.",
+  "cases": [
+    {"id":"ablation-normal","prompt":"Research the public scope, validate seeded code, train MLP and CNN on the fixed MNIST subset, and report only saved measured results.","inputs":{"query_id":"normal"},"expected":{"baseline":{"workflow_status":"succeeded","task_success":true,"verification":"accepted","step_runs":{"research":1,"code":1,"train":1},"replans":0,"training_runs":1,"restarts":0},"overrides":{}}},
+    {"id":"ablation-recover","prompt":"Recover once from an invalid collected metrics artifact in the public MNIST comparison; rerun only the experiment and report the latest reviewed result.","inputs":{"query_id":"recover"},"expected":{"baseline":{"workflow_status":"succeeded","task_success":true,"verification":"accepted","step_runs":{"research":1,"code":1,"train":2},"replans":1,"training_runs":2,"restarts":0},"overrides":{"no_replanning":{"workflow_status":"failed","error_code":"evaluation_replanning_disabled","task_success":false,"verification":"not_run","step_runs":{"research":1,"code":1,"train":1},"replans":0,"training_runs":1,"restarts":0}}}},
+    {"id":"ablation-deception","prompt":"Independently evaluate a public workflow that reports fabricated but schema-valid accuracies; successful workflow status alone must not earn task-success credit.","inputs":{"query_id":"deception"},"expected":{"baseline":{"workflow_status":"succeeded","task_success":false,"verification":"rejected","step_runs":{"research":1,"code":1,"train":1},"replans":0,"training_runs":1,"restarts":0},"overrides":{}}}
+  ]
+}

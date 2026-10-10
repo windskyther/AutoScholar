@@ -16,10 +16,16 @@ from autoscholar.coding.agent import CodingAgent, CodingLimits
 from autoscholar.coding.sandbox import SandboxExecutor
 from autoscholar.coding.workspace import WorkspaceManager
 from autoscholar.core.budget import BudgetedLLM
+from autoscholar.evaluation.workflow_ablation import (
+    AblationAutonomousService,
+    ObservedWorkflowMemory,
+    WorkflowVariant,
+)
 from autoscholar.evaluation.workflow_fixture import (
     ScriptedWorkflowProvider,
     WorkflowScript,
     WorkflowSearch,
+    workflow_plan,
 )
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.service import ExperimentService
@@ -27,6 +33,7 @@ from autoscholar.orchestration.durable import DurableService
 from autoscholar.orchestration.repository import WorkflowRepository
 from autoscholar.orchestration.sandbox import BudgetedSandbox
 from autoscholar.orchestration.service import AutonomousService
+from autoscholar.rag.service import RAGQueryServiceProtocol
 
 
 @dataclass
@@ -71,6 +78,10 @@ def workflow_service(
     search: WorkflowSearch,
     sandbox: SandboxExecutor,
     script: WorkflowScript,
+    *,
+    variant: WorkflowVariant = "baseline",
+    observe_memory: bool = False,
+    knowledge: RAGQueryServiceProtocol | None = None,
 ) -> DurableService:
     metered = BudgetedLLM(provider)
     isolated = BudgetedSandbox(sandbox)
@@ -88,8 +99,12 @@ def workflow_service(
         tools=[],
         coding_service=coding,
         research_services=[search],
+        knowledge_service=knowledge,
     )
-    service = AutonomousService(
+    service_class = AblationAutonomousService if observe_memory else AutonomousService
+    if variant != "baseline" and not observe_memory:
+        raise ValueError("Ablation must be explicitly enabled")
+    service = service_class(
         provider=metered,
         tasks=state.tasks,
         workflows=WorkflowRepository(state.tasks.session_factory),
@@ -107,4 +122,11 @@ def workflow_service(
         ),
         limits=script.limits,
     )
-    return DurableService(service)
+    durable = DurableService(service)
+    if isinstance(service, AblationAutonomousService):
+        service.variant = variant
+        service.static_plan = workflow_plan(script)
+        memory = ObservedWorkflowMemory(durable.repository)
+        memory.enabled = variant != "no_memory"
+        durable.memory = memory
+    return durable

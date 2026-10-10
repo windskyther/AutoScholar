@@ -1073,7 +1073,30 @@ Experiment 在 CPU 上实际训练 MLP/CNN（默认各 128 个训练／测试样
 
 完整独立启动、两轮重复验收、执行中取消及资源清理流程见 [端到端评测说明](benchmarks/README.md#durable-end-to-end-workflow-suite)。这是 CLI→持久化工作流→沙箱的工程评测，不是浏览器／HTTP 部署、真实模型或语义检索能力总验收。
 
-10A、10B 排序计分、10C 本地工程、10D 真实隔离组件与 10E 端到端工程评测已实现。真实语义检索／供应商评测、10F 消融、10G 全阶段验收仍未完成。Phase 10 尚未总验收，不自动合并 `main`。
+### 10F：受控执行路径消融
+
+新增显式 `--ablations` 入口。工作流套件将相同的正常、无效指标恢复、伪造准确率用例，分别运行 baseline、No Planner、No Reviewer、No Memory、No Replanning，共 15 条记录；每例仍使用独立 SQLite、源码和真实隔离训练／检查点 oracle。各变体保留相同输入、预算上限、模板和数据指纹。
+
+- No Planner：用经过同样 DAG 校验的固定计划替代根 Planner 模型调用；不移除子 Agent 的规划。
+- No Reviewer：只移除模型 Reviewer，保留确定性审核、Writer 重检及独立 oracle；不是“取消所有审核”。
+- No Memory：绕过真实项目 Memory 的读取与学习。基线由公开约束初始化 Memory，不伪造“已验证经验”；固定决策不衡量记忆带来的推理增益。
+- No Replanning：审核失败后明确停止，保留失败记录，不重跑训练、不发布最终报告。
+- No Reranker：在独立检索套件中比较真实本地 Qdrant 的 cosine／sparse／RRF 和移除重排后的结果；使用词项计数与 Jaccard 重排，无固定排序回放。两变体逐例核对相同有序候选池。仅为受控词项算法，不代表生产神经 Embedding／Cross-Encoder 或中文语义质量。
+
+项目级 Research 会要求本地文档证据，因此工作流基线与全部变体均加入同一份公开项目文档，实际走本地检索与第四条引用绑定。Reranker 套件单独统计文档/chunk Recall、MRR、NDCG，不与工作流任务完成率混合。回调、Memory 事件、规则审核历史和预算均核对真实执行记录；规则拒绝通过检查不计为任务完成。
+
+```powershell
+# 无 Docker、无下载、无外部 API 的真实本地词项检索对照
+.venv\Scripts\python.exe -m autoscholar.evaluation run --category rag --ablations --profile injected --repeats 2
+if ($LASTEXITCODE -ne 0) { throw 'Retrieval ablation checks failed' }
+# 工作流消融需先启动独立控制器；完整启动和清理流程见 benchmarks/README.md
+.venv\Scripts\python.exe -m autoscholar.evaluation run --category end_to_end --ablations --profile injected --sandbox-container $controller --timeout 360 --repeats 2
+if ($LASTEXITCODE -ne 0) { throw 'Workflow ablation checks failed' }
+```
+
+完成运行后额外生成 `ablation_comparison.json`，逐例匹配相同输入、种子、标准答案及资源摘要，给出“变体减基线”的描述性差值及有效配对/计划分母；缺失结果保持未知，不声称统计显著性或真实模型能力。恢复用例的 No Replanning 是预期非完成；伪造准确率在所有变体仍不得获任务成功分。
+
+10A–10F 工程评测入口已实现；10F 真实隔离复验正在完成。真实神经语义检索／供应商评测和 10G 全阶段验收尚未完成。Phase 10 尚未总验收，不自动合并 `main`。
 
 2026-10-09 10E 验证：新增 **43 项端到端测试**通过；完整后端 **577 passed、3 skipped**，Ruff、mypy（201 文件）通过。首轮 5 个真实 Docker 工作流达到预期（3 个任务完成、预算中止与造假负例各 1），原 10D 的 5 个 Experiment 用例回归通过。另在真实运行的训练容器中取消完整工作流，验证退出后无本轮临时容器／卷、SQLite 可重开、状态为 `recovery_required` 且没有自动重跑；共用沙箱隔离／超时／取消检查也通过。外部 API 请求为 0，未迁移应用数据库或合并 `main`；3 个跳过项仍为旧 Compose smoke 开关及 Windows 符号链接权限限制。
 

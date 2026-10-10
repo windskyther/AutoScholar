@@ -94,10 +94,15 @@ def workflow_plan(script: WorkflowScript) -> TaskPlan:
 
 
 class ScriptedWorkflowProvider:
-    def __init__(self, fixture: WorkflowFixture, script: WorkflowScript) -> None:
+    def __init__(
+        self, fixture: WorkflowFixture, script: WorkflowScript, *, project_source: str | None = None
+    ) -> None:
         self.fixture = fixture
         self.script = script
         self.calls = 0
+        self.stage_calls: dict[str, int] = {}
+        self.memory_payloads = 0
+        self.project_source = project_source
 
     @property
     def configured(self) -> bool:
@@ -158,6 +163,10 @@ class ScriptedWorkflowProvider:
                     for index, topic in enumerate(TOPICS, 1)
                 ]
             }
+            if self.project_source:
+                arguments["items"].append(
+                    {"candidate_id": "C4", "claim": self.project_source, "relevance": 1.0}
+                )
         elif name == "submit_research_report":
             arguments = {
                 "answer": "\n".join(
@@ -169,6 +178,11 @@ class ScriptedWorkflowProvider:
                     for index, topic in enumerate(TOPICS, 1)
                 ],
             }
+            if self.project_source:
+                arguments["answer"] += f"\n{self.project_source} [E4]"
+                arguments["citations"].append(
+                    {"claim": self.project_source, "evidence_ids": ["E4"]}
+                )
         elif "submit_code_ready" in names:
             # Snapshot mode supplies complete sources and intentionally removes read/list tools.
             user = messages[-1]
@@ -191,6 +205,15 @@ class ScriptedWorkflowProvider:
             raise ValueError("Unexpected scripted workflow stage")
         if name not in names:
             raise ValueError("Scripted workflow requested an unavailable tool")
+        self.stage_calls[name] = self.stage_calls.get(name, 0) + 1
+        if name in {"submit_task_plan", "submit_plan_revision"}:
+            user = messages[-1]
+            if not isinstance(user, ChatMessage):
+                raise ValueError("Missing actual planning payload")
+            payload = decode_json(user.content.encode())
+            if not isinstance(payload, dict):
+                raise ValueError("Invalid actual planning payload")
+            self.memory_payloads += bool(payload.get("memory_context_untrusted"))
         return LLMResult(
             text="",
             model="scripted-public-workflow",
