@@ -358,10 +358,56 @@ Local run directories (ignored, never uploaded):
 Temporary controller/network removal preserves cached images, MNIST, SQLite, artifacts and
 reports. No application DB migration, paid request or main merge is part of this verification.
 
+## Engineering acceptance pack (10G)
+
+`python -m autoscholar.evaluation pack` executes a fixed serial pack of all six categories
+plus workflow and actual local lexical retrieval ablations. The default one-repeat plan has
+155 records (80 + 10 + 20 + 10 + 5 + 5 + 15 + 10); two repeats have 310 records. All suite
+inputs, adapter identities and cached sandbox image/MNIST digests are preflighted before any
+pack starts. A clean committed source is required. It never loads application `.env`/Settings,
+provisions paid providers, executes benchmark source on the host or silently retries a run.
+
+Use the **complete startup/finally-cleanup block in the E2E section above**, change the unique
+project prefix to `autoscholar-eval-10g-`, and replace the category run command with:
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation pack --sandbox-container $controller --timeout 360
+if ($LASTEXITCODE -ne 0) { throw 'Engineering acceptance pack failed; inspect its local reports' }
+```
+
+Keep pinned local context, explicit public defaults, cached-image/no-build flags and the two
+real isolation/cancellation scripts. Only the unique temporary project is removed; reports,
+artifacts, SQLite, public data and cached images are preserved. A longer local CPU run is
+expected; it produces no external API requests. `--repeats`, `--seed`, `--timeout` and
+`--output-root data/evaluation/<group>` remain explicit bounded options. There is no resume,
+suite selection, provider toggle, input path override or replacement of missing Docker.
+
+Each new ignored `data/evaluation/pack-<UUID>/` retains `pack_manifest.json`, `summary.json`,
+the total `evaluation_report.md` and its eight runs under `runs/<slot>/eval-<UUID>/`.
+The aggregator revalidates bounded primary manifest/JSONL bytes against the exact preflighted
+suite, category, adapter/resource identities, committed source, case IDs, input/gold hashes,
+repeat/seed and outcome/check consistency. Duplicate/mismatched records cannot pass. The
+primary file digests are checked again at completion. Reports are local evidence, not signed
+tamper-proof attestations; subrun summary/Markdown labels are never trusted as acceptance.
+
+All eight planned suites remain in coverage after infrastructure errors/cancellation. Errors
+stop without retry; cancellation keeps started primary records and partial total reports.
+Skipped/unrun/unknown usage is not converted to zero. Checks and independent E2E completion
+stay per suite/variant; relevance metrics, latency and paired ablation differences retain
+their own measured/planned denominators. There is no mixed overall task-success rate or
+statistical/neural/model-ability claim. Script callbacks/synthetic budget units are separate
+from vendor tokens; monetary cost remains unknown without price evidence.
+
+Exit 0 means the controlled **engineering pack** passed; 1 means incomplete/failed evidence,
+2 means configuration/IO error, 130 means cancellation. `phase10_overall_acceptance` remains
+false and `unverified` explicitly names production neural semantic retrieval and real
+provider/model ability. A successful engineering pack does not approve a main merge or prove
+full Phase 10 ability acceptance. Full clean-source runtime verification is still pending.
+
 ## Next stages
 
-Phase 10G aggregate acceptance and independent neural semantic/provider verification
-remain separate Phase 10 work. The generic injected RAG adapter accepts an explicitly provisioned
+Independent neural semantic/provider verification remains separate Phase 10 work after the
+controlled 10G engineering pack. The generic injected RAG adapter accepts an explicitly provisioned
 retriever; it does not create one from environment settings and does not infer its API cost.
 Real-model semantic comparisons require actual labeled corpus retrieval, actual model/resource
 identities and separate verification. Real paid-provider evaluations require owner approval.

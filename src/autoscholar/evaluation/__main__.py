@@ -3,16 +3,27 @@
 import argparse
 import asyncio
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from autoscholar.coding.sandbox import SandboxError
 from autoscholar.evaluation.datasets import load_suite
-from autoscholar.evaluation.models import RunConfiguration
+from autoscholar.evaluation.models import BenchmarkSuite, RunConfiguration
+from autoscholar.evaluation.runner import EvaluationAdapter
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-async def _run(args: argparse.Namespace) -> int:
+@dataclass
+class PreparedEvaluation:
+    suite: BenchmarkSuite
+    digest: str
+    adapters: list[EvaluationAdapter]
+    configuration: RunConfiguration
+    destination: Path
+
+
+async def _prepare(args: argparse.Namespace) -> PreparedEvaluation:
     from autoscholar.evaluation.coding_adapter import (
         CodingFixture,
         CodingOracleFixture,
@@ -34,7 +45,6 @@ async def _run(args: argparse.Namespace) -> int:
         RetrievalFixture,
         RetrievalPairAudit,
     )
-    from autoscholar.evaluation.runner import EvaluationAdapter, run_evaluation
     from autoscholar.evaluation.tool_adapter import FixtureToolAdapter, ToolFixture
     from autoscholar.evaluation.workflow_ablation import WORKFLOW_VARIANTS
     from autoscholar.evaluation.workflow_fixture import WorkflowFixture
@@ -201,18 +211,32 @@ async def _run(args: argparse.Namespace) -> int:
             fixture_suite = tool.suite_id
     if fixture_suite != suite.id:
         raise ValueError("Fixture and suite IDs differ")
+    return PreparedEvaluation(suite, digest, adapters, configuration, destination)
+
+
+async def _evaluate(prepared: PreparedEvaluation, *, ablations: bool) -> Path:
+    from autoscholar.evaluation.runner import run_evaluation
+
     directory = await run_evaluation(
-        suite,
-        dataset_sha256=digest,
-        adapters=adapters,
-        configuration=configuration,
-        output_root=destination,
+        prepared.suite,
+        dataset_sha256=prepared.digest,
+        adapters=prepared.adapters,
+        configuration=prepared.configuration,
+        output_root=prepared.destination,
         repo_root=REPO_ROOT,
     )
     if ablations:
         from autoscholar.evaluation.ablation_report import write_comparison
 
-        write_comparison(directory, planned=len(suite.cases) * configuration.repeats)
+        write_comparison(
+            directory, planned=len(prepared.suite.cases) * prepared.configuration.repeats
+        )
+    return directory
+
+
+async def _run(args: argparse.Namespace) -> int:
+    prepared = await _prepare(args)
+    directory = await _evaluate(prepared, ablations=args.ablations)
     summary = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
     failed = any(
         group["status_counts"].get(status, 0)
@@ -221,7 +245,7 @@ async def _run(args: argparse.Namespace) -> int:
     )
     print(f"Evaluation {'checks failed' if failed else 'checks passed'}: {directory}")
     print(
-        f"Profile: {args.profile} {category}; external API calls: 0. "
+        f"Profile: {args.profile} {prepared.suite.category}; external API calls: 0. "
         "Scripted responses do NOT measure real LLM ability; RAG replay is NOT real retrieval. "
         "Expected refusals passing checks are not completed research/numerical tasks."
     )
@@ -257,10 +281,28 @@ def main() -> int:
     run.add_argument("--repeats", type=int, default=1)
     run.add_argument("--timeout", type=float, default=30.0)
     run.add_argument("--output-root", type=Path)
+    pack = commands.add_parser(
+        "pack", help="Run all eight controlled engineering suites; no paid API or host fallback"
+    )
+    pack.add_argument("--sandbox-container", required=True)
+    pack.add_argument("--seed", type=int, default=42)
+    pack.add_argument("--repeats", type=int, default=1)
+    pack.add_argument("--timeout", type=float, default=360.0)
+    pack.add_argument("--output-root", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "run":
             return asyncio.run(_run(args))
+        if args.command == "pack":
+            from autoscholar.evaluation.pack import run_pack
+
+            directory, accepted = asyncio.run(run_pack(args, repo_root=REPO_ROOT))
+            print(f"Engineering pack {'passed' if accepted else 'NOT accepted'}: {directory}")
+            print(
+                "Real neural semantic/provider ability remains unverified; "
+                "this is NOT overall Phase 10 acceptance. No paid providers are enabled."
+            )
+            return 0 if accepted else 1
         suite, digest = load_suite(args.dataset)
     except (OSError, ValueError, SandboxError):
         print(

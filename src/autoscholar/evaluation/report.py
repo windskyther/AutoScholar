@@ -19,6 +19,27 @@ class MetricStatistics(TypedDict):
     planned: int
 
 
+class GroupSummary(TypedDict):
+    variant: str
+    execution: str
+    planned: int
+    recorded: int
+    status_counts: dict[str, int]
+    check_pass_rate: float
+    task_success_rate: float | None
+    metrics: dict[str, MetricStatistics]
+    usage: dict[str, int | float | None]
+    mean_duration_ms: float | None
+
+
+class RunSummary(TypedDict):
+    schema_version: int
+    run_id: str
+    state: str
+    suite_id: str
+    groups: list[GroupSummary]
+
+
 def _metrics(cases: Sequence[CaseResult], planned: int) -> dict[str, MetricStatistics]:
     names = sorted({key for result in cases if result.score for key in result.score.metrics})
     result: dict[str, MetricStatistics] = {}
@@ -43,8 +64,8 @@ def _display(value: int | float | None) -> str:
 
 def summarize(
     manifest: RunManifest, results: Sequence[CaseResult], planned_per_variant: int
-) -> dict[str, object]:
-    groups: list[dict[str, object]] = []
+) -> RunSummary:
+    groups: list[GroupSummary] = []
     for adapter in manifest.adapters:
         cases = [result for result in results if result.adapter.variant == adapter.variant]
         metric_summary = _metrics(cases, planned_per_variant)

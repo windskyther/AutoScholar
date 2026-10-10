@@ -1096,9 +1096,23 @@ if ($LASTEXITCODE -ne 0) { throw 'Workflow ablation checks failed' }
 
 完成运行后额外生成 `ablation_comparison.json`，逐例匹配相同输入、种子、标准答案及资源摘要，给出“变体减基线”的描述性差值及有效配对/计划分母；缺失结果保持未知，不声称统计显著性或真实模型能力。恢复用例的 No Replanning 是预期非完成；伪造准确率在所有变体仍不得获任务成功分。
 
-10A–10F 工程评测与无 API 费用复验已完成。真实神经语义检索／供应商评测和 10G 全阶段验收尚未完成。Phase 10 尚未总验收，不自动合并 `main`。
+10A–10F 工程评测与无 API 费用复验已完成。10G 整体验收入口已实现，完整运行验证正在进行；真实神经语义检索／供应商能力仍须独立验证。Phase 10 尚未总验收，不自动合并 `main`。
 
 2026-10-10 10F 验证：新增 **34 项消融测试**通过，与原端到端回归合计 **77 passed**；完整后端 **611 passed、3 skipped**，Ruff、mypy（206 文件）通过，另补测配对资源不一致、未知值及 Markdown 报告。干净代码版本 `f04a755` 下两轮真实 Docker 消融 **30/30 检查通过**，独立任务完成 **18/30**（含 10 条造假负例及 2 条禁用重规划的预期停止）；本地真实 Qdrant 对照 **20/20 检查通过**。五个工作流变体均具有完整 6/6 配对覆盖；Reranker 两组排序指标在此封闭夹具上相同，不据此声称重排有无科学增益。212 次脚本回调只产生 636 个模拟预算单位，真实供应商 Token／外部 API 请求为 0。运行记录保留在忽略的 `data/evaluation/`；本轮临时容器／卷清理为零，缓存镜像、公开数据集及报告保留，未重建正常部署或迁移应用数据库。跳过项仍为旧 Compose 开关及 Windows 符号链接权限限制。
+
+### 10G：工程整体验收与总报告
+
+新增固定八套件的 `pack` 入口，串行运行六类评测以及工作流／本地检索两组消融。默认一轮共 **155 条记录**：RAG 排序回放 80、Research 10、Tool 20、Coding 10、Experiment 5、端到端 5、工作流消融 15、本地词项检索消融 10；`--repeats 2` 为 310 条。训练与独立 oracle 仍只在显式独立 Docker 沙箱中执行，不启用付费供应商，也没有宿主机代码执行回退。
+
+入口要求干净的已提交版本，先验证全部公开输入及沙箱指纹，再新建 `data/evaluation/pack-<UUID>/`。输出 `pack_manifest.json`、`summary.json`、总 `evaluation_report.md`，各套件记录保存在其 `runs/` 下。总统计重新校验主记录的代码版本、输入／标准答案摘要、适配器／资源、种子、重复数和状态，不信任子报告的通过标签；完成时再次核对主文件字节摘要。重复、错绑、缺失、取消和未执行用例不能缩小分母或获得验收通过。基础设施错误即停止，不自动重跑；取消保存部分总报告并继续传播。
+
+```powershell
+# 先按 benchmarks/README.md 的完整隔离启动／清理流程创建独立控制器
+.venv\Scripts\python.exe -m autoscholar.evaluation pack --sandbox-container $controller --timeout 360
+if ($LASTEXITCODE -ne 0) { throw 'Engineering acceptance pack failed; inspect local reports' }
+```
+
+总报告保留各套件／变体的检查通过率、独立 E2E 任务完成率、指标计分覆盖、描述性配对差值和用量。不把不同粒度的成功率混成一个“整体任务成功率”，不把规则拒绝或造假检测视为任务完成，未知费用仍保持未知。退出码 0 仅表示**受控工程整包通过**，JSON 同时明确 `phase10_overall_acceptance=false`；真实神经语义和供应商／模型能力尚未验证，不能因此自动宣布 Phase 10 全部通过或合并 `main`。
 
 2026-10-09 10E 验证：新增 **43 项端到端测试**通过；完整后端 **577 passed、3 skipped**，Ruff、mypy（201 文件）通过。首轮 5 个真实 Docker 工作流达到预期（3 个任务完成、预算中止与造假负例各 1），原 10D 的 5 个 Experiment 用例回归通过。另在真实运行的训练容器中取消完整工作流，验证退出后无本轮临时容器／卷、SQLite 可重开、状态为 `recovery_required` 且没有自动重跑；共用沙箱隔离／超时／取消检查也通过。外部 API 请求为 0，未迁移应用数据库或合并 `main`；3 个跳过项仍为旧 Compose smoke 开关及 Windows 符号链接权限限制。
 
