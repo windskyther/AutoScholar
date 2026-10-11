@@ -1096,7 +1096,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Workflow ablation checks failed' }
 
 完成运行后额外生成 `ablation_comparison.json`，逐例匹配相同输入、种子、标准答案及资源摘要，给出“变体减基线”的描述性差值及有效配对/计划分母；缺失结果保持未知，不声称统计显著性或真实模型能力。恢复用例的 No Replanning 是预期非完成；伪造准确率在所有变体仍不得获任务成功分。
 
-10A–10G 受控工程评测与无 API 费用整包复验已完成；10H 默认缓存模型的真实语义检索验证正在推进，供应商能力仍须单独授权验证。Phase 10 尚未完成能力总验收，不自动合并 `main`。
+10A–10G 受控工程评测与无 API 费用整包复验已完成；10H 默认缓存模型在公开小语料上的真实语义检索验证已通过，供应商能力仍须单独授权验证。Phase 10 尚未完成能力总验收，不自动合并 `main`。
 
 2026-10-10 10F 验证：新增 **34 项消融测试**通过，与原端到端回归合计 **77 passed**；完整后端 **611 passed、3 skipped**，Ruff、mypy（206 文件）通过，另补测配对资源不一致、未知值及 Markdown 报告。干净代码版本 `f04a755` 下两轮真实 Docker 消融 **30/30 检查通过**，独立任务完成 **18/30**（含 10 条造假负例及 2 条禁用重规划的预期停止）；本地真实 Qdrant 对照 **20/20 检查通过**。五个工作流变体均具有完整 6/6 配对覆盖；Reranker 两组排序指标在此封闭夹具上相同，不据此声称重排有无科学增益。212 次脚本回调只产生 636 个模拟预算单位，真实供应商 Token／外部 API 请求为 0。运行记录保留在忽略的 `data/evaluation/`；本轮临时容器／卷清理为零，缓存镜像、公开数据集及报告保留，未重建正常部署或迁移应用数据库。跳过项仍为旧 Compose 开关及 Windows 符号链接权限限制。
 
@@ -1135,6 +1135,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Engineering acceptance pack failed; inspect lo
 模型容器无网络、非 root、限制 CPU/内存，仅只读挂载源码和模型缓存，不挂载 `.env`、设计文档、正常数据库或 Docker socket；不下载、不自动重试、不调用供应商。记录真实镜像、模型快照/文件摘要与运行时版本，执行结束再次核对源码/模型并验证本轮容器清理。输出保存在忽略的 `data/evaluation/neural-<UUID>/eval-<UUID>/`。
 
 工程检查与真实相关性分别统计。运行前固定质量门槛：dense、hybrid、hybrid_rerank 总体 Hit@5 ≥ 0.85，英文/中文/跨语言各 ≥ 0.75；sparse 记录实测分数但不承诺中文/跨语言语义能力。缺失计分、取消、资源误绑或清理未验证不能通过。语料是预分块文本，不覆盖 PDF 摄取、答案生成/忠实度、通用语义能力或付费模型总验收；`phase10_overall_acceptance` 仍为 false。完整说明见 [真实语义验证](benchmarks/README.md#actual-cached-neural-retrieval-validation)。
+
+2026-10-12 10H 验证：新增 **41 项契约测试**及完整后端 **689 passed、3 skipped**，Ruff、mypy（213 文件）和本轮 33 个文件格式检查通过。干净源码 `7b52091` 的真实缓存模型运行完成 **160/160 工程检查**，dense／hybrid／hybrid_rerank 的总体及各语言组 Hit@5 均为 1.0，满足预先固定门槛；总体 MRR 分别为 0.975／0.9333／1.0。BM25 的总体 Hit@5 为 0.45，英文 1.0、中文 0、跨语言 0.25，明确不推荐仅靠 sparse 处理这组中文/跨语言问题。40/40 个同候选池重排配对完整，MRR 描述性差值 +0.0667，不推断通用效果或显著性。实际 FastEmbed 0.8.0、ONNX Runtime 1.29.0；执行前后模型文件及源码一致，本轮容器清理为零。另实际发送缓存模型请求，在等待响应时分别取消／超时，验证异常传播、清理完成及已关闭客户端不可复用。全程外部 API 请求／供应商 Token 为 0，保留缓存、正常应用数据及本地报告；未重建正常部署或迁移应用数据库。报告在 `data/evaluation/neural-1c60445a1d554ed08d7a0c9765df295d/eval-e8d1bf658c694d1ca62cfb3e6f0ef788/evaluation_report.md`；安全补测在 `data/validation/phase10h-9725d9b964fa4bffa6623269ff9918ee/acceptance.json`。跳过项仍为旧 Compose 开关及两个 Windows 符号链接权限限制。付费供应商能力未测，尚不宣布 Phase 10 全部验收通过或合并 `main`。
 
 ## 开发路线
 

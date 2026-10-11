@@ -484,10 +484,45 @@ no paid price estimate is invented. Exit codes: 0 bounded engineering/semantic g
 Even a passing bounded semantic run leaves `phase10_overall_acceptance=false` and real paid
 provider/model ability unverified. It does not grant permission for paid calls or a main merge.
 
+2026-10-12 actual verification on clean source `7b52091`: all **160/160** engineering records
+pass, and every frozen quality target passes. Two repeats of the same 20 queries are not 40
+independent samples. Measured chunk ranking metrics:
+
+| Mode | Overall Hit@5 | English Hit@5 | Chinese Hit@5 | Cross-language Hit@5 | Overall MRR |
+|---|---:|---:|---:|---:|---:|
+| dense | 1.0 | 1.0 | 1.0 | 1.0 | 0.975 |
+| sparse/BM25 | 0.45 | 1.0 | 0.0 | 0.25 | 0.45 |
+| hybrid | 1.0 | 1.0 | 1.0 | 1.0 | 0.933333 |
+| hybrid_rerank | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+
+Coverage is 40/40 overall, 16/16 English, 16/16 Chinese, 8/8 cross-language for each mode.
+Same-pool reranker contrasts have 40/40 scored pairs: MRR delta +0.066667, Recall@5 delta
+0, NDCG@5 delta +0.05; descriptive only. The sparse-language limitation is retained rather
+than concealed by the engineering pass. Actual runtime versions are FastEmbed 0.8.0 and
+ONNX Runtime 1.29.0. The model snapshots and source are unchanged after inference; owned
+container cleanup is verified. Corpus batches: one dense and one sparse; benchmark query
+operations: 120 dense, 120 sparse, 40 reranks, plus one readiness operation of each kind.
+These are local inference operations, not vendor visits. Actual vendor calls/tokens are 0.
+
+41 new contract tests pass; full backend 689 passed / 3 skipped, Ruff, mypy (213 files),
+and 33 changed/evaluation files' format checks pass. Skips remain the old Compose opt-in
+and two Windows symbolic-link limitations. Additional actual model-RPC cancellation and
+timeout checks, sent while waiting for a response, propagate the exceptions, join owned
+cleanup and reject further calls on the closed client. No automatic retry, paid requests,
+normal deployment rebuild, application database migration or main merge occurred.
+
+Ignored local evidence, never uploaded:
+
+- `data/evaluation/neural-1c60445a1d554ed08d7a0c9765df295d/eval-e8d1bf658c694d1ca62cfb3e6f0ef788/evaluation_report.md`
+  (primary manifest/JSONL, semantic gate, full runtime/model identities and summaries beside it).
+- `data/validation/phase10h-9725d9b964fa4bffa6623269ff9918ee/acceptance.json`
+  (actual cached model-RPC cancellation and timeout, isolation, joined cleanup, source identity).
+
 ## Next stages
 
-Independent neural semantic/provider verification remains separate Phase 10 work after the
-controlled 10G engineering pack. The generic injected RAG adapter accepts an explicitly provisioned
+The bounded default-cache neural retrieval verification above is complete; broader corpora,
+PDF ingestion/generation quality and independent paid-provider ability remain outside this
+result. The generic injected RAG adapter accepts an explicitly provisioned
 retriever; it does not create one from environment settings and does not infer its API cost.
 Real-model semantic comparisons require actual labeled corpus retrieval, actual model/resource
 identities and separate verification. Real paid-provider evaluations require owner approval.
