@@ -289,6 +289,17 @@ def main() -> int:
     pack.add_argument("--repeats", type=int, default=1)
     pack.add_argument("--timeout", type=float, default=360.0)
     pack.add_argument("--output-root", type=Path)
+    neural = commands.add_parser(
+        "neural", help="Actual cached default models in a network-none inference container"
+    )
+    neural.add_argument("--image", required=True, help="Explicit locally cached inference image")
+    neural.add_argument(
+        "--cache-volume", required=True, help="Explicit existing public model cache"
+    )
+    neural.add_argument("--seed", type=int, default=42)
+    neural.add_argument("--repeats", type=int, default=2)
+    neural.add_argument("--timeout", type=float, default=60.0)
+    neural.add_argument("--output-root", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "run":
@@ -302,6 +313,16 @@ def main() -> int:
                 "Real neural semantic/provider ability remains unverified; "
                 "this is NOT overall Phase 10 acceptance. No paid providers are enabled."
             )
+            return 0 if accepted else 1
+        if args.command == "neural":
+            from autoscholar.evaluation.neural_validation import run_neural
+
+            directory, accepted = asyncio.run(run_neural(args, repo_root=REPO_ROOT))
+            print(
+                f"Bounded neural semantic validation {'passed' if accepted else 'NOT accepted'}: "
+                f"{directory}"
+            )
+            print("No external API calls. Real provider/model ability remains unverified.")
             return 0 if accepted else 1
         suite, digest = load_suite(args.dataset)
     except (OSError, ValueError, SandboxError):

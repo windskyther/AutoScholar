@@ -1096,7 +1096,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Workflow ablation checks failed' }
 
 完成运行后额外生成 `ablation_comparison.json`，逐例匹配相同输入、种子、标准答案及资源摘要，给出“变体减基线”的描述性差值及有效配对/计划分母；缺失结果保持未知，不声称统计显著性或真实模型能力。恢复用例的 No Replanning 是预期非完成；伪造准确率在所有变体仍不得获任务成功分。
 
-10A–10G 受控工程评测与无 API 费用整包复验已完成；真实神经语义检索／供应商能力仍须独立验证。Phase 10 尚未完成能力总验收，不自动合并 `main`。
+10A–10G 受控工程评测与无 API 费用整包复验已完成；10H 默认缓存模型的真实语义检索验证正在推进，供应商能力仍须单独授权验证。Phase 10 尚未完成能力总验收，不自动合并 `main`。
 
 2026-10-10 10F 验证：新增 **34 项消融测试**通过，与原端到端回归合计 **77 passed**；完整后端 **611 passed、3 skipped**，Ruff、mypy（206 文件）通过，另补测配对资源不一致、未知值及 Markdown 报告。干净代码版本 `f04a755` 下两轮真实 Docker 消融 **30/30 检查通过**，独立任务完成 **18/30**（含 10 条造假负例及 2 条禁用重规划的预期停止）；本地真实 Qdrant 对照 **20/20 检查通过**。五个工作流变体均具有完整 6/6 配对覆盖；Reranker 两组排序指标在此封闭夹具上相同，不据此声称重排有无科学增益。212 次脚本回调只产生 636 个模拟预算单位，真实供应商 Token／外部 API 请求为 0。运行记录保留在忽略的 `data/evaluation/`；本轮临时容器／卷清理为零，缓存镜像、公开数据集及报告保留，未重建正常部署或迁移应用数据库。跳过项仍为旧 Compose 开关及 Windows 符号链接权限限制。
 
@@ -1121,6 +1121,20 @@ if ($LASTEXITCODE -ne 0) { throw 'Engineering acceptance pack failed; inspect lo
 2026-10-08 10D 验证：完整后端 **534 passed、3 skipped**，Ruff、mypy（196 文件）通过；真实 Docker 重复验收完成 **20 条 Coding、10 条 Experiment** 记录，均达到各自预期（含故障拒绝），另验证隔离、超时、取消及本轮临时资源清理。外部 API 调用为 0；跳过项仍为未启用的旧 Compose smoke 与 Windows 符号链接权限限制。未重启正常部署、迁移应用数据库或合并 `main`。
 
 2026-10-08 验证：新增 **58 项评测基础/RAG 测试**通过；完整后端 **455 passed、3 skipped**，Ruff、mypy（183 文件）通过。CLI 默认 80 条回放及 `--ks 1 5 10 --repeats 2` 的 160 条回放均通过，实际外部 API 调用为 0。覆盖标准答案隔离、错误/超时/取消收尾、重复计分、跨项目结果、非法配置拒绝、失败退出码、种子范围、高精度计时和报告汇总。跳过项仍是未启用的旧 Compose smoke 与 Windows 符号链接权限限制；本轮未重跑浏览器或 Docker 整栈，未切换正常部署、迁移现有数据库或调用真实模型。
+
+### 10H：默认缓存模型的真实语义检索验证
+
+新增独立 `neural` 入口，使用已缓存的多语言 MiniLM、BM25 和 BGE Cross-Encoder 实际推理，走真实 `RAGQueryService` 与本地 Qdrant 的 dense、sparse、hybrid、hybrid_rerank 四条路径。公开语料含 20 个自编段落，独立标签覆盖 8 条英文、8 条中文和 4 条跨语言问题；默认两轮共 160 条记录，重复查询不作为独立样本。两个 hybrid 变体使用同一有序 10 候选池，返回前 5 条，描述性差值不代表重排必然有效。
+
+```powershell
+# 必须已有缓存镜像/模型卷、Docker 已启动、代码已提交且工作树干净
+.venv\Scripts\python.exe -m autoscholar.evaluation neural --image autoscholar-api:phase9-acceptance --cache-volume autoscholar_model_cache --repeats 2 --timeout 60
+# 退出码 1 表示检索质量或工程条件未通过，须检查报告，不能直接当作程序错误
+```
+
+模型容器无网络、非 root、限制 CPU/内存，仅只读挂载源码和模型缓存，不挂载 `.env`、设计文档、正常数据库或 Docker socket；不下载、不自动重试、不调用供应商。记录真实镜像、模型快照/文件摘要与运行时版本，执行结束再次核对源码/模型并验证本轮容器清理。输出保存在忽略的 `data/evaluation/neural-<UUID>/eval-<UUID>/`。
+
+工程检查与真实相关性分别统计。运行前固定质量门槛：dense、hybrid、hybrid_rerank 总体 Hit@5 ≥ 0.85，英文/中文/跨语言各 ≥ 0.75；sparse 记录实测分数但不承诺中文/跨语言语义能力。缺失计分、取消、资源误绑或清理未验证不能通过。语料是预分块文本，不覆盖 PDF 摄取、答案生成/忠实度、通用语义能力或付费模型总验收；`phase10_overall_acceptance` 仍为 false。完整说明见 [真实语义验证](benchmarks/README.md#actual-cached-neural-retrieval-validation)。
 
 ## 开发路线
 

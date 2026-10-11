@@ -431,6 +431,59 @@ and volumes were zero before its removal; its controller/network were removed, p
 cached images, public MNIST, reports, artifacts and SQLite. No application DB migrations,
 normal deployment rebuild, paid API requests or main merge occurred.
 
+## Actual cached neural retrieval validation
+
+The separate `neural` command uses the actual production-default FastEmbed providers:
+multilingual MiniLM (384 dimensions), `Qdrant/bm25`, and `BAAI/bge-reranker-base`.
+It is not a ranking replay or the earlier lexical/Jaccard ablation. Explicit fake inference
+in contract tests is labeled as such and never counts as a real-model result.
+
+Requirements: clean committed source, local Docker running, an explicitly named existing
+inference image with project dependencies, and an existing cache volume with all three
+model snapshots. No image pull, model download, provider credentials or host inference
+fallback occurs. Missing caches fail preflight. Normal application defaults are unchanged.
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation neural --image autoscholar-api:phase9-acceptance --cache-volume autoscholar_model_cache --repeats 2 --timeout 60
+```
+
+The fixed public inputs are `semantic/corpus_v1.json` (20 self-authored pre-chunked passages,
+query bindings only) and `semantic/public_v1.json` (independent labels: 8 English, 8 Chinese,
+4 cross-language queries). Labels are scoring-only, never model input. Fresh file SQLite
+and local Qdrant run the real scoped RAG retrieval service. This is controlled pre-indexed
+text, not PDF ingestion or an HTTP/deployment/generation evaluation.
+
+Four modes run serially, with two repeats by default: 160 planned records. Dense/sparse
+return five; both hybrid modes retrieve the same ten ordered candidates before returning
+five. The reranker comparison checks per-query/seed candidate identity plus input/gold/
+resource identities. Repeated fixed queries are not independent samples; paired deltas are
+descriptive and do not assert reranking superiority or statistical significance.
+
+Inference is in a CPU-only, network-none, non-root, read-only container, capabilities
+dropped, no-new-privileges, bounded to 2 CPUs/6 GiB/128 PIDs. Only source and model cache are
+mounted read-only; no Docker socket, application database, .env, design document, ports or
+GPU. The worker verifies its restrictions before loading fixed local snapshots with
+`local_files_only=True`. Actual snapshot file SHA-256, revisions, inference source, image
+and runtime versions are recorded; source/cache are checked again and owned cleanup is
+joined. Only this fresh UUID/ownership-labelled worker can be stopped.
+
+Quality targets are frozen before inference: dense, hybrid and hybrid_rerank require overall
+Hit@5 >= 0.85 and each English/Chinese/cross-language subset >= 0.75. Sparse/BM25 scores
+are reported without a multilingual quality promise. Engineering checks and measured
+Recall/Hit/MRR/NDCG are separate; low relevance remains low relevance. Missing metrics,
+incomplete records, changed sources/resources or unverified cleanup cannot pass.
+
+Ignored `data/evaluation/neural-<UUID>/eval-<UUID>/` contains normal primary manifest/JSONL,
+summary/report plus `semantic_acceptance.json` and `inference_identity.json`. Primary records
+are revalidated with the pack inspector. Cancellation retains partial records and planned
+denominators; no automatic retry/resume. Latency excludes model warmup, corpus embedding,
+indexing and shutdown. Local inference counts are separate from the zero vendor calls/tokens;
+no paid price estimate is invented. Exit codes: 0 bounded engineering/semantic gate passed,
+1 gate not accepted, 2 preflight/configuration failure, 130 cancellation.
+
+Even a passing bounded semantic run leaves `phase10_overall_acceptance=false` and real paid
+provider/model ability unverified. It does not grant permission for paid calls or a main merge.
+
 ## Next stages
 
 Independent neural semantic/provider verification remains separate Phase 10 work after the
