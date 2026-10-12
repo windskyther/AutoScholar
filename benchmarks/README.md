@@ -700,11 +700,32 @@ unknown usage preserved. `tool_chain_confirmation_acceptance` is not the full pr
 Phase 10 gate: original native failures, skipped result, Chinese format failure and old scores
 remain immutable. This mode does not regrade Chinese facts or change any frozen rubric.
 
+2026-10-12 authorized tool-only execution on clean `32ebe31`: **2/2 passed**, two LLM
+HTTP-200 attempts, zero Tavily attempts, **692 measured tokens**. The actual model issued
+one native Calculator call for `(17*23)+(9**2)`; the production tool returned `472`, and
+the second request bound the real call ID/output plus reasoning metadata and original
+question. The real answer was `{"result":472}`. No planning, other independent contract,
+Chinese answer or search was repeated. The original failed scores remain unchanged.
+
+Cumulative **12 LLM + 2 Tavily = 14 attempts**, exactly the separately approved ceiling;
+known vendor tokens **11766**. Initial HTTP-400 usage remains unknown, so cumulative total
+tokens and monetary cost are unknown. Source, prior proof and consumed old grants stayed
+unchanged. The new component gate is true, full provider and Phase 10 gates remain false.
+The outstanding frozen Chinese format contract has not been changed or rerun.
+
+Free backend **752 passed / 3 skipped**, provider contracts **63 passed**, Ruff/mypy (219
+files) and formatting pass. Preflight verified the dedicated controller with pinned cached
+images, public dataset and no owned children. The controller/network were removed after
+ownership-label checks; no application container/data/cache or report was removed.
+Ignored local report: `data/evaluation/provider-13fc74e120364d2eba84f8f868f79a00/evaluation_report.md`.
+The example approval ID is consumed; do not change IDs to rerun or reset the allowance.
+
 ## Next stages
 
 The engineering pack and bounded default-cache neural retrieval verification are complete;
-real-provider acceptance is incomplete after the first native-tool parameter refusal. Paid
-manual follow-up requires new approval. Broader corpora,
+independent real-provider contracts and separately approved tool-chain confirmation have
+been exercised, but full provider acceptance remains incomplete due to the frozen Chinese
+format contract. Original failures stay visible; any paid repeat requires new approval. Broader corpora,
 PDF ingestion/generation quality and independent paid-provider ability remain outside this
 result. The generic injected RAG adapter accepts an explicitly provisioned
 retriever; it does not create one from environment settings and does not infer its API cost.
