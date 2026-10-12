@@ -321,10 +321,39 @@ def main() -> int:
         type=Path,
         help="New approval: two tool-only LLM requests, zero searches; preserve old scores",
     )
+    chinese = commands.add_parser(
+        "chinese", help="Prepare Chinese format v2 offline; paid only with new explicit approval"
+    )
+    chinese.add_argument("--allow-paid", action="store_true")
+    chinese.add_argument("--approval-id")
+    closure = commands.add_parser(
+        "closure",
+        help="Audit historical Phase 10 evidence and write scoped closure, zero API requests",
+    )
+    closure.add_argument("--engineering-run", type=Path, required=True)
+    closure.add_argument("--semantic-run", type=Path, required=True)
+    closure.add_argument("--chinese-run", type=Path)
+    for command in (chinese, closure):
+        command.add_argument("--original-run", type=Path, required=True)
+        command.add_argument("--independent-run", type=Path, required=True)
+        command.add_argument("--tool-run", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == "run":
             return asyncio.run(_run(args))
+        if args.command == "chinese":
+            from autoscholar.evaluation.provider_chinese import run_chinese
+
+            directory, accepted = asyncio.run(run_chinese(args, repo_root=REPO_ROOT))
+            print(f"Chinese v2 {'passed' if accepted else 'pending / NOT accepted'}: {directory}")
+            return (0 if accepted else 1) if args.allow_paid else 0
+        if args.command == "closure":
+            from autoscholar.evaluation.phase10_closure import run_closure
+
+            directory, accepted = asyncio.run(run_closure(args, repo_root=REPO_ROOT))
+            print(f"Bounded closure {'passed' if accepted else 'NOT accepted'}: {directory}")
+            print("Audit requests: 0. Overall Phase 10/E2E and main merge are NOT approved.")
+            return 0 if accepted else 1
         if args.command == "pack":
             from autoscholar.evaluation.pack import run_pack
 

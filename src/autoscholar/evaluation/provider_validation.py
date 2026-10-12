@@ -64,14 +64,19 @@ from autoscholar.llm.openai_compatible import OpenAICompatibleProvider
 from autoscholar.research.providers import TavilySearchProvider
 
 
-def load_explicit_settings(path: Path) -> tuple[Settings, str]:
+def load_explicit_settings(path: Path, *, require_tavily: bool = True) -> tuple[Settings, str]:
     # Selected fields only. Never instantiate full application .env/MCP/DB configuration.
     values = dotenv_values(path, interpolate=False)
     selected = {
         key: os.getenv(key) or values.get(key)
         for key in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "TAVILY_API_KEY")
     }
-    if not all(selected[key] for key in ("LLM_API_KEY", "LLM_MODEL", "TAVILY_API_KEY")):
+    required = (
+        ("LLM_API_KEY", "LLM_MODEL", "TAVILY_API_KEY")
+        if require_tavily
+        else ("LLM_API_KEY", "LLM_MODEL")
+    )
+    if not all(selected[key] for key in required):
         raise ValueError("Explicit LLM/model/Tavily configuration is required")
     settings = Settings(
         _env_file=None,  # type: ignore[call-arg]  # BaseSettings option, not a schema field.

@@ -30,6 +30,15 @@ FILES = (
 )
 
 
+def endpoint_fingerprint(endpoint: str | None, expected_sha256: str | None) -> str:
+    """Offline audits may use a public fingerprint; live entry points pass their real URL."""
+    if endpoint is not None and expected_sha256 is None:
+        return hashlib.sha256(endpoint.encode()).hexdigest()
+    if endpoint is None and expected_sha256 and re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
+        return expected_sha256
+    raise ValueError("Supply exactly one endpoint URL or bounded public SHA-256")
+
+
 def read_public(path: Path, root: Path) -> tuple[Any, str]:
     if not path.resolve().is_relative_to(root.resolve()):
         raise ValueError("Prior evidence escaped its public run directory")
@@ -87,8 +96,14 @@ class PriorPlanning:
 
 
 def load_prior(
-    directory: Path, *, repo_root: Path, model: str | None, endpoint: str
+    directory: Path,
+    *,
+    repo_root: Path,
+    model: str | None,
+    endpoint: str | None = None,
+    expected_endpoint_sha256: str | None = None,
 ) -> PriorPlanning:
+    fingerprint = endpoint_fingerprint(endpoint, expected_endpoint_sha256)
     root = (repo_root / "data/evaluation").resolve()
     directory = directory.resolve()
     if directory.parent != root or not re.fullmatch(r"provider-[a-f0-9]{32}", directory.name):
@@ -108,7 +123,7 @@ def load_prior(
         or manifest.get("suite_sha256") != public_suite_digest()
         or manifest.get("oracle_sha256") != oracle_digest()
         or manifest.get("configured_model") != model
-        or manifest.get("endpoint_sha256") != hashlib.sha256(endpoint.encode()).hexdigest()
+        or manifest.get("endpoint_sha256") != fingerprint
         or manifest.get("request_limits") != LIMITS
         or not same_grader_source(repo_root, revision)
     ):
@@ -183,11 +198,13 @@ def load_stopped_followup(
     repo_root: Path,
     prior: PriorPlanning,
     model: str | None,
-    endpoint: str,
+    endpoint: str | None = None,
     identifier: str,
+    expected_endpoint_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Continue independent, UNATTEMPTED contracts only; never retry the lost tool RPC."""
     root = (repo_root / "data/evaluation").resolve()
+    fingerprint = endpoint_fingerprint(endpoint, expected_endpoint_sha256)
     directory = directory.resolve()
     if directory.parent != root or not re.fullmatch(r"provider-[a-f0-9]{32}", directory.name):
         raise ValueError("Select an exact stopped public follow-up run")
@@ -206,7 +223,7 @@ def load_stopped_followup(
         or manifest.get("suite_sha256") != public_suite_digest()
         or manifest.get("oracle_sha256") != oracle_digest()
         or manifest.get("configured_model") != model
-        or manifest.get("endpoint_sha256") != hashlib.sha256(endpoint.encode()).hexdigest()
+        or manifest.get("endpoint_sha256") != fingerprint
         or manifest.get("prior_evidence") != prior.binding()
         or not same_grader_source(repo_root, manifest["git_revision"])
         or ledger.get("run_id") != directory.name

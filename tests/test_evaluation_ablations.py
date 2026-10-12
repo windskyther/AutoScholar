@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -11,7 +12,11 @@ from autoscholar.evaluation import __main__ as cli
 from autoscholar.evaluation.ablation_report import comparison, write_comparison
 from autoscholar.evaluation.component_fixture import load_fixture
 from autoscholar.evaluation.datasets import load_suite
-from autoscholar.evaluation.e2e_adapter import InjectedWorkflowAdapter, WorkflowAblationLabels
+from autoscholar.evaluation.e2e_adapter import (
+    InjectedWorkflowAdapter,
+    WorkflowAblationLabels,
+    initial_plan_is_static,
+)
 from autoscholar.evaluation.models import RunConfiguration
 from autoscholar.evaluation.retrieval_ablation import (
     InjectedRetrievalAblationAdapter,
@@ -28,6 +33,21 @@ from autoscholar.orchestration.durable_models import ProjectMemoryRow
 from tests.test_evaluation_workflow import RESOURCES, ROOT, WorkflowReplaySandbox
 
 PUBLIC = ROOT / "benchmarks/ablations"
+
+
+@pytest.mark.parametrize("order", [(2, 1), (1, 2)])
+@pytest.mark.parametrize("initial_static", [True, False])
+def test_initial_plan_timestamp_tie(order: tuple[int, int], initial_static: bool) -> None:
+    rows: list[dict[str, Any]] = [
+        {
+            "version": version,
+            "created_at": "2026-10-12 15:02:03",
+            "reason": "evaluation_static_plan" if (version == 1) == initial_static else "revision",
+        }
+        for version in order
+    ]
+    assert initial_plan_is_static(rows) is initial_static
+    assert initial_plan_is_static([]) is False
 
 
 def workflow(tmp_path: Path, variant: WorkflowVariant) -> InjectedWorkflowAdapter:

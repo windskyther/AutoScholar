@@ -720,6 +720,56 @@ ownership-label checks; no application container/data/cache or report was remove
 Ignored local report: `data/evaluation/provider-13fc74e120364d2eba84f8f868f79a00/evaluation_report.md`.
 The example approval ID is consumed; do not change IDs to rerun or reset the allowance.
 
+## Explicit Chinese v2 format and historical closure audit
+
+The original v1 questions, `provider_cases.py`, strict Chinese schema, fact/quote/support
+grader, failed answer and 7/10 score are unchanged. `provider_chinese.py` adds a separately
+versioned prompt only: native JSON null, unique source IDs, continuous exact source quotes,
+no extra fields/Markdown. The schema is generated from the frozen `ChineseAnswer` model.
+No old answer normalization, citation deletion or post-hoc v1 regrading occurs.
+
+`chinese` defaults to free offline preparation. It does not read `.env`, create a network
+client, start Docker or call search. Original planning, independent follow-up, confirmed
+native request/raw response, reasoning/call IDs/arguments and actual Calculator output are
+bound and rechecked. JSON argument whitespace is not a semantic mismatch. The existing real
+public Python excerpts are reused; preparation remains `awaiting_approval`, not live evidence.
+
+Only separate owner approval plus `--allow-paid --approval-id <new-public-ID>` permits the
+single new LLM request. Limits are **1 LLM / 0 Tavily**, unchanged model/endpoint, no SDK or
+transport retry, no implicit allowance continuation. An exclusive historical-tool-run claim
+blocks a second ID from repeating the same v2 confirmation. Missing/failed responses and
+unknown tokens/costs remain unaccepted/unknown. Existing grants and raw failures stay intact.
+This new grant would raise the cumulative physical request cap from 14 to 15; preparation or
+an instruction to fix code alone does not authorize that additional paid request.
+
+`closure` is an offline report entry point. It revalidates engineering primary manifests and
+case JSONL, dataset/seed/adapters, paired ablations, cached-neural primary records and runtime
+model identities, and recomputes recorded semantic targets rather than trusting sidecar
+pass flags. It binds provider history and independently verifies the new Chinese response
+against its request, versioned prompt, cached evidence, grant, raw body and frozen grader.
+Its evidence-only adapters reject execution. No API, inference, training or .env loading.
+
+Both commands take `--original-run`, `--independent-run`, `--tool-run`. Closure also needs
+`--engineering-run`, `--semantic-run`; optional `--chinese-run` points to a prepared or
+completed v2 directory. Omission leaves Chinese pending, never retries it. Fresh local outputs
+are `data/evaluation/chinese-v2-<UUID>/` and `closure-<UUID>/`, never uploaded.
+
+The declared gate `bounded_phase10_closure_acceptance` requires all recorded engineering,
+bounded semantic and provider coverage (nine v1 slots plus one new v2 Chinese slot). Original
+v1 scores remain separately visible; this mixed-version/reused coverage is not a new full-suite
+sample. `phase10_overall_acceptance`/`main_merge_authorized` stay false: autonomous paid E2E
+and real-model statistical ablations remain unverified and require a separate scope/approval.
+Exit 0 for closure means only that bounded scope passed, 1 incomplete/failed, 2 invalid evidence.
+
+Free verification found a pre-existing ablation-observation defect: SQLite initial/revised
+plans can share a second-resolution timestamp, and UUID tie order can put version 2 first.
+The failing local evidence had version 2/revision before version 1/static at the same time;
+the isolated case passed, but the defect was fixed rather than hidden by a rerun. The
+evaluation-only initial-plan observer now selects the minimum version, not list position.
+Four deterministic tie/order/non-static-initial tests cover both directions. No normal DB,
+repository history ordering, v1 provider grader or old evidence was modified. New Chinese/
+closure contracts: 27; focused provider/ablation/closure regression: **128 passed**.
+
 ## Next stages
 
 The engineering pack and bounded default-cache neural retrieval verification are complete;

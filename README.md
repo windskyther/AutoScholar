@@ -1195,6 +1195,33 @@ Windows 本地回归应使用较短的独立 `--basetemp` 路径，例如忽略�
 
 完整免费后端 **752 passed、3 skipped**，63 项供应商契约通过；Ruff、mypy（219 文件）和评测格式检查通过。真实请求前控制器健康、固定缓存镜像摘要及公开 MNIST 检查通过；只移除本次临时控制器和隔离网络，正常应用容器、缓存镜像/卷、公开数据及历史报告保留。执行期间源码、历史证据与旧授权计数未变。新报告为 `data/evaluation/provider-13fc74e120364d2eba84f8f868f79a00/evaluation_report.md`，只宣告工具组件 **2/2**，不把原 **7/10** 失败记录改写为通过。中文格式合同缺口仍在，完整供应商及 Phase 10 验收仍为 false，不合并 main。
 
+### 中文格式 v2 与可追溯收尾汇总
+
+新增 `chinese` 入口，只在**新提示**中明确原判分器已有的规则：Python `None` 编码为 JSON 原生 `null`（不是字符串），每个来源 ID 最多引用一次，引用必须是原文连续子串并支持两项结论。输出 schema 由原 `ChineseAnswer` 自动生成，`provider_cases.py`、原题、原事实/引用判分器和旧分数均未修改。v2 不是把旧失败回答归一化为通过，也不计为原 v1 套件全部通过。
+
+默认仅做免费离线准备，不读取 `.env`、创建 HTTP 客户端或查询供应商。准备过程核验原规划、独立联测、工具链原始请求/响应与授权台账；复算 Calculator，并校验真实调用 ID、参数、思考元数据和工具结果。只复用已保存的真实公开 Python 文档片段，没有新检索。
+
+```powershell
+# 免费准备：不需要 Docker，不会发出供应商请求
+.venv\Scripts\python.exe -m autoscholar.evaluation chinese --original-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --independent-run data/evaluation/provider-6db601fc4ca34752b256271c5bf80445 --tool-run data/evaluation/provider-13fc74e120364d2eba84f8f868f79a00
+
+# 仅在另外明确授权后运行一次：最多 1 次 LLM、0 次 Tavily，累计最多 15 次
+.venv\Scripts\python.exe -m autoscholar.evaluation chinese --allow-paid --approval-id phase10-chinese-v2-20261012-1 --original-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --independent-run data/evaluation/provider-6db601fc4ca34752b256271c5bf80445 --tool-run data/evaluation/provider-13fc74e120364d2eba84f8f868f79a00
+```
+
+单次授权与针对历史工具联测的唯一声明共同防止重试/换 ID 重置；1 次请求失败后不自动重发。模型、端点、默认思考模式、正常应用与 `.env` 均不改；不要求新的 Tavily 密钥。新结果保存在忽略的 `data/evaluation/chinese-v2-<UUID>/`，未授权时状态为 `awaiting_approval`，不能作为真实模型通过证据。
+
+新增 `closure` 入口，只读复核历史工程套件的 manifest/JSONL、公开数据绑定、消融配对和语义检索原始记录/真实模型身份，重算指标；不运行适配器、推理、训练或供应商请求，不信任手改的汇总通过标记。工具参数 JSON 按结构比对，不因 SDK 重新序列化产生的空格差异误判为失败。报告保留各组件原始源码版本、SHA-256、旧失败、未知用量及独立分母。
+
+```powershell
+# chinese-run 可先传免费准备目录；缺省时中文仍为待验，不会自动补测
+.venv\Scripts\python.exe -m autoscholar.evaluation closure --engineering-run data/evaluation/pack-660be828d0564c7d942fa019458eb1cd --semantic-run data/evaluation/neural-1c60445a1d554ed08d7a0c9765df295d/eval-e8d1bf658c694d1ca62cfb3e6f0ef788 --original-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --independent-run data/evaluation/provider-6db601fc4ca34752b256271c5bf80445 --tool-run data/evaluation/provider-13fc74e120364d2eba84f8f868f79a00 --chinese-run data/evaluation/chinese-v2-<替换为本轮输出UUID>
+```
+
+`closure` 退出码 0 仅表示 `engineering_and_bounded_capabilities_v1` 范围通过：工程、真实缓存语义检索、9 条已核验的 v1 能力与 1 条新提示 v2 中文回答全部具备有效证据。待验/失败返回 1，配置或证据无效返回 2。它不是一次新的整套供应商样本，也不覆盖真实 LLM 自主端到端或模型能力统计消融；`phase10_overall_acceptance` 和 `main_merge_authorized` 仍为 false，进一步验收范围及 main 合并由项目所有者单独决定。当前已用 14 次请求，不因构建入口或离线汇总获得新付费额度。
+
+免费回归另发现并修复评测路径误判：SQLite 两版计划可能同秒写入，按时间/随机 UUID 排序不保证初始版本在前。消融检查现在以最小计划版本识别初始计划，不更改应用数据库或历史记录；4 个同时间戳、反序及非静态初始计划测试确保不能误判。中文/汇总 27 项新增测试和供应商/消融相关回归合计 **128 passed**，原判分源码仍未改动。
+
 ## 开发路线
 
 | 阶段 | 重点 |

@@ -4,7 +4,7 @@ import hashlib
 import json
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, JsonValue, model_validator
 
@@ -228,6 +228,14 @@ def score_workflow(observation: Observation, expected: dict[str, JsonValue]) -> 
     )
 
 
+def initial_plan_is_static(plans: list[dict[str, Any]]) -> bool:
+    # SQLite timestamps may tie at one-second precision; UUID order is not plan order.
+    return (
+        bool(plans)
+        and min(plans, key=lambda plan: plan["version"])["reason"] == "evaluation_static_plan"
+    )
+
+
 class InjectedWorkflowAdapter:
     def __init__(
         self,
@@ -402,7 +410,7 @@ class InjectedWorkflowAdapter:
                     memory_learning_calls=sum(item.learns for item in observed),
                     saved_plans=len(plans),
                     saved_reviews=len(reviews),
-                    static_plan=bool(plans) and plans[0]["reason"] == "evaluation_static_plan",
+                    static_plan=initial_plan_is_static(plans),
                     rules_only_reviews=self.variant == "no_reviewer"
                     and bool(reviews)
                     and "submit_review" not in provider.stage_calls,

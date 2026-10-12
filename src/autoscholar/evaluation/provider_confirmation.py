@@ -1,6 +1,5 @@
 """Bind completed manual evidence for an explicitly approved two-request tool check."""
 
-import hashlib
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -16,6 +15,7 @@ from autoscholar.evaluation.provider_cases import (
 )
 from autoscholar.evaluation.provider_prior import (
     PriorPlanning,
+    endpoint_fingerprint,
     load_stopped_followup,
     read_public,
     same_grader_source,
@@ -52,8 +52,15 @@ class ToolConfirmationEvidence:
 
 
 def load_tool_confirmation(
-    directory: Path, *, repo_root: Path, prior: PriorPlanning, model: str | None, endpoint: str
+    directory: Path,
+    *,
+    repo_root: Path,
+    prior: PriorPlanning,
+    model: str | None,
+    endpoint: str | None = None,
+    expected_endpoint_sha256: str | None = None,
 ) -> ToolConfirmationEvidence:
+    fingerprint = endpoint_fingerprint(endpoint, expected_endpoint_sha256)
     root = (repo_root / "data/evaluation").resolve()
     directory = directory.resolve()
     if directory.parent != root or not re.fullmatch(r"provider-[a-f0-9]{32}", directory.name):
@@ -81,7 +88,7 @@ def load_tool_confirmation(
         or not isinstance(revision, str)
         or not re.fullmatch(r"[a-f0-9]{40}", revision)
         or manifest.get("configured_model") != model
-        or manifest.get("endpoint_sha256") != hashlib.sha256(endpoint.encode()).hexdigest()
+        or manifest.get("endpoint_sha256") != fingerprint
         or manifest.get("suite_sha256") != public_suite_digest()
         or manifest.get("oracle_sha256") != oracle_digest()
         or manifest.get("prior_evidence") != prior.binding()
@@ -102,6 +109,7 @@ def load_tool_confirmation(
         prior=prior,
         model=model,
         endpoint=endpoint,
+        expected_endpoint_sha256=expected_endpoint_sha256,
         identifier=manifest["approval_id"],
     )
     for name in (
