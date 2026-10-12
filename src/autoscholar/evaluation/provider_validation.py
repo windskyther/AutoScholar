@@ -304,7 +304,8 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
                     result = await provider.generate(
                         messages,
                         tools=[calculator.definition] if case.kind == "tool_call" else None,
-                        tool_choice="calculator" if case.kind == "tool_call" else "none",
+                        # Match production; DeepSeek thinking rejects named/required choice.
+                        tool_choice="auto" if case.kind == "tool_call" else "none",
                     )
                     output = result_payload(result)
                     no_secrets(output, secrets)
@@ -354,11 +355,14 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
     except asyncio.CancelledError:
         state = "cancelled"
         raise
-    except Exception:
+    except Exception as exc:
         if records and records[-1]["status"] == "error":
             records[-1]["reason"] = "provider_or_infrastructure_failure"
+            records[-1]["error_type"] = type(exc).__name__
         # SDK exceptions/chained server bodies may contain URLs or credentials.
-        raise ValueError("Real verification stopped; inspect local partial evidence") from None
+        print(
+            f"Real verification stopped; partial evidence: {directory}; no paid retry", flush=True
+        )
     finally:
         await sandbox.close()
         clean = await no_owned_children(sandbox)

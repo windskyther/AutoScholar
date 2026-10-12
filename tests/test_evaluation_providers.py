@@ -269,7 +269,9 @@ async def test_code_has_independent_oracle_and_no_host_execution() -> None:
         )
 
 
-@pytest.mark.parametrize("fault", [None, "wrong_writer", "no_usage", "rate_limit", "bad_native"])
+@pytest.mark.parametrize(
+    "fault", [None, "wrong_writer", "no_usage", "rate_limit", "unsupported_parameter", "bad_native"]
+)
 async def test_full_cli_contract_with_explicit_mock_transport(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str | None
 ) -> None:
@@ -297,8 +299,11 @@ async def test_full_cli_contract_with_explicit_mock_transport(
 
         async def handler(request: httpx.Request) -> httpx.Response:
             calls.append((transport.provider, transport.case_id))
-            if fault == "rate_limit":
-                return httpx.Response(429, json={"error": {"message": "Do not print this body"}})
+            if fault in ("rate_limit", "unsupported_parameter"):
+                return httpx.Response(
+                    429 if fault == "rate_limit" else 400,
+                    json={"error": {"message": "Do not print this body"}},
+                )
             if transport.provider == "tavily":
                 selected = (
                     "research_chinese"
@@ -318,6 +323,8 @@ async def test_full_cli_contract_with_explicit_mock_transport(
                     },
                 )
             identifier = transport.case_id
+            if identifier == "native_tool_call":
+                assert json.loads(request.content)["tool_choice"] == "auto"
             message: dict[str, Any] = {
                 "role": "assistant",
                 "content": json.dumps(fake[identifier]) if identifier in fake else None,
@@ -353,17 +360,7 @@ async def test_full_cli_contract_with_explicit_mock_transport(
         approval_id="explicit-test-approval",
         sandbox_container="explicit-test-controller",
     )
-    if fault == "rate_limit":
-        with pytest.raises(ValueError, match="Real verification stopped"):
-            await validation.run_providers(args, repo_root=tmp_path)
-        directory = next((tmp_path / "data/evaluation").glob("provider-*"))
-        # The approval directory is also provider-*, select the actual report below.
-        directory = next(
-            path.parent for path in (tmp_path / "data/evaluation").rglob("provider_acceptance.json")
-        )
-        accepted = False
-    else:
-        directory, accepted = await validation.run_providers(args, repo_root=tmp_path)
+    directory, accepted = await validation.run_providers(args, repo_root=tmp_path)
     summary = json.loads((directory / "provider_acceptance.json").read_text())
     assert accepted is (fault in (None, "no_usage"))
     assert len(calls) <= 12
@@ -372,8 +369,9 @@ async def test_full_cli_contract_with_explicit_mock_transport(
     assert summary["phase10_overall_acceptance"] is False
     if fault == "no_usage":
         assert summary["vendor_tokens"] is None and summary["known_vendor_tokens"] == 0
-    elif fault == "rate_limit":
+    elif fault in ("rate_limit", "unsupported_parameter"):
         assert len(calls) == summary["recorded"] == 1 and summary["planned_llm_cases"] == 10
+        assert summary["state"] == "error" and summary["cases"][0]["error_type"]
     elif fault == "bad_native":
         assert len(calls) == 11 and summary["cases"][2]["status"] == "skipped"
     else:

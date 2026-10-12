@@ -560,9 +560,48 @@ response snapshots, actual evidence, request ledger, `provider_acceptance.json`,
 passes these bounded capability contracts; it neither asserts general model ability nor
 automatically sets overall Phase 10 acceptance or approves a main merge.
 
+2026-10-12 partial 10I verification: 35 new mock-transport contracts pass; the complete
+backend on clean source `d45261b` has 724 passed / 3 skipped. Ruff, mypy (217 files) and 37
+evaluation/changed files' formatting pass. Actual isolated Docker oracle preflight accepts
+the correct unique-order function and rejects the sorted-set implementation. Neither oracle
+preflight used a vendor; both joined child container/volume cleanup.
+
+The explicitly approved live run issued **2 LLM attempts, 0 Tavily attempts**. Planning passed
+the actual production DAG schema, dependency checks and public-memory constraints; the
+returned model name is `deepseek-flash` while the configured alias remains unchanged.
+The native-tool request returned HTTP 400 immediately, and dispatch stopped without retry.
+The successful planning response reports 1387 tokens; the failed request has unknown usage,
+so total vendor tokens and monetary cost remain unknown. Eight unexecuted contracts remain
+in the original ten-case denominator. Bounded provider acceptance is **false**.
+
+The initial evaluator forced a named calculator tool, unlike production Agent `auto` mode.
+[DeepSeek's API reference](https://api-docs.deepseek.com/api/create-chat-completion/) states
+that default thinking mode rejects named/required tool choice with HTTP 400. This is
+consistent with the observed request/status; the raw error body was not exported, so it is
+not proof that production auto-tool calling fails. The evaluator now uses production-aligned
+`auto`; actual native calls and independently calculated values are still required for credit.
+The model/thinking mode and graders are unchanged. An added 400-stop contract brings new
+tests to 36 and focused Provider/Search/Research regression to 61 passed; Ruff/mypy pass.
+This fix has **not** been verified with another paid request. The original grant cannot be
+reset/reused, no failed case was rerun, and first-failure evidence is not rewritten.
+
+Ignored local report:
+`data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439/evaluation_report.md`
+(manifest, original public request payloads, planning response, cases and request ledger
+retained beside it). All owned children/volumes were zero before removing the dedicated
+controller/network. Cached images, public MNIST, application data and reports remain.
+No normal deployment rebuild, application DB migration, private-file upload or main merge.
+
+A manually authorized follow-up can reuse the already-verified planning evidence, retest
+the failed tool contract and execute the eight unexecuted contracts: at most nine new LLM
+and two Tavily attempts. Together with the original two, that would be thirteen attempts,
+one beyond the original twelve-request allowance; explicit new approval is required.
+
 ## Next stages
 
-The bounded default-cache neural retrieval verification above is complete; broader corpora,
+The engineering pack and bounded default-cache neural retrieval verification are complete;
+real-provider acceptance is incomplete after the first native-tool parameter refusal. Paid
+manual follow-up requires new approval. Broader corpora,
 PDF ingestion/generation quality and independent paid-provider ability remain outside this
 result. The generic injected RAG adapter accepts an explicitly provisioned
 retriever; it does not create one from environment settings and does not infer its API cost.
