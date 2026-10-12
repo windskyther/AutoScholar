@@ -23,13 +23,28 @@ MAX_OUTPUT_TOKENS = 4096
 class ApprovalLedger:
     """Reservations are persisted BEFORE network dispatch. Never resume/reuse a grant."""
 
-    def __init__(self, path: Path, *, run_id: str) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        run_id: str,
+        limits: dict[Provider, int] | None = None,
+        blocked_case_ids: tuple[str, ...] = (),
+    ) -> None:
+        self.limits = dict(LIMITS if limits is None else limits)
+        if set(self.limits) != set(LIMITS) or any(
+            type(value) is not int or not 0 <= value <= LIMITS[key]
+            for key, value in self.limits.items()
+        ):
+            raise ValueError("Paid allowance must not exceed the explicit default ceiling")
+        self.blocked_case_ids = blocked_case_ids
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.data: dict[str, Any] = {
             "schema_version": 1,
             "run_id": run_id,
-            "limits": LIMITS,
+            "limits": self.limits,
+            "blocked_case_ids": list(blocked_case_ids),
             "attempts": [],
             "automatic_retries": False,
         }
@@ -43,12 +58,13 @@ class ApprovalLedger:
 
     def reserve(self, provider: Provider, case_id: str, payload: dict[str, Any]) -> int:
         attempts = self.attempts
+        if case_id in self.blocked_case_ids:
+            raise ValueError("Verified prior case must not be dispatched again")
         if any(row["provider"] == provider and row["case_id"] == case_id for row in attempts):
             raise ValueError("Approval forbids retries or duplicate case requests")
-        if (
-            sum(row["provider"] == provider for row in attempts) >= LIMITS[provider]
-            or len(attempts) >= 12
-        ):
+        if sum(row["provider"] == provider for row in attempts) >= self.limits[provider] or len(
+            attempts
+        ) >= sum(self.limits.values()):
             raise ValueError("Explicit paid request allowance exhausted")
         attempts.append(
             {

@@ -17,6 +17,7 @@ from autoscholar.coding.sandbox import (
     SandboxRunRequest,
     SandboxRunResult,
 )
+from autoscholar.evaluation import provider_prior as prior_module
 from autoscholar.evaluation import provider_validation as validation
 from autoscholar.evaluation.provider_cases import (
     CASES,
@@ -273,7 +274,10 @@ async def test_code_has_independent_oracle_and_no_host_execution() -> None:
     "fault", [None, "wrong_writer", "no_usage", "rate_limit", "unsupported_parameter", "bad_native"]
 )
 async def test_full_cli_contract_with_explicit_mock_transport(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault: str | None,
+    prior_run: Path | None = None,
 ) -> None:
     fake = responses()
     if fault == "wrong_writer":
@@ -359,6 +363,7 @@ async def test_full_cli_contract_with_explicit_mock_transport(
         allow_paid=True,
         approval_id="explicit-test-approval",
         sandbox_container="explicit-test-controller",
+        prior_run=prior_run,
     )
     directory, accepted = await validation.run_providers(args, repo_root=tmp_path)
     summary = json.loads((directory / "provider_acceptance.json").read_text())
@@ -374,11 +379,207 @@ async def test_full_cli_contract_with_explicit_mock_transport(
         assert summary["state"] == "error" and summary["cases"][0]["error_type"]
     elif fault == "bad_native":
         assert len(calls) == 11 and summary["cases"][2]["status"] == "skipped"
+    elif prior_run is not None:
+        assert len(calls) == 11 and summary["vendor_tokens"] == 27
+        assert summary["request_limits"] == {"llm": 9, "tavily": 2}
+        assert summary["reused_planning_cases"] == 1
+        assert summary["cumulative_requests_total"] == 13
+        assert summary["cumulative_vendor_tokens"] is None
+        assert summary["cumulative_known_vendor_tokens"] == 30
+        assert summary["cases"][0]["evidence_kind"] == "reused_prior"
+        assert all(identifier != "planning" for _, identifier in calls)
+        assert not (directory / "request-llm-planning.json").exists()
     else:
         assert len(calls) == 12 and summary["vendor_tokens"] == 30
     with pytest.raises(ValueError, match="Approval already exists"):
         await validation.run_providers(args, repo_root=tmp_path)
     assert "llm-fixture-key-123" not in (directory / "evaluation_report.md").read_text()
+
+
+def make_prior(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Construct explicit synthetic primary evidence, not a live-provider result."""
+    from dataclasses import asdict
+
+    from autoscholar.evaluation.datasets import payload_digest
+    from autoscholar.evaluation.models import MeasuredUsage
+    from autoscholar.evaluation.provider_cases import SYSTEM, oracle_digest, public_suite_digest
+
+    root = tmp_path / "data/evaluation"
+    directory = root / ("provider-" + "0" * 32)
+    directory.mkdir(parents=True)
+    monkeypatch.setattr(prior_module, "same_grader_source", lambda *args: True)
+    ledger = ApprovalLedger(approval_path(root, "prior-stub-approval"), run_id=directory.name)
+    payloads: dict[str, Any] = {}
+    for identifier, status in (("planning", 200), ("native_tool_call", 400)):
+        request = {
+            "model": "explicit-test-stub",
+            "max_tokens": 4096,
+            "messages": [
+                {"role": "system", "content": SYSTEM},
+                {"role": "user", "content": case(identifier).prompt},
+            ],
+        }
+        payloads["request-llm-" + identifier + ".json"] = request
+        index = ledger.reserve("llm", identifier, request)
+        ledger.finish(
+            index,
+            state="returned",
+            status=status,
+            usage=MeasuredUsage(
+                model_calls=1,
+                external_api_calls=1,
+                input_tokens=2 if status == 200 else None,
+                output_tokens=1 if status == 200 else None,
+                total_tokens=3 if status == 200 else None,
+            ),
+        )
+    response = {
+        "text": json.dumps(responses()["planning"]),
+        "model": "explicit-test-stub",
+        "tool_calls": [],
+    }
+    record = {
+        "case_id": "planning",
+        "kind": "plan",
+        "status": "passed",
+        "checks": grade_structured(case("planning"), responses()["planning"]),
+        "input_sha256": payload_digest(asdict(case("planning"))),
+        "output_sha256": payload_digest(response),
+        "observed_model": "explicit-test-stub",
+    }
+    payloads.update(
+        {
+            "planning-response.json": response,
+            "cases.json": [record, {"case_id": "native_tool_call", "status": "error"}],
+            "request_ledger.json": ledger.data,
+            "manifest.json": {
+                "schema_version": 1,
+                "run_id": directory.name,
+                "git_revision": REVISION,
+                "git_dirty": False,
+                "state": "error",
+                "suite_sha256": public_suite_digest(),
+                "oracle_sha256": oracle_digest(),
+                "configured_model": "explicit-test-stub",
+                "endpoint_sha256": hashlib.sha256(
+                    b"https://test.invalid/chat/completions"
+                ).hexdigest(),
+                "request_limits": {"llm": 10, "tavily": 2},
+                "approval_id": "prior-stub-approval",
+            },
+        }
+    )
+    for filename, payload in payloads.items():
+        (directory / filename).write_text(json.dumps(payload), encoding="utf-8")
+    return directory
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "request",
+        "response",
+        "source",
+        "model",
+        "endpoint",
+        "checks",
+        "extra_attempt",
+        "grant",
+        "case_order",
+        "running",
+    ],
+)
+def test_prior_planning_regraded_from_bound_primary_snapshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str | None
+) -> None:
+    directory = make_prior(tmp_path, monkeypatch)
+    selected = "manifest.json"
+    if mutation == "source":
+        monkeypatch.setattr(prior_module, "same_grader_source", lambda *args: False)
+    elif mutation is not None:
+        selected = {
+            "request": "request-llm-planning.json",
+            "response": "planning-response.json",
+            "checks": "cases.json",
+            "extra_attempt": "request_ledger.json",
+            "case_order": "cases.json",
+        }.get(mutation, "manifest.json")
+        path = directory / selected
+        payload = json.loads(path.read_text())
+        if mutation == "request":
+            payload["messages"][1]["content"] = "Changed public prompt"
+        elif mutation == "response":
+            payload["text"] = "{}"
+        elif mutation == "model":
+            payload["configured_model"] = "different-model"
+        elif mutation == "endpoint":
+            payload["endpoint_sha256"] = "c" * 64
+        elif mutation == "checks":
+            payload[0]["checks"] = {"fake": True}
+        elif mutation == "extra_attempt":
+            payload["attempts"].append(payload["attempts"][0])
+        elif mutation == "grant":
+            path = approval_path(tmp_path / "data/evaluation", "prior-stub-approval")
+            payload = {"attempts": []}
+        elif mutation == "case_order":
+            payload.reverse()
+        elif mutation == "running":
+            payload["state"] = "running"
+        path.write_text(json.dumps(payload))
+    kwargs = {
+        "repo_root": tmp_path,
+        "model": "explicit-test-stub",
+        "endpoint": "https://test.invalid/chat/completions",
+    }
+    if mutation:
+        with pytest.raises(ValueError):
+            prior_module.load_prior(directory, **kwargs)  # type: ignore[arg-type]
+    else:
+        prior = prior_module.load_prior(directory, **kwargs)  # type: ignore[arg-type]
+        assert prior.unchanged() and prior.record["evidence_kind"] == "reused_prior"
+        (directory / "planning-response.json").write_text("{}")
+        assert not prior.unchanged()
+
+
+async def test_manual_followup_reuses_planning_without_resetting_prior_allowance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prior = make_prior(tmp_path, monkeypatch)
+    before = {name: (prior / name).read_bytes() for name in prior_module.FILES}
+    await test_full_cli_contract_with_explicit_mock_transport(
+        tmp_path, monkeypatch, None, prior_run=prior
+    )
+    assert before == {name: (prior / name).read_bytes() for name in prior_module.FILES}
+    # A new grant ID cannot repeat the same follow-up and reset the cumulative ceiling.
+    with pytest.raises(ValueError, match="already has a follow-up"):
+        await validation.run_providers(
+            argparse.Namespace(
+                allow_paid=True,
+                approval_id="another-fresh-grant",
+                prior_run=prior,
+                sandbox_container="explicit-test-controller",
+            ),
+            repo_root=tmp_path,
+        )
+
+
+def test_followup_ledger_hard_limits_and_blocked_planning(tmp_path: Path) -> None:
+    ledger = ApprovalLedger(
+        tmp_path / "followup.json",
+        run_id="explicit-test",
+        limits={"llm": 9, "tavily": 2},
+        blocked_case_ids=("planning",),
+    )
+    with pytest.raises(ValueError, match="must not be dispatched"):
+        ledger.reserve("llm", "planning", {})
+    for index in range(9):
+        ledger.reserve("llm", f"public-{index}", {})
+    with pytest.raises(ValueError, match="allowance"):
+        ledger.reserve("llm", "public-tenth", {})
+    assert ledger.limits == {"llm": 9, "tavily": 2}
+    with pytest.raises(ValueError, match="ceiling"):
+        ApprovalLedger(tmp_path / "invalid.json", run_id="invalid", limits={"llm": 11, "tavily": 2})
 
 
 async def test_no_explicit_approval_never_loads_private_settings(

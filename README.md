@@ -1158,6 +1158,15 @@ if ($LASTEXITCODE -ne 0) { throw 'Engineering acceptance pack failed; inspect lo
 
 部分报告保留在 `data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439/evaluation_report.md`，同目录包含原始公开请求、规划响应、逐例记录和台账；不改写首次失败。临时控制器/网络及子资源已清理，缓存、公开 MNIST、应用数据和报告保留，没有重建正常部署、迁移应用数据库或合并 `main`。后续若人工复测失败工具用例并执行其余未测内容，不重跑已通过的规划，最多还需 **LLM 9 次、Tavily 2 次**；累计上限会从原 12 增至 13，必须重新明确授权。
 
+经单独明确授权后，可使用 `--prior-run` 做人工补测，不复用旧授权、不重跑规划：
+
+```powershell
+# 需新的单次授权 ID，最多新发 LLM 9 次 + Tavily 2 次，累计最多 13 次
+.venv\Scripts\python.exe -m autoscholar.evaluation providers --allow-paid --approval-id phase10-manual-followup --prior-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --sandbox-container $controller
+```
+
+入口重新验证上轮实际请求/回答、原始台账、源码与独立判分摘要、同一模型/端点，逐项重判规划后标记为“复用旧证据”，不会记为本轮新调用。补测额度收紧到 9/2；网络层禁止再次发送规划。上轮运行绑定独占补测声明，换一个授权 ID 也不能自动重置累计额度。原始 HTTP 400 和未知用量保留；本轮与累计请求/Token 分开统计，执行后再次检查旧证据未改变。未授权时不自动补测，单轮能力通过仍不代表真实自主 E2E 或通用模型能力。
+
 ## 开发路线
 
 | 阶段 | 重点 |

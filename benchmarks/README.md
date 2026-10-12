@@ -597,6 +597,28 @@ the failed tool contract and execute the eight unexecuted contracts: at most nin
 and two Tavily attempts. Together with the original two, that would be thirteen attempts,
 one beyond the original twelve-request allowance; explicit new approval is required.
 
+### Explicit manual follow-up with verified planning reuse
+
+After new owner approval, `--prior-run` can complete the remaining contracts with at most
+nine new LLM and two Tavily attempts. It does not resume/reset the original grant. Example:
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation providers --allow-paid --approval-id phase10-manual-followup --prior-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --sandbox-container $controller
+```
+
+Before dispatch, it bounds/confines reads to the exact public prior run, verifies the original
+manifest/Git grader source, matching suite/oracle/model/endpoint, two returned HTTP attempts
+(planning 200, tool 400), original approval ledger, request-body and response/case hashes,
+and independently regrades planning. The reused record retains its original run/revision
+and is NOT a fresh model sample or new request. No failed record is overwritten.
+
+The new one-shot ledger blocks planning and enforces 9/2; an exclusive claim on the prior
+run prevents a fresh approval ID from silently resetting cumulative allowance. Current and
+cumulative usage are separate; original failed-request tokens remain unknown. Prior source
+snapshots/ledger hashes are rechecked during/after execution. Tool-result messages preserve
+the original public question and actual model-generated call, including reasoning metadata.
+No model, thinking-mode, default app behavior or grading threshold is changed.
+
 ## Next stages
 
 The engineering pack and bounded default-cache neural retrieval verification are complete;

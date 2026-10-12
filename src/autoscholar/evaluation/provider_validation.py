@@ -33,11 +33,13 @@ from autoscholar.evaluation.provider_cases import (
     public_evidence,
     public_suite_digest,
 )
+from autoscholar.evaluation.provider_prior import PriorPlanning, followup_claim, load_prior
 from autoscholar.evaluation.provider_transport import (
     LIMITS,
     MAX_OUTPUT_TOKENS,
     ApprovalLedger,
     GuardedTransport,
+    Provider,
     approval_path,
     no_secrets,
 )
@@ -92,6 +94,8 @@ def capability_summary(
     source_unchanged: bool,
     clean_resources: bool,
     state: str,
+    prior: PriorPlanning | None = None,
+    prior_unchanged: bool = True,
 ) -> dict[str, Any]:
     passed = sum(record["status"] == "passed" for record in records)
     attempts = ledger.attempts
@@ -106,11 +110,22 @@ def capability_summary(
         state == "completed"
         and tuple(row["case_id"] for row in records) == CASE_IDS
         and passed == len(CASES)
-        and counts == LIMITS
+        and counts == ledger.limits
         and all(row["state"] == "returned" and row["http_status"] == 200 for row in attempts)
         and source_unchanged
         and clean_resources
+        and prior_unchanged
     )
+    previous = prior.snapshots["request_ledger.json"]["attempts"] if prior else []
+    all_attempts = previous + attempts
+    cumulative_known = [
+        row["usage"]["total_tokens"]
+        for row in all_attempts
+        if row["provider"] == "llm" and row["usage"]["total_tokens"] is not None
+    ]
+    cumulative_counts = {
+        provider: sum(row["provider"] == provider for row in all_attempts) for provider in LIMITS
+    }
     return {
         "schema_version": 1,
         "state": state,
@@ -119,7 +134,17 @@ def capability_summary(
         "passed": passed,
         "bounded_provider_capability_acceptance": accepted,
         "phase10_overall_acceptance": False,
-        "request_limits": LIMITS,
+        "request_limits": ledger.limits,
+        "live_llm_cases_this_run": 9 if prior else 10,
+        "reused_planning_cases": int(prior is not None),
+        "prior_evidence": prior.binding() if prior else None,
+        "prior_evidence_unchanged": prior_unchanged,
+        "cumulative_physical_requests": cumulative_counts,
+        "cumulative_requests_total": len(all_attempts),
+        "cumulative_known_vendor_tokens": sum(cumulative_known),
+        "cumulative_vendor_tokens": sum(cumulative_known)
+        if len(cumulative_known) == cumulative_counts["llm"]
+        else None,
         "physical_requests": counts,
         "requests_total": len(attempts),
         "known_vendor_tokens": sum(known),
@@ -128,7 +153,13 @@ def capability_summary(
         "monetary_cost": None,
         "source_unchanged": source_unchanged,
         "owned_resources_cleaned": clean_resources,
-        "scope": "One sample per fixed public provider contract, actual requests, no retries. "
+        "scope": (
+            "Explicit manual follow-up; one verified planning record reused with its "
+            "original source identity. Initial HTTP 400 remains in prior evidence. "
+            if prior
+            else ""
+        )
+        + "Fixed public provider contracts, actual requests, no automatic retries. "
         "Production Provider/Calculator/DAG validation and isolated code oracle; NOT an autonomous "
         "LLM-driven durable E2E run, general model benchmark or statistical ablation.",
         "cases": records,
@@ -155,6 +186,19 @@ def write_capability_report(directory: Path, summary: dict[str, Any]) -> None:
         "| Case | Result | Checks |",
         "|---|---|---|",
     ]
+    if summary["reused_planning_cases"]:
+        lines += [
+            "",
+            "Planning was independently regraded from bound prior request/response "
+            "snapshots, NOT requested again or counted as a new live response. "
+            f"Prior evidence unchanged: {summary['prior_evidence_unchanged']}. "
+            "Cumulative attempts including the original refusal: "
+            f"{summary['cumulative_physical_requests']}; "
+            f"total {summary['cumulative_requests_total']}. "
+            f"Cumulative tokens: {summary['cumulative_vendor_tokens']} "
+            f"(known {summary['cumulative_known_vendor_tokens']}); "
+            "original unknown usage stays unknown.",
+        ]
     lines += [
         f"| {row['case_id']} | {row['status']} | {row.get('checks', {})} |"
         for row in summary["cases"]
@@ -193,13 +237,36 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
     url = httpx.URL(endpoint)
     if url.scheme != "https" or url.userinfo or url.query or url.fragment:
         raise ValueError("Invalid explicit HTTPS LLM endpoint")
+    prior_path = getattr(args, "prior_run", None)
+    prior = (
+        load_prior(prior_path, repo_root=repo_root, model=settings.llm_model, endpoint=endpoint)
+        if prior_path
+        else None
+    )
+    limits: dict[Provider, int] = {"llm": 9, "tavily": 2} if prior else LIMITS
+    claim = followup_claim(root, prior) if prior else None
+    if claim is not None and claim.exists():
+        raise ValueError("This prior run already has a follow-up; no cumulative allowance reset")
     sandbox = DockerEvaluationSandbox(args.sandbox_container)
     resources = sandbox_resources(await sandbox.health(), dataset=False)
     if not await no_owned_children(sandbox):
         raise ValueError("Dedicated controller already has running evaluation children")
     directory = root / ("provider-" + uuid4().hex)
     directory.mkdir(parents=True, exist_ok=False)
-    ledger = ApprovalLedger(grant, run_id=directory.name)
+    if claim is not None:
+        claim.parent.mkdir(parents=True, exist_ok=True)
+        with claim.open("x", encoding="utf-8") as stream:
+            json.dump(
+                {
+                    "prior_run_id": prior.directory.name if prior else None,
+                    "followup_run_id": directory.name,
+                    "approval_id": args.approval_id,
+                },
+                stream,
+            )
+    ledger = ApprovalLedger(
+        grant, run_id=directory.name, limits=limits, blocked_case_ids=("planning",) if prior else ()
+    )
     llm_transport = GuardedTransport(
         provider="llm", endpoint=endpoint, ledger=ledger, output=directory, secrets=secrets
     )
@@ -210,7 +277,7 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         output=directory,
         secrets=secrets,
     )
-    records: list[dict[str, Any]] = []
+    records: list[dict[str, Any]] = [prior.record] if prior else []
     state, clean = "error", False
     manifest = {
         "schema_version": 1,
@@ -222,13 +289,20 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         "sandbox_resources": resources,
         "configured_model": settings.llm_model,
         "endpoint_sha256": hashlib.sha256(endpoint.encode()).hexdigest(),
-        "request_limits": LIMITS,
+        "request_limits": limits,
+        "prior_evidence": prior.binding() if prior else None,
         "max_tokens_per_request": MAX_OUTPUT_TOKENS,
         "started_at": datetime.now(UTC).isoformat(),
         "approval_id": args.approval_id,
     }
     no_secrets(manifest, secrets)
     _write_json(directory / "manifest.json", manifest)
+    if prior:
+        _write_json(
+            directory / "planning_evidence.json",
+            {"binding": prior.binding(), "record": prior.record},
+        )
+        _write_json(directory / "cases.json", records)
     tool_result: LLMResult | None = None
     tool_output: str | None = None
     try:
@@ -242,11 +316,14 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         ):
             provider = OpenAICompatibleProvider(settings, http_client=llm_client)
             search = TavilySearchProvider(api_key=tavily_key, client=search_client, retry_delays=())
-            for case in CASES:
+            for case in CASES[1:] if prior else CASES:
                 if _git_state(repo_root) != (revision, False):
                     raise ValueError("Source changed during real verification")
+                if prior and not prior.unchanged():
+                    raise ValueError("Prior planning evidence changed during manual follow-up")
                 print(
-                    f"Real provider case: {case.id}; dispatched {len(ledger.attempts)}/12",
+                    f"Real provider case: {case.id}; "
+                    f"new requests {len(ledger.attempts)}/{sum(limits.values())}",
                     flush=True,
                 )
                 started = time.perf_counter()
@@ -270,7 +347,10 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
                             record["status"] = "skipped"
                             record["reason"] = "native_tool_dependency_failed"
                             continue
-                        messages += [
+                        # Preserve the original public question and real model-generated call.
+                        messages = [
+                            ChatMessage(role="system", content=SYSTEM),
+                            ChatMessage(role="user", content=CASES[1].prompt),
                             AssistantToolCallMessage(
                                 tool_calls=tool_result.tool_calls,
                                 content=tool_result.text,
@@ -279,6 +359,7 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
                             ToolResultMessage(
                                 tool_call_id=tool_result.tool_calls[0].id, content=tool_output
                             ),
+                            ChatMessage(role="user", content=case.prompt),
                         ]
                     if case.kind == "research":
                         assert case.search_query is not None
@@ -375,6 +456,8 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
             source_unchanged=_git_state(repo_root) == (revision, False),
             clean_resources=clean,
             state=state,
+            prior=prior,
+            prior_unchanged=prior.unchanged() if prior else True,
         )
         write_capability_report(directory, summary)
     return directory, bool(summary["bounded_provider_capability_acceptance"])

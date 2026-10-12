@@ -306,6 +306,11 @@ def main() -> int:
     providers.add_argument("--allow-paid", action="store_true")
     providers.add_argument("--approval-id", required=True)
     providers.add_argument("--sandbox-container", required=True)
+    providers.add_argument(
+        "--prior-run",
+        type=Path,
+        help="Explicitly approved 11-request follow-up; reuse verified planning only",
+    )
     args = parser.parse_args()
     try:
         if args.command == "run":
