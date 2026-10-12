@@ -787,12 +787,46 @@ Old proof/grants stayed unchanged; bounded closure/full Phase 10/main-merge flag
 false. The next new-format confirmation needs a separately authorized **one LLM / zero
 Tavily** request, raising the cumulative ceiling to 15; no approval is inferred from this fix.
 
+2026-10-12 separately authorized v2 live confirmation on clean `cc537b5`: **one LLM / zero
+Tavily** attempt, HTTP 200, all six checks pass (native JSON null, strict schema, unique
+source IDs, independent fact, exact quote binding, source support). The model used a single
+E2 excerpt supporting in-place sorting and Python None. Existing model/endpoint/default
+thinking mode and original frozen grader are unchanged. No other contract or search rerun.
+
+New measured usage: **1588 input + 648 output = 2236 tokens**. Cumulative physical attempts:
+**13 LLM + 2 Tavily = 15**, exactly the newly approved cap, no automatic retry. Known tokens:
+**14002**; cumulative total and money remain unknown because the first HTTP 400 omitted
+usage and no price basis is supplied. Old failures, grants and source evidence remain intact.
+
+The new offline closure revalidates primary engineering/semantic/provider evidence and passes
+`bounded_phase10_closure_acceptance` under `engineering_and_bounded_capabilities_v1`:
+**10/10 coverage, no remaining bounded gaps**. Original v1 score is still **7/10**; nine slots
+are verified v1 evidence, one is a new-prompt v2 sample, not a fresh full-suite measurement.
+`phase10_overall_acceptance` and `main_merge_authorized` remain false. Autonomous paid E2E
+and real-model statistical ablations remain outside this validated scope. No further paid
+request or main merge is authorized; the 15-attempt grant is exhausted.
+
+Ignored local evidence:
+
+- `data/evaluation/chinese-v2-29ccb291b1e6441fbeabec76d259e54d/evaluation_report.md`.
+- `data/evaluation/closure-51779bc514214d148fa4ec43eecfe425/evaluation_report.md`.
+
+No Docker startup, normal deployment/DB mutation, private design/.env upload or raw-evidence
+publication occurs. Final audit checks the new grant/request hash, old source/failure retention,
+coverage, cumulative ceiling and separate overall/main flags without extra model requests.
+
+Post-confirmation free provider/closure regression **90 passed**; Ruff/mypy (223 files)
+pass. No source implementation changed this turn; the prior complete source regression
+remains **783 passed / 3 skipped**, not claimed as another full rerun. Only public result
+documentation is committed; all primary evidence and private configuration stay ignored.
+
 ## Next stages
 
-The engineering pack and bounded default-cache neural retrieval verification are complete;
-independent real-provider contracts and separately approved tool-chain confirmation have
-been exercised, but full provider acceptance remains incomplete due to the frozen Chinese
-format contract. Original failures stay visible; any paid repeat requires new approval. Broader corpora,
+Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
+closure now have passing evidence, including separately approved tool and Chinese v2
+confirmations. Original frozen v1 failures remain visible and are not retroactively passed.
+Autonomous real-LLM E2E and statistical model ablations remain unverified; any additional
+paid request or main merge needs separate owner approval. Broader corpora,
 PDF ingestion/generation quality and independent paid-provider ability remain outside this
 result. The generic injected RAG adapter accepts an explicitly provisioned
 retriever; it does not create one from environment settings and does not infer its API cost.
