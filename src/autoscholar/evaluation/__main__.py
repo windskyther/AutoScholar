@@ -300,6 +300,12 @@ def main() -> int:
     neural.add_argument("--repeats", type=int, default=2)
     neural.add_argument("--timeout", type=float, default=60.0)
     neural.add_argument("--output-root", type=Path)
+    providers = commands.add_parser(
+        "providers", help="Explicit one-shot bounded paid-provider verification"
+    )
+    providers.add_argument("--allow-paid", action="store_true")
+    providers.add_argument("--approval-id", required=True)
+    providers.add_argument("--sandbox-container", required=True)
     args = parser.parse_args()
     try:
         if args.command == "run":
@@ -312,6 +318,15 @@ def main() -> int:
             print(
                 "Real neural semantic/provider ability remains unverified; "
                 "this is NOT overall Phase 10 acceptance. No paid providers are enabled."
+            )
+            return 0 if accepted else 1
+        if args.command == "providers":
+            from autoscholar.evaluation.provider_validation import run_providers
+
+            directory, accepted = asyncio.run(run_providers(args, repo_root=REPO_ROOT))
+            print(
+                f"Bounded real-provider verification {'passed' if accepted else 'NOT accepted'}: "
+                f"{directory}"
             )
             return 0 if accepted else 1
         if args.command == "neural":

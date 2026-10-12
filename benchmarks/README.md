@@ -518,6 +518,48 @@ Ignored local evidence, never uploaded:
 - `data/validation/phase10h-9725d9b964fa4bffa6623269ff9918ee/acceptance.json`
   (actual cached model-RPC cancellation and timeout, isolation, joined cleanup, source identity).
 
+## Bounded real-provider verification
+
+`providers` is a separate paid entry point; offline/pack/neural defaults never enable it.
+Require a clean committed source, a unique dedicated controller from the 10D setup above,
+configured LLM/Tavily, and an explicit one-shot approval. No model migration or normal
+application/default-provider changes occur. The fixed questions and independent graders
+are versioned in `evaluation/provider_cases.py`; mock-transport tests are not live evidence.
+
+```powershell
+# This makes paid requests. Obtain owner approval first; no grant is inferred from old phases.
+.venv\Scripts\python.exe -m autoscholar.evaluation providers --allow-paid --approval-id phase10-approved-one-shot --sandbox-container $controller
+```
+
+Limits: ten LLM HTTP attempts, two three-result basic Tavily searches, 32 KiB per public
+request, 128 KiB per response, and `max_tokens=4096` for short completions. Use the configured
+model unchanged. HTTPS endpoints are fixed, no redirects/proxy environment/automatic SDK,
+HTTP or search retries. The ledger reserves each physical attempt BEFORE forwarding it;
+duplicate case dispatch and reusing the same approval ID cannot reset its allowance.
+Only selected local settings configure authentication/model; keys stay in auth headers,
+never JSON, prompts, reports or Git. No private design, .env content or application DB is sent.
+
+The ten contracts cover planning/public memory constraints, native Calculator/tool result,
+code generation and repair, invalid accuracy review, experiment-only replanning, English
+and Chinese retrieved-source answers, and latest-approved-result writing. Production
+Provider/Calculator/DAG/Review/Revision validation is used. Code is AST-scoped then statically
+checked and graded against eight independently held-out vectors in real Docker; no generated
+code runs on the host. Citations must bind exact actual excerpt substrings and support the
+fixed public fact, not merely have a valid ID. These are bounded per-component provider
+capabilities, NOT a fully autonomous paid DurableService/Research/Coding/Experiment run.
+
+Each case has one fixed sample, no repeats or automatic repairs; dependency failure stays
+skipped with the original planned denominator. Provider/infrastructure errors stop dispatch
+and preserve partial reports; no automatic rerun/resume. Actual request counts and vendor
+usage come from the guarded transport, not fixtures. Missing token usage and monetary cost
+without vendor price evidence remain unknown. Rejecting invalid metrics is not task completion.
+
+Ignored `data/evaluation/provider-<UUID>/` retains manifest, cases, redacted public request/
+response snapshots, actual evidence, request ledger, `provider_acceptance.json`, and
+`evaluation_report.md`. One-shot grants are in ignored `provider-approvals/`. Exit 0 only
+passes these bounded capability contracts; it neither asserts general model ability nor
+automatically sets overall Phase 10 acceptance or approves a main merge.
+
 ## Next stages
 
 The bounded default-cache neural retrieval verification above is complete; broader corpora,

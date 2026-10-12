@@ -999,7 +999,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-Phase9Stack.p
 
 ## Phase 10：AutoScholar-Eval（构建中）
 
-Phase 10 建立统一的 RAG、Research、Tool、Coding、Experiment 与端到端评测，及 Planner、Reranker、Reviewer、Memory、Replanning 消融。工程夹具、本地真实组件与真实供应商能力结果必须分开；当前不执行付费联测，不把固定模型响应的成功率当成真实模型能力。
+Phase 10 建立统一的 RAG、Research、Tool、Coding、Experiment 与端到端评测，及 Planner、Reranker、Reviewer、Memory、Replanning 消融。工程夹具、本地真实组件与真实供应商能力结果必须分开；付费联测仅在单独授权并显式开启时执行，不把固定模型响应的成功率当成真实模型能力。
 
 ### 10A：统一评测契约与运行记录
 
@@ -1137,6 +1137,20 @@ if ($LASTEXITCODE -ne 0) { throw 'Engineering acceptance pack failed; inspect lo
 工程检查与真实相关性分别统计。运行前固定质量门槛：dense、hybrid、hybrid_rerank 总体 Hit@5 ≥ 0.85，英文/中文/跨语言各 ≥ 0.75；sparse 记录实测分数但不承诺中文/跨语言语义能力。缺失计分、取消、资源误绑或清理未验证不能通过。语料是预分块文本，不覆盖 PDF 摄取、答案生成/忠实度、通用语义能力或付费模型总验收；`phase10_overall_acceptance` 仍为 false。完整说明见 [真实语义验证](benchmarks/README.md#actual-cached-neural-retrieval-validation)。
 
 2026-10-12 10H 验证：新增 **41 项契约测试**及完整后端 **689 passed、3 skipped**，Ruff、mypy（213 文件）和本轮 33 个文件格式检查通过。干净源码 `7b52091` 的真实缓存模型运行完成 **160/160 工程检查**，dense／hybrid／hybrid_rerank 的总体及各语言组 Hit@5 均为 1.0，满足预先固定门槛；总体 MRR 分别为 0.975／0.9333／1.0。BM25 的总体 Hit@5 为 0.45，英文 1.0、中文 0、跨语言 0.25，明确不推荐仅靠 sparse 处理这组中文/跨语言问题。40/40 个同候选池重排配对完整，MRR 描述性差值 +0.0667，不推断通用效果或显著性。实际 FastEmbed 0.8.0、ONNX Runtime 1.29.0；执行前后模型文件及源码一致，本轮容器清理为零。另实际发送缓存模型请求，在等待响应时分别取消／超时，验证异常传播、清理完成及已关闭客户端不可复用。全程外部 API 请求／供应商 Token 为 0，保留缓存、正常应用数据及本地报告；未重建正常部署或迁移应用数据库。报告在 `data/evaluation/neural-1c60445a1d554ed08d7a0c9765df295d/eval-e8d1bf658c694d1ca62cfb3e6f0ef788/evaluation_report.md`；安全补测在 `data/validation/phase10h-9725d9b964fa4bffa6623269ff9918ee/acceptance.json`。跳过项仍为旧 Compose 开关及两个 Windows 符号链接权限限制。付费供应商能力未测，尚不宣布 Phase 10 全部验收通过或合并 `main`。
+
+### 10I：有界真实供应商能力联测
+
+新增显式 `providers` 入口，固定 10 个公开 LLM 用例：规划与公开 Memory 约束、原生计算器调用、工具结果读取、代码生成、代码修复、错误准确率审核、保留已批准计划的单步重规划、英文/中文带证据回答、仅使用最新已审核指标的总结；两条 Research 用例各调用一次真实 Tavily。每轮上限 **LLM 10 次、Tavily 2 次**，不自动重试、不自动重跑失败用例。生产 LLM/搜索适配器、Calculator 和 DAG/Review/Revision schema 实际参与验证；生成代码及未交给模型的 8 个检查仅在独立 Docker 沙箱执行，不在宿主机执行。
+
+```powershell
+# 先按 benchmarks/README.md 创建唯一的独立控制器；下列命令会产生 API 费用
+# approval-id 代表本轮单独授权，使用过的 ID 不允许重置或复用
+.venv\Scripts\python.exe -m autoscholar.evaluation providers --allow-paid --approval-id phase10-approved-one-shot --sandbox-container $controller
+```
+
+仅在明确授权后读取本地 `.env` 的 LLM 地址/模型/密钥和 Tavily 密钥，密钥只进入鉴权头；不发送配置文件、设计文档或应用数据库。每个实际 HTTP 请求在发送前持久化计数，同一授权 ID 不可再次运行；只允许配置的 HTTPS LLM 端点及 Tavily 的基本检索，不跟随重定向，关闭 SDK/HTTP/搜索重试。本轮短回答发送 `max_tokens=4096`，不切换当前模型或修改正常应用默认行为。供应商/基础设施异常停止并保留部分记录，缺失用量及无价格依据的费用保持未知。
+
+输出保留公开请求、回答、搜索证据、源码/标准答案/镜像摘要、逐例判分及实际请求/Token 记录，全部在忽略的 `data/evaluation/provider-<UUID>/`；授权台账在同样忽略的 `provider-approvals/`。引用检查包含原文片段绑定与封闭事实支持，不把正确引用格式等同于通用语义忠实度。本轮为每个固定公开能力合同的一次抽样，不代表真实模型驱动的完整自主 E2E、统计消融或通用模型能力。必须结合工程整包及语义检索证据单独审核 Phase 10，不自动合并 `main`。
 
 ## 开发路线
 
