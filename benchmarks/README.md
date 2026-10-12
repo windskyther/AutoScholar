@@ -770,6 +770,23 @@ Four deterministic tie/order/non-static-initial tests cover both directions. No 
 repository history ordering, v1 provider grader or old evidence was modified. New Chinese/
 closure contracts: 27; focused provider/ablation/closure regression: **128 passed**.
 
+2026-10-12 free closure verification: complete backend **783 passed / 3 skipped**; Ruff,
+mypy (223 files) and 42 evaluation/related test files' formatting pass. The first full run's
+timestamp-tie failure remains in its local validation directory; the deterministic fix was
+followed by a passing full regression. Original frozen provider source/digests remain unchanged.
+
+Actual offline preparation/closure on clean `9c800c8` revalidated **155/155** engineering
+primary records, passing bounded cached-neural quality, and verified **9/10** provider-slot
+coverage. The original v1 score remains **7/10**; Chinese v2 is pending. This turn issued
+**0 new vendor requests**, cumulative still **14**, and no new paid approval ledger exists.
+No Docker startup, normal deployment/DB change or private-file upload occurred.
+
+Ignored local preparation: `data/evaluation/chinese-v2-e86621708b0f44dab62ffc1e463aa87a/`.
+Ignored local report: `data/evaluation/closure-122e7f62c1034131a172f7aa576a98be/evaluation_report.md`.
+Old proof/grants stayed unchanged; bounded closure/full Phase 10/main-merge flags remain
+false. The next new-format confirmation needs a separately authorized **one LLM / zero
+Tavily** request, raising the cumulative ceiling to 15; no approval is inferred from this fix.
+
 ## Next stages
 
 The engineering pack and bounded default-cache neural retrieval verification are complete;
