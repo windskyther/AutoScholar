@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import gzip
 import hashlib
 import json
 from copy import deepcopy
@@ -210,6 +211,36 @@ async def test_guard_bounds_actual_transport_and_no_retry(tmp_path: Path, fault:
         assert sent[0]["max_tokens"] == 4096
 
 
+async def test_compressed_http_200_is_not_decoded_twice(tmp_path: Path) -> None:
+    ledger = ApprovalLedger(tmp_path / "approval.json", run_id="explicit-test")
+    payload = {
+        "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+        "public_result": "native calculator response",
+    }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"Content-Encoding": "gzip"},
+            content=gzip.compress(json.dumps(payload).encode()),
+        )
+
+    guard = GuardedTransport(
+        provider="llm",
+        endpoint="https://test.invalid/chat/completions",
+        ledger=ledger,
+        output=tmp_path,
+        secrets=(),
+        delegate=httpx.MockTransport(handler),
+    )
+    guard.case_id = "public-compression-contract"
+    async with httpx.AsyncClient(transport=guard) as client:
+        result = await client.post(str(guard.endpoint), json={"messages": []})
+    assert result.json() == payload and "content-encoding" not in result.headers
+    assert ledger.attempts[0]["state"] == "returned"
+    assert ledger.attempts[0]["usage"]["total_tokens"] == 3
+
+
 class ExplicitSandboxStub:
     """Fake sandbox contract ONLY; actual code execution is verified separately."""
 
@@ -278,6 +309,7 @@ async def test_full_cli_contract_with_explicit_mock_transport(
     monkeypatch: pytest.MonkeyPatch,
     fault: str | None,
     prior_run: Path | None = None,
+    continue_from: Path | None = None,
 ) -> None:
     fake = responses()
     if fault == "wrong_writer":
@@ -364,10 +396,11 @@ async def test_full_cli_contract_with_explicit_mock_transport(
         approval_id="explicit-test-approval",
         sandbox_container="explicit-test-controller",
         prior_run=prior_run,
+        continue_unattempted=continue_from,
     )
     directory, accepted = await validation.run_providers(args, repo_root=tmp_path)
     summary = json.loads((directory / "provider_acceptance.json").read_text())
-    assert accepted is (fault in (None, "no_usage"))
+    assert accepted is (fault in (None, "no_usage") and continue_from is None)
     assert len(calls) <= 12
     assert sum(provider == "llm" for provider, _ in calls) <= 10
     assert sum(provider == "tavily" for provider, _ in calls) <= 2
@@ -379,6 +412,16 @@ async def test_full_cli_contract_with_explicit_mock_transport(
         assert summary["state"] == "error" and summary["cases"][0]["error_type"]
     elif fault == "bad_native":
         assert len(calls) == 11 and summary["cases"][2]["status"] == "skipped"
+    elif continue_from is not None:
+        assert len(calls) == 9 and summary["vendor_tokens"] == 24
+        assert summary["physical_requests"] == {"llm": 8, "tavily": 2}
+        assert summary["cumulative_requests_total"] == 12
+        assert summary["new_requests_in_continuation"] == 9
+        assert summary["passed"] == 8 and summary["cases"][2]["status"] == "skipped"
+        assert all(
+            identifier not in ("planning", "native_tool_call", "native_tool_result")
+            for _, identifier in calls
+        )
     elif prior_run is not None:
         assert len(calls) == 11 and summary["vendor_tokens"] == 27
         assert summary["request_limits"] == {"llm": 9, "tavily": 2}
@@ -391,7 +434,7 @@ async def test_full_cli_contract_with_explicit_mock_transport(
         assert not (directory / "request-llm-planning.json").exists()
     else:
         assert len(calls) == 12 and summary["vendor_tokens"] == 30
-    with pytest.raises(ValueError, match="Approval already exists"):
+    with pytest.raises(ValueError, match="already"):
         await validation.run_providers(args, repo_root=tmp_path)
     assert "llm-fixture-key-123" not in (directory / "evaluation_report.md").read_text()
 
@@ -591,3 +634,89 @@ async def test_no_explicit_approval_never_loads_private_settings(
     monkeypatch.setattr(validation, "load_explicit_settings", forbidden)
     with pytest.raises(ValueError, match="explicit"):
         await validation.run_providers(argparse.Namespace(allow_paid=False), repo_root=tmp_path)
+
+
+async def test_continue_only_unattempted_independent_contracts_preserves_consumed_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import asdict
+
+    from autoscholar.evaluation.datasets import payload_digest
+    from autoscholar.evaluation.models import MeasuredUsage
+    from autoscholar.evaluation.provider_cases import SYSTEM, oracle_digest, public_suite_digest
+
+    first = make_prior(tmp_path, monkeypatch)
+    prior = prior_module.load_prior(
+        first,
+        repo_root=tmp_path,
+        model="explicit-test-stub",
+        endpoint="https://test.invalid/chat/completions",
+    )
+    root = tmp_path / "data/evaluation"
+    stopped = root / ("provider-" + "1" * 32)
+    stopped.mkdir()
+    identifier = "explicit-test-approval"
+    ledger = ApprovalLedger(
+        approval_path(root, identifier),
+        run_id=stopped.name,
+        limits={"llm": 9, "tavily": 2},
+        blocked_case_ids=("planning",),
+    )
+    request = {
+        "model": "explicit-test-stub",
+        "max_tokens": 4096,
+        "tool_choice": "auto",
+        "messages": [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": case("native_tool_call").prompt},
+        ],
+    }
+    index = ledger.reserve("llm", "native_tool_call", request)
+    ledger.finish(
+        index,
+        state="unknown",
+        status=200,
+        usage=MeasuredUsage(
+            model_calls=1, external_api_calls=1, input_tokens=2, output_tokens=1, total_tokens=3
+        ),
+    )
+    records = [
+        prior.record,
+        {
+            "case_id": "native_tool_call",
+            "kind": "tool_call",
+            "status": "error",
+            "checks": {},
+            "input_sha256": payload_digest(asdict(case("native_tool_call"))),
+        },
+    ]
+    manifest = {
+        "run_id": stopped.name,
+        "state": "error",
+        "git_dirty": False,
+        "approval_id": identifier,
+        "git_revision": REVISION,
+        "suite_sha256": public_suite_digest(),
+        "oracle_sha256": oracle_digest(),
+        "configured_model": "explicit-test-stub",
+        "endpoint_sha256": hashlib.sha256(b"https://test.invalid/chat/completions").hexdigest(),
+        "prior_evidence": prior.binding(),
+    }
+    payloads = {
+        "manifest.json": manifest,
+        "cases.json": records,
+        "request_ledger.json": ledger.data,
+        "request-llm-native_tool_call.json": request,
+    }
+    for name, payload in payloads.items():
+        (stopped / name).write_text(json.dumps(payload))
+    claim = prior_module.followup_claim(root, prior)
+    claim.parent.mkdir()
+    claim.write_text(json.dumps({"followup_run_id": stopped.name, "approval_id": identifier}))
+    before = {name: (stopped / name).read_bytes() for name in payloads}
+    await test_full_cli_contract_with_explicit_mock_transport(
+        tmp_path, monkeypatch, None, prior_run=first, continue_from=stopped
+    )
+    assert before == {name: (stopped / name).read_bytes() for name in payloads}
+    retained = json.loads(approval_path(root, identifier).read_text())["attempts"]
+    assert len(retained) == 10 and retained[0]["state"] == "unknown"

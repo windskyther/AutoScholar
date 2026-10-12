@@ -175,3 +175,67 @@ def followup_claim(root: Path, prior: PriorPlanning) -> Path:
     if not target.is_relative_to(root.resolve()):
         raise ValueError("Follow-up claim escaped the evaluation root")
     return target
+
+
+def load_stopped_followup(
+    directory: Path,
+    *,
+    repo_root: Path,
+    prior: PriorPlanning,
+    model: str | None,
+    endpoint: str,
+    identifier: str,
+) -> dict[str, Any]:
+    """Continue independent, UNATTEMPTED contracts only; never retry the lost tool RPC."""
+    root = (repo_root / "data/evaluation").resolve()
+    directory = directory.resolve()
+    if directory.parent != root or not re.fullmatch(r"provider-[a-f0-9]{32}", directory.name):
+        raise ValueError("Select an exact stopped public follow-up run")
+    manifest, _ = read_public(directory / "manifest.json", directory)
+    revision = manifest.get("git_revision", "")
+    if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision):
+        raise ValueError("Invalid stopped follow-up source revision")
+    ledger, _ = read_public(directory / "request_ledger.json", directory)
+    records, _ = read_public(directory / "cases.json", directory)
+    request, _ = read_public(directory / "request-llm-native_tool_call.json", directory)
+    if (
+        manifest.get("run_id") != directory.name
+        or manifest.get("state") != "error"
+        or manifest.get("git_dirty") is not False
+        or manifest.get("approval_id") != identifier
+        or manifest.get("suite_sha256") != public_suite_digest()
+        or manifest.get("oracle_sha256") != oracle_digest()
+        or manifest.get("configured_model") != model
+        or manifest.get("endpoint_sha256") != hashlib.sha256(endpoint.encode()).hexdigest()
+        or manifest.get("prior_evidence") != prior.binding()
+        or not same_grader_source(repo_root, manifest["git_revision"])
+        or ledger.get("run_id") != directory.name
+        or ledger.get("limits") != {"llm": 9, "tavily": 2}
+        or ledger.get("blocked_case_ids") != ["planning"]
+        or len(ledger.get("attempts", [])) != 1
+        or [row.get("case_id") for row in records] != ["planning", "native_tool_call"]
+        or records[0] != prior.record
+        or records[1].get("status") != "error"
+    ):
+        raise ValueError("Stopped follow-up source, grant or case binding differs")
+    attempt = ledger["attempts"][0]
+    if (
+        attempt.get("provider") != "llm"
+        or attempt.get("case_id") != "native_tool_call"
+        or attempt.get("http_status") != 200
+        or attempt.get("state") != "unknown"
+        or attempt.get("request_sha256") != payload_digest(request)
+        or request.get("model") != model
+        or request.get("tool_choice") != "auto"
+        or request.get("messages")
+        != [{"role": "system", "content": SYSTEM}, {"role": "user", "content": CASES[1].prompt}]
+        or request.get("max_tokens") != MAX_OUTPUT_TOKENS
+        or records[1].get("input_sha256") != payload_digest(asdict(CASES[1]))
+    ):
+        raise ValueError("Stopped native request does not match its consumed reservation")
+    MeasuredUsage.model_validate(attempt["usage"])
+    claim = followup_claim(root, prior)
+    binding, _ = read_public(claim, claim.parent)
+    if binding.get("followup_run_id") != directory.name or binding.get("approval_id") != identifier:
+        raise ValueError("Follow-up ownership claim differs")
+    return {"directory": directory, "ledger": ledger, "records": records}

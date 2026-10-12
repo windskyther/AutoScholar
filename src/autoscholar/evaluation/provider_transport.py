@@ -80,6 +80,24 @@ class ApprovalLedger:
         _write_json(self.path, self.data)
         return len(attempts) - 1
 
+    @classmethod
+    def continue_unused(cls, path: Path, *, expected: dict[str, Any]) -> "ApprovalLedger":
+        """Explicit continuation preserves all consumed attempts; no new allowance."""
+        with path.open("rb") as stream:
+            raw = stream.read(131073)
+        if len(raw) > 131072 or decode_json(raw) != expected:
+            raise ValueError("Existing approval changed; do not reset or resume it")
+        if expected.get("limits") != {"llm": 9, "tavily": 2} or expected.get(
+            "blocked_case_ids"
+        ) != ["planning"]:
+            raise ValueError("Only unused, bounded manual-follow-up allowance may continue")
+        instance = cls.__new__(cls)
+        instance.path = path
+        instance.limits = dict(expected["limits"])
+        instance.blocked_case_ids = ("planning",)
+        instance.data = expected
+        return instance
+
     def finish(
         self,
         index: int,
@@ -207,12 +225,23 @@ class GuardedTransport(httpx.AsyncBaseTransport):
                             )
                     except ValueError:
                         pass  # Missing/invalid vendor accounting is unknown, never zero.
+                if response.status_code == 200:
+                    captured = decode_json(bytes(content))
+                    no_secrets(captured, self.secrets)
+                    _write_json(
+                        self.output / f"response-{self.provider}-{self.case_id}.json", captured
+                    )
                 self.ledger.finish(
                     index, state="returned", status=response.status_code, usage=usage
                 )
+                # aiter_bytes() already decompressed the wire body. Forwarding the old
+                # encoding/length headers would make httpx decode it a second time.
+                response_headers = dict(response.headers)
+                for header in ("content-encoding", "content-length", "transfer-encoding"):
+                    response_headers.pop(header, None)
                 return httpx.Response(
                     response.status_code,
-                    headers=response.headers,
+                    headers=response_headers,
                     content=bytes(content),
                     request=request,
                 )

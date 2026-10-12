@@ -619,6 +619,22 @@ snapshots/ledger hashes are rechecked during/after execution. Tool-result messag
 the original public question and actual model-generated call, including reasoning metadata.
 No model, thinking-mode, default app behavior or grading threshold is changed.
 
+For an explicitly continued stopped follow-up, `--continue-unattempted` retains the same
+grant/counters and only dispatches the seven still-unattempted independent contracts. It
+verifies the exact stopped run, consumed native HTTP-200 reservation, source/model/endpoint,
+original ownership claim and old planning proof. The native response was unavailable to the
+grader; it stays error, its dependent result case stays skipped. No inferred calculator call,
+synthetic model result, paid retry or allowance reset occurs. A fresh continuation claim is
+exclusive; another CLI invocation cannot repeat it. This mode does not itself pass the full gate.
+
+The response guard handles decompressed bytes with corrected encoding/length headers;
+otherwise HTTPX may decode them again and report a local connection failure after HTTP 200.
+Bounded credential-checked raw JSON snapshots are saved on successful responses before SDK
+parsing. The old missing response is NOT retroactively reconstructed. Use short unique pytest
+basetemp paths on Windows (`data/validation/p10-<short random ID>`); deeply nested pack report
+paths can otherwise exceed local path limits. Preserve original failed evidence and do not
+change OS settings or clear existing application data just to run this test.
+
 ## Next stages
 
 The engineering pack and bounded default-cache neural retrieval verification are complete;

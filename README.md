@@ -1167,6 +1167,15 @@ if ($LASTEXITCODE -ne 0) { throw 'Engineering acceptance pack failed; inspect lo
 
 入口重新验证上轮实际请求/回答、原始台账、源码与独立判分摘要、同一模型/端点，逐项重判规划后标记为“复用旧证据”，不会记为本轮新调用。补测额度收紧到 9/2；网络层禁止再次发送规划。上轮运行绑定独占补测声明，换一个授权 ID 也不能自动重置累计额度。原始 HTTP 400 和未知用量保留；本轮与累计请求/Token 分开统计，执行后再次检查旧证据未改变。未授权时不自动补测，单轮能力通过仍不代表真实自主 E2E 或通用模型能力。
 
+当人工补测已发送请求但客户端处理中止时，只有未尝试的独立用例可显式继续；继续入口保留同一授权内已耗用的计数，不扩大额度、不重发规划或失败的工具请求。丢失的原生工具回答不能仅凭 HTTP 200 推断为通过，其依赖的工具结果读取也不能编造。响应读取已处理 HTTP 压缩体与头部的一致性；成功响应保存安全、限长的原始 JSON 快照，避免解析问题丢失已返回的公开证据。
+
+```powershell
+# 仍需处于已明确授权的未用额度内；示例停留在已有 9/2 上限
+.venv\Scripts\python.exe -m autoscholar.evaluation providers --allow-paid --approval-id phase10-manual-followup-20261012-11 --prior-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --continue-unattempted data/evaluation/provider-001af831d0024f189706436ee4ad233f --sandbox-container $controller
+```
+
+Windows 本地回归应使用较短的独立 `--basetemp` 路径，例如忽略的 `data/validation/p10-<短随机 ID>/`；长阶段名称与深层整包报告路径可能超过本机文件路径限制。不要用已有用户数据目录作为测试临时目录，也不需要因此更改系统注册表或删除原始报告。
+
 ## 开发路线
 
 | 阶段 | 重点 |

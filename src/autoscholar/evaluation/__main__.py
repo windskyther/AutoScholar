@@ -311,6 +311,11 @@ def main() -> int:
         type=Path,
         help="Explicitly approved 11-request follow-up; reuse verified planning only",
     )
+    providers.add_argument(
+        "--continue-unattempted",
+        type=Path,
+        help="Explicitly continue only independent unattempted cases; preserve consumed allowance",
+    )
     args = parser.parse_args()
     try:
         if args.command == "run":

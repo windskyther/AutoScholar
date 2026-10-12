@@ -33,7 +33,12 @@ from autoscholar.evaluation.provider_cases import (
     public_evidence,
     public_suite_digest,
 )
-from autoscholar.evaluation.provider_prior import PriorPlanning, followup_claim, load_prior
+from autoscholar.evaluation.provider_prior import (
+    PriorPlanning,
+    followup_claim,
+    load_prior,
+    load_stopped_followup,
+)
 from autoscholar.evaluation.provider_transport import (
     LIMITS,
     MAX_OUTPUT_TOKENS,
@@ -225,7 +230,8 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
     if not root.is_relative_to(repo_root.resolve()):
         raise ValueError("Provider output escaped evaluation root")
     grant = approval_path(root, args.approval_id)
-    if grant.exists():
+    continuation_path = getattr(args, "continue_unattempted", None)
+    if grant.exists() and continuation_path is None:
         raise ValueError("Approval already exists; no automatic rerun or allowance reset")
     revision, dirty = _git_state(repo_root)
     if not revision or dirty is not False:
@@ -245,7 +251,31 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
     )
     limits: dict[Provider, int] = {"llm": 9, "tavily": 2} if prior else LIMITS
     claim = followup_claim(root, prior) if prior else None
-    if claim is not None and claim.exists():
+    continuation = (
+        load_stopped_followup(
+            continuation_path,
+            repo_root=repo_root,
+            prior=prior,
+            model=settings.llm_model,
+            endpoint=endpoint,
+            identifier=args.approval_id,
+        )
+        if continuation_path is not None and prior is not None
+        else None
+    )
+    if continuation_path is not None and continuation is None:
+        raise ValueError("Explicit continuation requires verified original planning evidence")
+    continuation_id = continuation["directory"].name if continuation else None
+    continuation_claim = (
+        (root / "provider-continuation-claims" / (continuation_id + ".json")).resolve()
+        if continuation_id
+        else None
+    )
+    if continuation_claim is not None and (
+        not continuation_claim.is_relative_to(root) or continuation_claim.exists()
+    ):
+        raise ValueError("This stopped follow-up already has an independent continuation")
+    if claim is not None and claim.exists() and continuation is None:
         raise ValueError("This prior run already has a follow-up; no cumulative allowance reset")
     sandbox = DockerEvaluationSandbox(args.sandbox_container)
     resources = sandbox_resources(await sandbox.health(), dataset=False)
@@ -253,7 +283,7 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         raise ValueError("Dedicated controller already has running evaluation children")
     directory = root / ("provider-" + uuid4().hex)
     directory.mkdir(parents=True, exist_ok=False)
-    if claim is not None:
+    if claim is not None and continuation is None:
         claim.parent.mkdir(parents=True, exist_ok=True)
         with claim.open("x", encoding="utf-8") as stream:
             json.dump(
@@ -264,8 +294,19 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
                 },
                 stream,
             )
-    ledger = ApprovalLedger(
-        grant, run_id=directory.name, limits=limits, blocked_case_ids=("planning",) if prior else ()
+    if continuation_claim is not None:
+        continuation_claim.parent.mkdir(parents=True, exist_ok=True)
+        with continuation_claim.open("x", encoding="utf-8") as stream:
+            json.dump({"from_run": continuation_id, "run_id": directory.name}, stream)
+    ledger = (
+        ApprovalLedger.continue_unused(grant, expected=continuation["ledger"])
+        if continuation
+        else ApprovalLedger(
+            grant,
+            run_id=directory.name,
+            limits=limits,
+            blocked_case_ids=("planning",) if prior else (),
+        )
     )
     llm_transport = GuardedTransport(
         provider="llm", endpoint=endpoint, ledger=ledger, output=directory, secrets=secrets
@@ -277,7 +318,22 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         output=directory,
         secrets=secrets,
     )
-    records: list[dict[str, Any]] = [prior.record] if prior else []
+    records: list[dict[str, Any]] = (
+        continuation["records"] if continuation else ([prior.record] if prior else [])
+    )
+    if continuation:
+        # No inferred/fabricated native result; its dependent contract stays unexecuted.
+        records.append(
+            {
+                "case_id": CASES[2].id,
+                "kind": CASES[2].kind,
+                "status": "skipped",
+                "checks": {},
+                "reason": "native_tool_response_not_available",
+                "input_sha256": payload_digest(asdict(CASES[2])),
+                "duration_ms": 0.0,
+            }
+        )
     state, clean = "error", False
     manifest = {
         "schema_version": 1,
@@ -291,6 +347,7 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         "endpoint_sha256": hashlib.sha256(endpoint.encode()).hexdigest(),
         "request_limits": limits,
         "prior_evidence": prior.binding() if prior else None,
+        "continued_from": continuation_id,
         "max_tokens_per_request": MAX_OUTPUT_TOKENS,
         "started_at": datetime.now(UTC).isoformat(),
         "approval_id": args.approval_id,
@@ -316,7 +373,7 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         ):
             provider = OpenAICompatibleProvider(settings, http_client=llm_client)
             search = TavilySearchProvider(api_key=tavily_key, client=search_client, retry_delays=())
-            for case in CASES[1:] if prior else CASES:
+            for case in CASES[3:] if continuation else CASES[1:] if prior else CASES:
                 if _git_state(repo_root) != (revision, False):
                     raise ValueError("Source changed during real verification")
                 if prior and not prior.unchanged():
@@ -459,5 +516,8 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
             prior=prior,
             prior_unchanged=prior.unchanged() if prior else True,
         )
+        if continuation:
+            summary["continued_from"] = continuation_id
+            summary["new_requests_in_continuation"] = len(ledger.attempts) - 1
         write_capability_report(directory, summary)
     return directory, bool(summary["bounded_provider_capability_acceptance"])
