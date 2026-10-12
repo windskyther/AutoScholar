@@ -635,6 +635,55 @@ basetemp paths on Windows (`data/validation/p10-<short random ID>`); deeply nest
 paths can otherwise exceed local path limits. Preserve original failed evidence and do not
 change OS settings or clear existing application data just to run this test.
 
+2026-10-12 manual follow-up evidence: the prior planning request/response, original grant,
+source and grading identity were verified; no planning request was sent again. The new
+native request returned HTTP 200 and 483 measured tokens, but the client response wrapper
+could decode an already-decompressed body a second time because encoding headers were
+retained. The SDK reported a local connection failure and the full answer was not saved;
+HTTP status alone cannot grade the tool. The free fix removes stale encoding/length headers
+and captures bounded credential-checked JSON before SDK parsing. The missing native output
+is not reconstructed, and no automatic native retry occurred.
+
+The explicit unused-allowance continuation on clean source `a3aea04` issued seven independent
+LLM requests and two Tavily searches. Both code cases passed real static validation and all
+eight held-out Docker checks each; metric-review, experiment-only replanning, English
+source-bound answering and latest-result writing passed. Both Tavily requests returned 200.
+Frozen grading is **7/10**, including one reused planning case, one native error, its skipped
+dependent case and one Chinese format refusal. The provider gate remains false.
+
+Saved Chinese output states the correct in-place/None facts, and all three quotes match
+actual excerpts and support both claims. The original schema rejected textual `"None"`
+(rather than JSON null) and two distinct quotes referencing E1 (rather than unique source
+IDs). A separate offline diagnostic records these distinctions without changing the raw
+response, failed score or frozen grader; no paid repeat or post-hoc pass is claimed.
+
+Cumulative physical attempts: **10 LLM + 2 Tavily = 12**, within the newly approved cap of
+13. This turn issued ten attempts including the missing native response; the continuation
+alone issued nine. This turn's returned usage sums to 9687 tokens; cumulative known usage
+is 11074, but the first HTTP 400 has unknown usage, so cumulative total tokens and money
+remain unknown. Source and original proof stayed unchanged during real execution.
+
+Full free backend: **740 passed / 3 skipped**; Ruff/mypy (218 files) pass. Provider contracts
+51 plus pack tests 37 total **88 passed**. Seven initial pack failures were Windows path
+length errors (expected deep report path 264 characters); shorter unique basetemp paths
+passed all cases, without OS changes or deleting failed evidence. Skips remain old Compose
+opt-in and two Windows symbolic-link restrictions. The dedicated controller/network and
+all child containers/volumes are removed; cached images, public MNIST, app data and reports
+remain. No application DB migration, normal deployment rebuild, private-file upload or main
+merge occurred.
+
+Ignored local evidence:
+
+- `data/evaluation/provider-6db601fc4ca34752b256271c5bf80445/evaluation_report.md`
+  (continuation manifest, real responses/search snapshots, cases and retained usage).
+- Same directory's `research_chinese_diagnostic.json` (offline factual/quote checks vs frozen
+  null/unique-source-ID rules, no change to the failed result).
+- `data/evaluation/provider-001af831d0024f189706436ee4ad233f/` (original HTTP-200 native
+  reservation, unavailable response, usage and partial failure preserved).
+
+Overall Phase 10 is not accepted. Native/result confirmation needs explicitly authorized
+paid work; Chinese format expectations must be clarified without concealing the first score.
+
 ## Next stages
 
 The engineering pack and bounded default-cache neural retrieval verification are complete;

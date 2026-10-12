@@ -21,7 +21,7 @@ MAX_OUTPUT_TOKENS = 4096
 
 
 class ApprovalLedger:
-    """Reservations are persisted BEFORE network dispatch. Never resume/reuse a grant."""
+    """Persist reservations before dispatch; never reset or implicitly reuse an allowance."""
 
     def __init__(
         self,
