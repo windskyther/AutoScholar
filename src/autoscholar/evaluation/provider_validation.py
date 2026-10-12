@@ -33,6 +33,10 @@ from autoscholar.evaluation.provider_cases import (
     public_evidence,
     public_suite_digest,
 )
+from autoscholar.evaluation.provider_confirmation import (
+    ToolConfirmationEvidence,
+    load_tool_confirmation,
+)
 from autoscholar.evaluation.provider_prior import (
     PriorPlanning,
     followup_claim,
@@ -101,6 +105,7 @@ def capability_summary(
     state: str,
     prior: PriorPlanning | None = None,
     prior_unchanged: bool = True,
+    confirmation: ToolConfirmationEvidence | None = None,
 ) -> dict[str, Any]:
     passed = sum(record["status"] == "passed" for record in records)
     attempts = ledger.attempts
@@ -121,7 +126,13 @@ def capability_summary(
         and clean_resources
         and prior_unchanged
     )
-    previous = prior.snapshots["request_ledger.json"]["attempts"] if prior else []
+    previous = (
+        confirmation.attempts
+        if confirmation
+        else prior.snapshots["request_ledger.json"]["attempts"]
+        if prior
+        else []
+    )
     all_attempts = previous + attempts
     cumulative_known = [
         row["usage"]["total_tokens"]
@@ -131,17 +142,28 @@ def capability_summary(
     cumulative_counts = {
         provider: sum(row["provider"] == provider for row in all_attempts) for provider in LIMITS
     }
-    return {
+    tool_accepted = bool(
+        confirmation
+        and state == "completed"
+        and tuple(row["case_id"] for row in records) == CASE_IDS[1:3]
+        and passed == 2
+        and counts == {"llm": 2, "tavily": 0}
+        and all(row["state"] == "returned" and row["http_status"] == 200 for row in attempts)
+        and source_unchanged
+        and clean_resources
+        and prior_unchanged
+    )
+    summary = {
         "schema_version": 1,
         "state": state,
-        "planned_llm_cases": len(CASES),
+        "planned_llm_cases": 2 if confirmation else len(CASES),
         "recorded": len(records),
         "passed": passed,
         "bounded_provider_capability_acceptance": accepted,
         "phase10_overall_acceptance": False,
         "request_limits": ledger.limits,
-        "live_llm_cases_this_run": 9 if prior else 10,
-        "reused_planning_cases": int(prior is not None),
+        "live_llm_cases_this_run": 2 if confirmation else 9 if prior else 10,
+        "reused_planning_cases": int(prior is not None and confirmation is None),
         "prior_evidence": prior.binding() if prior else None,
         "prior_evidence_unchanged": prior_unchanged,
         "cumulative_physical_requests": cumulative_counts,
@@ -169,6 +191,16 @@ def capability_summary(
         "LLM-driven durable E2E run, general model benchmark or statistical ablation.",
         "cases": records,
     }
+    if confirmation:
+        summary.update(
+            tool_chain_confirmation_acceptance=tool_accepted,
+            confirmation_evidence=confirmation.binding(),
+            previous_case_results=confirmation.records,
+            scope="Explicit two-request tool-only manual confirmation, no planning/search/other "
+            "case repeat. Original failures and scores remain in bound previous evidence. "
+            "A passing tool component is NOT full provider or Phase 10 acceptance.",
+        )
+    return summary
 
 
 def write_capability_report(directory: Path, summary: dict[str, Any]) -> None:
@@ -188,9 +220,15 @@ def write_capability_report(directory: Path, summary: dict[str, Any]) -> None:
         "Missing/error/cancelled results stay in planned coverage, no paid automatic retry. "
         "This alone does not assert full Phase 10 acceptance or approve a main merge.",
         "",
-        "| Case | Result | Checks |",
-        "|---|---|---|",
     ]
+    if "tool_chain_confirmation_acceptance" in summary:
+        lines += [
+            "",
+            f"Tool-only confirmation: **{summary['tool_chain_confirmation_acceptance']}**. "
+            f"Cumulative physical attempts: {summary['cumulative_requests_total']} "
+            f"({summary['cumulative_physical_requests']}); cumulative known tokens: "
+            f"{summary['cumulative_known_vendor_tokens']}. Original failure scores unchanged.",
+        ]
     if summary["reused_planning_cases"]:
         lines += [
             "",
@@ -204,6 +242,7 @@ def write_capability_report(directory: Path, summary: dict[str, Any]) -> None:
             f"(known {summary['cumulative_known_vendor_tokens']}); "
             "original unknown usage stays unknown.",
         ]
+    lines += ["", "| Case | Result | Checks |", "|---|---|---|"]
     lines += [
         f"| {row['case_id']} | {row['status']} | {row.get('checks', {})} |"
         for row in summary["cases"]
@@ -231,6 +270,9 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         raise ValueError("Provider output escaped evaluation root")
     grant = approval_path(root, args.approval_id)
     continuation_path = getattr(args, "continue_unattempted", None)
+    confirmation_path = getattr(args, "confirm_tools_from", None)
+    if confirmation_path is not None and continuation_path is not None:
+        raise ValueError("Tool-only confirmation cannot continue the earlier allowance")
     if grant.exists() and continuation_path is None:
         raise ValueError("Approval already exists; no automatic rerun or allowance reset")
     revision, dirty = _git_state(repo_root)
@@ -250,6 +292,33 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         else None
     )
     limits: dict[Provider, int] = {"llm": 9, "tavily": 2} if prior else LIMITS
+    confirmation = (
+        load_tool_confirmation(
+            confirmation_path,
+            repo_root=repo_root,
+            prior=prior,
+            model=settings.llm_model,
+            endpoint=endpoint,
+        )
+        if confirmation_path is not None and prior is not None
+        else None
+    )
+    if confirmation_path is not None and confirmation is None:
+        raise ValueError("Tool-only confirmation requires verified original evidence")
+    if confirmation:
+        limits = {"llm": 2, "tavily": 0}
+    confirmation_claim = (
+        (
+            root / "provider-tool-confirmation-claims" / (confirmation.directory.name + ".json")
+        ).resolve()
+        if confirmation
+        else None
+    )
+    if confirmation_claim is not None:
+        if not confirmation_claim.is_relative_to(root):
+            raise ValueError("Tool confirmation claim escaped the evaluation root")
+        if confirmation_claim.exists():
+            raise ValueError("This continuation already has a one-shot tool confirmation")
     claim = followup_claim(root, prior) if prior else None
     continuation = (
         load_stopped_followup(
@@ -275,7 +344,7 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         not continuation_claim.is_relative_to(root) or continuation_claim.exists()
     ):
         raise ValueError("This stopped follow-up already has an independent continuation")
-    if claim is not None and claim.exists() and continuation is None:
+    if claim is not None and claim.exists() and continuation is None and confirmation is None:
         raise ValueError("This prior run already has a follow-up; no cumulative allowance reset")
     sandbox = DockerEvaluationSandbox(args.sandbox_container)
     resources = sandbox_resources(await sandbox.health(), dataset=False)
@@ -283,7 +352,7 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         raise ValueError("Dedicated controller already has running evaluation children")
     directory = root / ("provider-" + uuid4().hex)
     directory.mkdir(parents=True, exist_ok=False)
-    if claim is not None and continuation is None:
+    if claim is not None and continuation is None and confirmation is None:
         claim.parent.mkdir(parents=True, exist_ok=True)
         with claim.open("x", encoding="utf-8") as stream:
             json.dump(
@@ -298,6 +367,17 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         continuation_claim.parent.mkdir(parents=True, exist_ok=True)
         with continuation_claim.open("x", encoding="utf-8") as stream:
             json.dump({"from_run": continuation_id, "run_id": directory.name}, stream)
+    if confirmation_claim is not None:
+        confirmation_claim.parent.mkdir(parents=True, exist_ok=True)
+        with confirmation_claim.open("x", encoding="utf-8") as stream:
+            json.dump(
+                {
+                    "from_run": confirmation.directory.name if confirmation else None,
+                    "run_id": directory.name,
+                    "approval_id": args.approval_id,
+                },
+                stream,
+            )
     ledger = (
         ApprovalLedger.continue_unused(grant, expected=continuation["ledger"])
         if continuation
@@ -305,7 +385,11 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
             grant,
             run_id=directory.name,
             limits=limits,
-            blocked_case_ids=("planning",) if prior else (),
+            blocked_case_ids=tuple(case.id for case in CASES if case not in CASES[1:3])
+            if confirmation
+            else ("planning",)
+            if prior
+            else (),
         )
     )
     llm_transport = GuardedTransport(
@@ -319,7 +403,11 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         secrets=secrets,
     )
     records: list[dict[str, Any]] = (
-        continuation["records"] if continuation else ([prior.record] if prior else [])
+        []
+        if confirmation
+        else continuation["records"]
+        if continuation
+        else ([prior.record] if prior else [])
     )
     if continuation:
         # No inferred/fabricated native result; its dependent contract stays unexecuted.
@@ -348,13 +436,14 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         "request_limits": limits,
         "prior_evidence": prior.binding() if prior else None,
         "continued_from": continuation_id,
+        "tool_confirmation_of": confirmation.binding() if confirmation else None,
         "max_tokens_per_request": MAX_OUTPUT_TOKENS,
         "started_at": datetime.now(UTC).isoformat(),
         "approval_id": args.approval_id,
     }
     no_secrets(manifest, secrets)
     _write_json(directory / "manifest.json", manifest)
-    if prior:
+    if prior and not confirmation:
         _write_json(
             directory / "planning_evidence.json",
             {"binding": prior.binding(), "record": prior.record},
@@ -373,11 +462,22 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
         ):
             provider = OpenAICompatibleProvider(settings, http_client=llm_client)
             search = TavilySearchProvider(api_key=tavily_key, client=search_client, retry_delays=())
-            for case in CASES[3:] if continuation else CASES[1:] if prior else CASES:
+            selected_cases = (
+                CASES[1:3]
+                if confirmation
+                else CASES[3:]
+                if continuation
+                else CASES[1:]
+                if prior
+                else CASES
+            )
+            for case in selected_cases:
                 if _git_state(repo_root) != (revision, False):
                     raise ValueError("Source changed during real verification")
                 if prior and not prior.unchanged():
                     raise ValueError("Prior planning evidence changed during manual follow-up")
+                if confirmation and not confirmation.unchanged():
+                    raise ValueError("Bound previous results changed during tool confirmation")
                 print(
                     f"Real provider case: {case.id}; "
                     f"new requests {len(ledger.attempts)}/{sum(limits.values())}",
@@ -514,10 +614,19 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
             clean_resources=clean,
             state=state,
             prior=prior,
-            prior_unchanged=prior.unchanged() if prior else True,
+            prior_unchanged=confirmation.unchanged()
+            if confirmation
+            else prior.unchanged()
+            if prior
+            else True,
+            confirmation=confirmation,
         )
         if continuation:
             summary["continued_from"] = continuation_id
             summary["new_requests_in_continuation"] = len(ledger.attempts) - 1
         write_capability_report(directory, summary)
-    return directory, bool(summary["bounded_provider_capability_acceptance"])
+    return directory, bool(
+        summary.get(
+            "tool_chain_confirmation_acceptance", summary["bounded_provider_capability_acceptance"]
+        )
+    )

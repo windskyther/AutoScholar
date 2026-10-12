@@ -316,6 +316,11 @@ def main() -> int:
         type=Path,
         help="Explicitly continue only independent unattempted cases; preserve consumed allowance",
     )
+    providers.add_argument(
+        "--confirm-tools-from",
+        type=Path,
+        help="New approval: two tool-only LLM requests, zero searches; preserve old scores",
+    )
     args = parser.parse_args()
     try:
         if args.command == "run":
@@ -334,10 +339,12 @@ def main() -> int:
             from autoscholar.evaluation.provider_validation import run_providers
 
             directory, accepted = asyncio.run(run_providers(args, repo_root=REPO_ROOT))
-            print(
-                f"Bounded real-provider verification {'passed' if accepted else 'NOT accepted'}: "
-                f"{directory}"
+            label = (
+                "Tool-only confirmation"
+                if args.confirm_tools_from
+                else "Bounded real-provider verification"
             )
+            print(f"{label} {'passed' if accepted else 'NOT accepted'}: {directory}")
             return 0 if accepted else 1
         if args.command == "neural":
             from autoscholar.evaluation.neural_validation import run_neural

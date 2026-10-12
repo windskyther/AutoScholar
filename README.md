@@ -1184,6 +1184,13 @@ Windows 本地回归应使用较短的独立 `--basetemp` 路径，例如忽略�
 
 新增报告保留在 `data/evaluation/provider-6db601fc4ca34752b256271c5bf80445/evaluation_report.md`，中文诊断在同目录的 `research_chinese_diagnostic.json`；回答丢失的工具请求仍保留于 `data/evaluation/provider-001af831d0024f189706436ee4ad233f/`。旧证据及源码在实际执行期间未变，本轮控制器、网络、子容器/卷已清理，缓存、公开 MNIST、应用数据和全部报告保留。Phase 10 尚未整体验收，不合并 `main`；原生工具与结果读取还需真实人工确认，追加调用须另外明确授权。
 
+经另外明确授权，可用 `--confirm-tools-from` 对已完成的独立联测记录做一次**仅工具链**补测：新授权硬限制 LLM 2 次、Tavily 0 次，累计最多 14 次；不会消耗或重置旧授权、重跑规划/检索/中文回答。入口核验并绑定旧源码、套件、模型、端点、历史请求、响应和授权计数，唯一声明防止换授权 ID 重跑。两步仍使用原题与生产 Calculator，第二步必须收到第一步实际产生的工具调用和执行结果（含思考元数据）。单独输出工具链验收结果，旧失败分数和中文格式缺口不变，不能据此声明整体通过或合并 main。
+
+```powershell
+# 仅在另外明确授权后运行一次；不要更换 ID 重试
+.venv\Scripts\python.exe -m autoscholar.evaluation providers --allow-paid --approval-id phase10-native-confirm-20261012-2 --prior-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --confirm-tools-from data/evaluation/provider-6db601fc4ca34752b256271c5bf80445 --sandbox-container $controller
+```
+
 ## 开发路线
 
 | 阶段 | 重点 |

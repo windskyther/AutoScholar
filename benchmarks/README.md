@@ -684,6 +684,22 @@ Ignored local evidence:
 Overall Phase 10 is not accepted. Native/result confirmation needs explicitly authorized
 paid work; Chinese format expectations must be clarified without concealing the first score.
 
+### Separately approved tool-only confirmation
+
+`providers --confirm-tools-from <completed-continuation> --prior-run <original-run>` needs
+separate owner approval and a fresh one-shot approval ID. It binds the completed continuation,
+old stopped follow-up, original planning proof, source/grader/model/endpoint, public request
+and successful response hashes, ownership claims and consumed grant. Limits are **2 LLM / 0
+Tavily**, blocked case IDs prohibit planning and all other contracts; the prior grant is not
+continued or reset. An exclusive claim also prevents a different ID from rerunning the same
+confirmation. Exact original Calculator questions, real tool output and reasoning metadata
+are retained. If the first request fails, the dependent request is not sent; no paid retry.
+
+Current component results and all historical attempts are reported separately, with cumulative
+unknown usage preserved. `tool_chain_confirmation_acceptance` is not the full provider or
+Phase 10 gate: original native failures, skipped result, Chinese format failure and old scores
+remain immutable. This mode does not regrade Chinese facts or change any frozen rubric.
+
 ## Next stages
 
 The engineering pack and bounded default-cache neural retrieval verification are complete;

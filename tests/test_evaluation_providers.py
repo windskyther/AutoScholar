@@ -21,6 +21,7 @@ from autoscholar.coding.sandbox import (
 from autoscholar.evaluation import provider_prior as prior_module
 from autoscholar.evaluation import provider_validation as validation
 from autoscholar.evaluation.provider_cases import (
+    CASE_IDS,
     CASES,
     PLAN,
     grade_code,
@@ -310,10 +311,13 @@ async def test_full_cli_contract_with_explicit_mock_transport(
     fault: str | None,
     prior_run: Path | None = None,
     continue_from: Path | None = None,
-) -> None:
+    confirm_from: Path | None = None,
+) -> Path:
     fake = responses()
     if fault == "wrong_writer":
         fake["writer"]["latest_accuracy"] = 0.97
+    if fault == "wrong_tool_result":
+        fake["native_tool_result"]["result"] = 470
     for key in ("LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "TAVILY_API_KEY"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(
@@ -361,11 +365,23 @@ async def test_full_cli_contract_with_explicit_mock_transport(
             identifier = transport.case_id
             if identifier == "native_tool_call":
                 assert json.loads(request.content)["tool_choice"] == "auto"
+            if identifier == "native_tool_result":
+                messages = json.loads(request.content)["messages"]
+                assert messages[1]["content"] == CASES[1].prompt
+                assert messages[2]["tool_calls"][0]["id"] == "public-call-1"
+                assert messages[2]["reasoning_content"] == "Public synthetic reasoning metadata"
+                assert messages[3] == {
+                    "role": "tool",
+                    "tool_call_id": "public-call-1",
+                    "content": "472",
+                }
+                assert messages[4]["content"] == CASES[2].prompt
             message: dict[str, Any] = {
                 "role": "assistant",
                 "content": json.dumps(fake[identifier]) if identifier in fake else None,
             }
             if identifier == "native_tool_call":
+                message["reasoning_content"] = "Public synthetic reasoning metadata"
                 message["tool_calls"] = [
                     {
                         "id": "public-call-1",
@@ -393,10 +409,11 @@ async def test_full_cli_contract_with_explicit_mock_transport(
     monkeypatch.setattr(validation, "GuardedTransport", factory)
     args = argparse.Namespace(
         allow_paid=True,
-        approval_id="explicit-test-approval",
+        approval_id="explicit-tool-approval" if confirm_from else "explicit-test-approval",
         sandbox_container="explicit-test-controller",
         prior_run=prior_run,
         continue_unattempted=continue_from,
+        confirm_tools_from=confirm_from,
     )
     directory, accepted = await validation.run_providers(args, repo_root=tmp_path)
     summary = json.loads((directory / "provider_acceptance.json").read_text())
@@ -405,7 +422,23 @@ async def test_full_cli_contract_with_explicit_mock_transport(
     assert sum(provider == "llm" for provider, _ in calls) <= 10
     assert sum(provider == "tavily" for provider, _ in calls) <= 2
     assert summary["phase10_overall_acceptance"] is False
-    if fault == "no_usage":
+    if confirm_from:
+        assert len(calls) == (
+            1 if fault in ("rate_limit", "unsupported_parameter", "bad_native") else 2
+        )
+        assert all(
+            provider == "llm" and identifier in CASE_IDS[1:3] for provider, identifier in calls
+        )
+        assert summary["request_limits"] == {"llm": 2, "tavily": 0}
+        assert summary["cumulative_requests_total"] == 12 + len(calls)
+        assert summary["bounded_provider_capability_acceptance"] is False
+        assert summary["tool_chain_confirmation_acceptance"] is accepted
+        assert summary["previous_case_results"][1]["status"] == "error"
+        assert summary["previous_case_results"][2]["status"] == "skipped"
+        assert summary["prior_evidence_unchanged"] is True
+        assert summary["cumulative_vendor_tokens"] is None
+        assert not (directory / "request-llm-planning.json").exists()
+    elif fault == "no_usage":
         assert summary["vendor_tokens"] is None and summary["known_vendor_tokens"] == 0
     elif fault in ("rate_limit", "unsupported_parameter"):
         assert len(calls) == summary["recorded"] == 1 and summary["planned_llm_cases"] == 10
@@ -437,6 +470,7 @@ async def test_full_cli_contract_with_explicit_mock_transport(
     with pytest.raises(ValueError, match="already"):
         await validation.run_providers(args, repo_root=tmp_path)
     assert "llm-fixture-key-123" not in (directory / "evaluation_report.md").read_text()
+    return directory
 
 
 def make_prior(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -451,6 +485,9 @@ def make_prior(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     directory = root / ("provider-" + "0" * 32)
     directory.mkdir(parents=True)
     monkeypatch.setattr(prior_module, "same_grader_source", lambda *args: True)
+    monkeypatch.setattr(
+        "autoscholar.evaluation.provider_confirmation.same_grader_source", lambda *args: True
+    )
     ledger = ApprovalLedger(approval_path(root, "prior-stub-approval"), run_id=directory.name)
     payloads: dict[str, Any] = {}
     for identifier, status in (("planning", 200), ("native_tool_call", 400)):
@@ -638,7 +675,7 @@ async def test_no_explicit_approval_never_loads_private_settings(
 
 async def test_continue_only_unattempted_independent_contracts_preserves_consumed_ledger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+) -> Path:
     from dataclasses import asdict
 
     from autoscholar.evaluation.datasets import payload_digest
@@ -714,9 +751,110 @@ async def test_continue_only_unattempted_independent_contracts_preserves_consume
     claim.parent.mkdir()
     claim.write_text(json.dumps({"followup_run_id": stopped.name, "approval_id": identifier}))
     before = {name: (stopped / name).read_bytes() for name in payloads}
-    await test_full_cli_contract_with_explicit_mock_transport(
+    completed = await test_full_cli_contract_with_explicit_mock_transport(
         tmp_path, monkeypatch, None, prior_run=first, continue_from=stopped
     )
     assert before == {name: (stopped / name).read_bytes() for name in payloads}
     retained = json.loads(approval_path(root, identifier).read_text())["attempts"]
     assert len(retained) == 10 and retained[0]["state"] == "unknown"
+    return completed
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "bad_native", "wrong_tool_result", "rate_limit", "unsupported_parameter"]
+)
+async def test_explicit_two_request_tool_only_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str | None
+) -> None:
+    completed = (
+        await test_continue_only_unattempted_independent_contracts_preserves_consumed_ledger(
+            tmp_path, monkeypatch
+        )
+    )
+    root = tmp_path / "data/evaluation"
+    first = root / ("provider-" + "0" * 32)
+    before = {path: path.read_bytes() for path in root.rglob("*.json")}
+    await test_full_cli_contract_with_explicit_mock_transport(
+        tmp_path, monkeypatch, fault, prior_run=first, confirm_from=completed
+    )
+    assert all(path.read_bytes() == raw for path, raw in before.items())
+    with pytest.raises(ValueError, match="already has a one-shot"):
+        await validation.run_providers(
+            argparse.Namespace(
+                allow_paid=True,
+                approval_id="new-id-cannot-reset-tool-check",
+                prior_run=first,
+                confirm_tools_from=completed,
+            ),
+            repo_root=tmp_path,
+        )
+
+
+def test_tool_confirmation_ledger_blocks_other_cases_and_search(tmp_path: Path) -> None:
+    ledger = ApprovalLedger(
+        tmp_path / "tool-approval.json",
+        run_id="explicit-test",
+        limits={"llm": 2, "tavily": 0},
+        blocked_case_ids=tuple(item.id for item in CASES if item not in CASES[1:3]),
+    )
+    for identifier in CASE_IDS[:1] + CASE_IDS[3:]:
+        with pytest.raises(ValueError, match="must not be dispatched"):
+            ledger.reserve("llm", identifier, {})
+    with pytest.raises(ValueError, match="allowance"):
+        ledger.reserve("tavily", "native_tool_call", {})
+    ledger.reserve("llm", "native_tool_call", {})
+    ledger.reserve("llm", "native_tool_result", {})
+    with pytest.raises(ValueError, match="retries"):
+        ledger.reserve("llm", "native_tool_result", {})
+
+
+@pytest.mark.parametrize(
+    "mutation", ["grant", "source", "claim", "response", "request", "case_order"]
+)
+async def test_tool_confirmation_rejects_changed_prior_evidence_before_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    from autoscholar.evaluation.provider_confirmation import load_tool_confirmation
+
+    completed = (
+        await test_continue_only_unattempted_independent_contracts_preserves_consumed_ledger(
+            tmp_path, monkeypatch
+        )
+    )
+    root = tmp_path / "data/evaluation"
+    prior = prior_module.load_prior(
+        root / ("provider-" + "0" * 32),
+        repo_root=tmp_path,
+        model="explicit-test-stub",
+        endpoint="https://test.invalid/chat/completions",
+    )
+    if mutation == "source":
+        monkeypatch.setattr(
+            "autoscholar.evaluation.provider_confirmation.same_grader_source", lambda *args: False
+        )
+    else:
+        path = {
+            "grant": approval_path(root, "explicit-test-approval"),
+            "claim": root / "provider-continuation-claims" / ("provider-" + "1" * 32 + ".json"),
+            "response": completed / "writer-response.json",
+            "request": completed / "request-llm-writer.json",
+            "case_order": completed / "cases.json",
+        }[mutation]
+        payload = json.loads(path.read_text())
+        if mutation == "case_order":
+            payload.reverse()
+        elif mutation == "response":
+            payload["text"] = "{}"
+        elif mutation == "request":
+            payload["messages"] = []
+        else:
+            payload = {}
+        path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError):
+        load_tool_confirmation(
+            completed,
+            repo_root=tmp_path,
+            prior=prior,
+            model="explicit-test-stub",
+            endpoint="https://test.invalid/chat/completions",
+        )
