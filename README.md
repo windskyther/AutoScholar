@@ -1247,6 +1247,18 @@ if ($LASTEXITCODE -ne 0) { throw 'Ablation evidence/statistics review failed; in
 
 退出码 0 表示原始证据与统计复核完整，不要求重排必须获益或达到显著性。Planner、Reviewer、Memory、Replanning 的旧消融仍是脚本决策驱动的工程验证；真实 LLM 工作流消融及自主端到端尚未验证。报告写入忽略的 `data/evaluation/ablation-audit-<UUID>/`，保留 `phase10_overall_acceptance=false` 和 `main_merge_authorized=false`。
 
+2026-10-13 免费最终复核已通过：干净源码 `490c4c8` 核验原始工程整包和缓存模型记录，40/40 检索配对完整；四项工作流工程对照各为 3/3，词项重排对照为 5/5。新增 22 项统计/证据测试通过，完整后端 **805 passed、3 skipped**，Ruff、mypy（225 文件）及格式检查通过；跳过项仍为未启用的旧 Compose smoke 和两个 Windows 符号链接权限限制。
+
+真实缓存重排的事后统计如下（20 查询、16 文档组）：
+
+| 指标 | 平均差值 | 文档组 bootstrap 95% 区间 | Holm 校正 p |
+|---|---:|---|---:|
+| MRR | +0.0667 | [0, 0.1449] | 1.0 |
+| Recall@5 | 0 | [0, 0] | 1.0 |
+| NDCG@5 | +0.0500 | [0, 0.1087] | 1.0 |
+
+这组固定语料尚无统计显著的重排增益，不能据此推断普遍有效或无效。报告：`data/evaluation/ablation-audit-0559a5e3e9994070b4931b1e2ef7598a/evaluation_report.md`。本轮新增 API 请求、推理运行、独立样本均为 0，历史证据未修改，累计付费请求仍为 15；未启动 Docker、迁移应用数据库或合并 `main`。免费复核通过不等于真实 LLM 工作流消融或完整 Phase 10 验收通过。
+
 ## 开发路线
 
 | 阶段 | 重点 |

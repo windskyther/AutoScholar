@@ -854,6 +854,22 @@ It separately lists historical scripted workflow interventions and marks real-LL
 ablations and autonomous real-LLM E2E unverified. Overall Phase 10 and main authorization
 remain false. This command does not renew or spend any previous paid allowance.
 
+2026-10-13 execution on clean source `490c4c8`: the free review passed, with 40/40 neural
+repeat pairs, 20 query means and 16 document blocks. The four historical workflow contrasts
+each retain 3/3 pairs; lexical reranking retains 5/5. Actual cached reranker mean deltas are
+MRR +0.0666667, Recall@5 0, NDCG@5 +0.05. Block-bootstrap 95% intervals are respectively
+[0, 0.1449275], [0, 0], [0, 0.1086957]; exact p-values are 0.5, 1, 0.5 and all Holm-adjusted
+p-values are 1.0. No statistically significant benefit is established on this fixed corpus;
+nonsignificance also does not establish absence of an effect.
+
+The report is `data/evaluation/ablation-audit-0559a5e3e9994070b4931b1e2ef7598a/evaluation_report.md`.
+New contract tests: **22 passed**; full free backend: **805 passed / 3 skipped**; Ruff, mypy
+(225 files), changed-file formatting and diff checks pass. Skips are the opt-in old Compose
+smoke and two unavailable Windows symlink tests. No new API/inference/sample, Docker startup,
+application DB mutation or main merge occurred. Historical primary hashes remain unchanged;
+the cumulative paid request count remains 15. This closes only the free evidence/statistics
+review, not real-LLM workflow ablations or overall Phase 10.
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
