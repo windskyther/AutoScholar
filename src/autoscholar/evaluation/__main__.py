@@ -337,10 +337,23 @@ def main() -> int:
         command.add_argument("--original-run", type=Path, required=True)
         command.add_argument("--independent-run", type=Path, required=True)
         command.add_argument("--tool-run", type=Path, required=True)
+    ablation_audit = commands.add_parser(
+        "ablation-audit",
+        help="Final offline paired ablation evidence/statistics review, zero API calls",
+    )
+    ablation_audit.add_argument("--engineering-run", type=Path, required=True)
+    ablation_audit.add_argument("--semantic-run", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == "run":
             return asyncio.run(_run(args))
+        if args.command == "ablation-audit":
+            from autoscholar.evaluation.ablation_audit import run_ablation_audit
+
+            directory, accepted = run_ablation_audit(args, repo_root=REPO_ROOT)
+            print(f"Free ablation review {'passed' if accepted else 'NOT accepted'}: {directory}")
+            print("No new inference/API; live LLM ablations and main merge remain unapproved.")
+            return 0 if accepted else 1
         if args.command == "chinese":
             from autoscholar.evaluation.provider_chinese import run_chinese
 

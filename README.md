@@ -1234,6 +1234,19 @@ Windows 本地回归应使用较短的独立 `--basetemp` 路径，例如忽略�
 
 追加后的免费复验：供应商与收尾相关 **90 passed**，Ruff、mypy（223 文件）通过；无新增代码改动，完整源码回归仍以此前 **783 passed、3 skipped** 的记录为准。新授权与请求 SHA-256、一请求零检索上限、旧失败/判分保留、有界覆盖与单独总验收/main 标记均核对通过，没有额外供应商请求。
 
+### 最终免费消融复核
+
+`ablation-audit` 只读核验历史工程整包和真实缓存模型记录，并对 hybrid 与 hybrid_rerank 做事后配对统计；不读取 `.env`，不重新推理、训练或请求供应商。入口要求已提交且干净的工作树，原始运行数据留在本地。
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation ablation-audit --engineering-run data/evaluation/pack-660be828d0564c7d942fa019458eb1cd --semantic-run data/evaluation/neural-1c60445a1d554ed08d7a0c9765df295d/eval-e8d1bf658c694d1ca62cfb3e6f0ef788
+if ($LASTEXITCODE -ne 0) { throw 'Ablation evidence/statistics review failed; inspect the report' }
+```
+
+40 个重复配对先归并为 20 个查询；共享标准答案文档的查询再合并为 16 个文档组。固定三项指标 MRR、Recall@5、NDCG@5，报告“有重排减无重排”的平均差值、文档组 bootstrap 95% 区间、双侧精确符号翻转检验及 Holm 校正。协议是对既有自编公开语料的事后分析，不是预注册实验；文档分组减少共享来源依赖，但不证明组间独立或通用效果。缺失记录不计为零，重复执行不增加独立样本数。
+
+退出码 0 表示原始证据与统计复核完整，不要求重排必须获益或达到显著性。Planner、Reviewer、Memory、Replanning 的旧消融仍是脚本决策驱动的工程验证；真实 LLM 工作流消融及自主端到端尚未验证。报告写入忽略的 `data/evaluation/ablation-audit-<UUID>/`，保留 `phase10_overall_acceptance=false` 和 `main_merge_authorized=false`。
+
 ## 开发路线
 
 | 阶段 | 重点 |

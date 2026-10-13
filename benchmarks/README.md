@@ -4,7 +4,9 @@ Versioned suites separate `inputs` from `expected` gold labels. Execution adapte
 the prompt and inputs. All included Phase 10A/10B/10C/10D/10E cases are self-authored public engineering
 fixtures; no provider requests, private design documents, credentials or runtime records are
 included. The CLI implements RAG replay, controlled Research/Tool component execution and
-explicitly injected real Docker Coding/Experiment and durable E2E execution. Ablations remain unfinished.
+explicitly injected real Docker Coding/Experiment and durable E2E execution. Controlled workflow
+ablations and cached-neural reranker comparisons are implemented; real-LLM workflow ablations
+remain unverified.
 
 ## Public RAG scoring suite
 
@@ -820,12 +822,44 @@ pass. No source implementation changed this turn; the prior complete source regr
 remains **783 passed / 3 skipped**, not claimed as another full rerun. Only public result
 documentation is committed; all primary evidence and private configuration stay ignored.
 
+## Final free ablation review
+
+`ablation-audit` revalidates the original engineering pack and cached-neural primary records,
+then computes post-hoc paired reranker statistics. It creates no HTTP clients, reads no `.env`,
+and performs no inference, training or provider calls. Source must be clean and committed.
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation ablation-audit --engineering-run data/evaluation/pack-660be828d0564c7d942fa019458eb1cd --semantic-run data/evaluation/neural-1c60445a1d554ed08d7a0c9765df295d/eval-e8d1bf658c694d1ca62cfb3e6f0ef788
+if ($LASTEXITCODE -ne 0) { throw 'Ablation evidence/statistics review failed' }
+```
+
+The 40 paired repeat records are collapsed to 20 query means. Connected components of shared
+gold documents form 16 blocks, including transitive multi-document overlap. Delta direction
+is **hybrid_rerank minus hybrid**. The fixed family is chunk MRR, Recall@5 and NDCG@5: report
+query-weighted mean deltas, 4,096 document-block bootstrap resamples (seed 20261013), percentile
+95% intervals, exact two-sided block sign-flip p-values and Holm correction at alpha 0.05.
+Intervals assume exchangeable blocks; sign flips assume symmetric null effects. Shared-source
+grouping does not establish independent blocks, and neither method establishes generalization
+from this fixed self-authored corpus. This is **post-hoc, not preregistered**; no new independent
+samples are added. Missing/invalid pair metrics prevent complete statistical acceptance.
+
+Primary inputs, gold labels, seeds, models, resources and recorded candidate-pool checks are
+validated before pairing. Original file hashes are checked again before writing the report.
+Local evidence remains unsigned; hash consistency is not external attestation. No gain or
+statistical nonsignificance is a valid experimental outcome, not an infrastructure failure.
+Exit 0 means this evidence/statistics review passed, not that reranking is beneficial.
+
+The ignored `data/evaluation/ablation-audit-<UUID>/` output contains JSON and Markdown.
+It separately lists historical scripted workflow interventions and marks real-LLM workflow
+ablations and autonomous real-LLM E2E unverified. Overall Phase 10 and main authorization
+remain false. This command does not renew or spend any previous paid allowance.
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
 closure now have passing evidence, including separately approved tool and Chinese v2
 confirmations. Original frozen v1 failures remain visible and are not retroactively passed.
-Autonomous real-LLM E2E and statistical model ablations remain unverified; any additional
+Autonomous real-LLM E2E and real-LLM workflow ablations remain unverified; any additional
 paid request or main merge needs separate owner approval. Broader corpora,
 PDF ingestion/generation quality and independent paid-provider ability remain outside this
 result. The generic injected RAG adapter accepts an explicitly provisioned
