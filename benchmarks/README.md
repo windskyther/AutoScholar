@@ -906,6 +906,30 @@ single-attempt pilot is exploratory, not powered evidence for general model supe
 Overall Phase 10 and main approval remain separate. All raw requests/responses, SQLite,
 artifacts and summaries remain in ignored `data/evaluation/live-ablation-<UUID>/`.
 
+2026-10-13 first authorized live attempt, clean source `76b1271`: **21 LLM / 0 Tavily**
+physical requests, all HTTP 200; **66113 vendor tokens** accounted. Only 3/15 tasks were
+attempted. The remaining 12 remain unattempted, not scored as zero. The 180-call ceiling
+has 159 unused slots, but the run stopped on its response-failure guard; no task was replayed.
+Evidence: `data/evaluation/live-ablation-13c366dd5f574dd38d9c010a1e41318e/`.
+
+Baseline research lacked recovery-topic coverage after the closed retriever selected a
+duplicate MNIST source, leading to dependency failures and the five-step limit. Its planner
+also used different step IDs from the frozen contract. No Planner completed real code,
+training and checkpoint checks, but paraphrased the E4 document claim and failed the strict
+verbatim evidence condition. No Reviewer's fourth call consumed 4096 output tokens and
+returned `finish_reason=length` with no text/tool call; the production provider rejected it.
+This is not a network-failure diagnosis. The sidecar `diagnostic.md` explains evidence and
+contract limitations without altering original outcomes.
+
+Pilot measurement and overall Phase 10 acceptance remain false. There are insufficient
+paired scenarios for statistical component-effect claims. Any versioned reassessment must
+first specify output budget, citation requirements, recovery corpus coverage and plan-ID
+grading; do not retrospectively pass v1, reset its claim or replay failed tasks under a new ID.
+Free checks: **831 passed / 3 skipped**, Ruff/mypy (228 files), 26 new contracts and four
+real Docker preflight paths with explicitly scripted model decisions, zero API requests.
+Only this run's dedicated controller/network were removed after child cleanup and ownership
+checks. Public datasets, images, caches, all evidence and normal application data remain.
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
