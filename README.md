@@ -1259,6 +1259,21 @@ if ($LASTEXITCODE -ne 0) { throw 'Ablation evidence/statistics review failed; in
 
 这组固定语料尚无统计显著的重排增益，不能据此推断普遍有效或无效。报告：`data/evaluation/ablation-audit-0559a5e3e9994070b4931b1e2ef7598a/evaluation_report.md`。本轮新增 API 请求、推理运行、独立样本均为 0，历史证据未修改，累计付费请求仍为 15；未启动 Docker、迁移应用数据库或合并 `main`。免费复核通过不等于真实 LLM 工作流消融或完整 Phase 10 验收通过。
 
+### 真实 LLM 工作流消融小样本试验
+
+`live-ablations` 仅在新授权及 `--allow-paid` 下运行：正常、无效指标恢复、伪造准确率三个公开场景，分别执行 baseline、No Planner、No Reviewer、No Memory、No Replanning，共 15 个任务。每任务最多 12 次实际 LLM 请求，总上限 180 次，Tavily 为 0；不自动重跑整轮或失败任务，供应商/用量/隔离异常停止。生产流程内有限的 schema 修正仍占用同一任务额度，HTTP 重试关闭。
+
+```powershell
+# 先按 benchmarks/README.md 创建专属隔离控制器，确认已取得本轮授权。
+.venv\Scripts\python.exe -m autoscholar.evaluation live-ablations --allow-paid --approval-id phase10-live-ablation-20261013-180 --sandbox-container $controller
+```
+
+真实模型驱动现有 durable 工作流；仅故障注入由脚本控制。每任务独立 SQLite、公开项目 Memory 和工作区，复用固定 MNIST 模板与缓存数据。研究走自编公开范围说明的封闭词项检索（每查询最多一条来源），并保留固定本地项目文档检索；这不是实时互联网检索，也不是从空文件生成代码的实验。No Memory 只移除项目/经验 Memory 读写，项目文档 RAG 仍保留；No Reviewer 保留确定性规则与独立检查点复算。
+
+一次性声明文件防止更换授权 ID 重置试验；实际请求先落账再发送。每任务固定 600 秒、120000-token 工作流预算，最后一个响应可能越过 token 阈值；每次输出最多 4096 token，费用无价格依据时保持未知。保持现有配置模型，不发送 `.env`、密钥或设计文档；源码须干净已提交。全部输入、原始响应、检查与部分失败记录保留于忽略的 `data/evaluation/live-ablation-<UUID>/`。
+
+报告分别给出测量是否完成、任务成功、预期故障处置及实际组件路径。每项对照只有三个异质场景，二元成功差值和双侧配对精确检验/Holm 校正仅作探索性说明，不能证明通用模型效果。相同训练种子不代表供应商生成可重复；模板模型架构及独立 oracle 合同固定。测量完成不要求所有任务成功，也不自动表示完整 Phase 10 验收或批准合并 `main`。
+
 ## 开发路线
 
 | 阶段 | 重点 |

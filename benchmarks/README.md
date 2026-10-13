@@ -870,6 +870,42 @@ application DB mutation or main merge occurred. Historical primary hashes remain
 the cumulative paid request count remains 15. This closes only the free evidence/statistics
 review, not real-LLM workflow ablations or overall Phase 10.
 
+## Explicit live workflow ablation pilot
+
+The `live-ablations --allow-paid --approval-id <new-id> --sandbox-container <dedicated-controller>`
+entry runs three public scenarios (normal, malformed metrics once, tampered accuracy) across
+baseline/no_planner/no_reviewer/no_memory/no_replanning. A separate physical ledger caps each
+task at 12 LLM calls and the entire fixed schedule at 180 LLM / 0 Tavily calls. The original
+10/2 provider grant ceiling is unchanged. A one-shot run claim prevents a different grant ID
+from resetting this pilot. There is no task replay or HTTP retry; production schema corrections
+consume the same allowance. Provider, unknown accounting or isolation failures stop the run.
+
+All model decisions come from the configured production provider. The injected search backend
+lexically retrieves at most one of the three self-authored public engineering scope statements
+per query; this is explicitly a closed corpus, not actual internet search. Fixed local project
+document retrieval remains in every variant, including no_memory. Only project/experience
+Memory reads and learning are ablated. Seeded MNIST code, 128/128 samples, one epoch, CPU and
+training seed 42 remain fixed. Model generations are not assumed deterministic. Tasks use
+isolated SQLite and workspaces, existing durable services and a dedicated real Docker sandbox.
+No Reviewer removes only model review: rules, Writer recheck and held-out checkpoint recomputation
+remain active. The oracle uses fixed template architectures; this is not an architecture-search
+or from-scratch code-generation experiment.
+
+Each task has the same 600-second, 120000-token workflow budget; the final response may exceed
+the token threshold. Responses are capped at 4096 output tokens, public requests at 32 KiB.
+Persisted usage is reconciled with physical requests and vendor tokens. Missing outcomes remain
+unknown, unattempted tasks stay in the 15-task denominator, and failures are retained locally.
+Input/resource/gold contracts are frozen in committed source before requests; no model switch
+or post-answer threshold relaxation is allowed. The live record does not amend historical results.
+
+`acceptance.json` separates completed measurement, per-task verified success and scenario
+contracts. Variant-minus-baseline completion differences use only complete paired outcomes
+with matching public inputs and observed model identities. Exact two-sided paired binary
+tests use three scenarios and Holm adjustment across four contrasts. This heterogeneous,
+single-attempt pilot is exploratory, not powered evidence for general model superiority.
+Overall Phase 10 and main approval remain separate. All raw requests/responses, SQLite,
+artifacts and summaries remain in ignored `data/evaluation/live-ablation-<UUID>/`.
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider

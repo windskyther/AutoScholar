@@ -11,24 +11,23 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 
 from autoscholar.agent.database_models import Base
 from autoscholar.agent.repository import AgentTaskRepository
-from autoscholar.agent.runner import AgentRunner
+from autoscholar.agent.runner import AgentRunner, ResearchSearch
 from autoscholar.coding.agent import CodingAgent, CodingLimits
 from autoscholar.coding.sandbox import SandboxExecutor
 from autoscholar.coding.workspace import WorkspaceManager
-from autoscholar.core.budget import BudgetedLLM
+from autoscholar.core.budget import BudgetedLLM, BudgetLimits
 from autoscholar.evaluation.workflow_ablation import (
     AblationAutonomousService,
     ObservedWorkflowMemory,
     WorkflowVariant,
 )
 from autoscholar.evaluation.workflow_fixture import (
-    ScriptedWorkflowProvider,
     WorkflowScript,
-    WorkflowSearch,
     workflow_plan,
 )
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.service import ExperimentService
+from autoscholar.llm.base import LLMProvider
 from autoscholar.orchestration.durable import DurableService
 from autoscholar.orchestration.repository import WorkflowRepository
 from autoscholar.orchestration.sandbox import BudgetedSandbox
@@ -74,14 +73,15 @@ async def local_workflow(root: Path) -> AsyncIterator[LocalWorkflow]:
 
 def workflow_service(
     state: LocalWorkflow,
-    provider: ScriptedWorkflowProvider,
-    search: WorkflowSearch,
+    provider: LLMProvider,
+    search: ResearchSearch,
     sandbox: SandboxExecutor,
     script: WorkflowScript,
     *,
     variant: WorkflowVariant = "baseline",
     observe_memory: bool = False,
     knowledge: RAGQueryServiceProtocol | None = None,
+    limits: BudgetLimits | None = None,
 ) -> DurableService:
     metered = BudgetedLLM(provider)
     isolated = BudgetedSandbox(sandbox)
@@ -120,7 +120,7 @@ def workflow_service(
             timeout_seconds=60,
             max_repairs=0,
         ),
-        limits=script.limits,
+        limits=limits or script.limits,
     )
     durable = DurableService(service)
     if isinstance(service, AblationAutonomousService):

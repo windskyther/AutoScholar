@@ -343,10 +343,24 @@ def main() -> int:
     )
     ablation_audit.add_argument("--engineering-run", type=Path, required=True)
     ablation_audit.add_argument("--semantic-run", type=Path, required=True)
+    live_ablations = commands.add_parser(
+        "live-ablations", help="Explicit one-shot 15-task live LLM pilot, maximum 180/0 requests"
+    )
+    live_ablations.add_argument("--allow-paid", action="store_true")
+    live_ablations.add_argument("--approval-id", required=True)
+    live_ablations.add_argument("--sandbox-container", required=True)
     args = parser.parse_args()
     try:
         if args.command == "run":
             return asyncio.run(_run(args))
+        if args.command == "live-ablations":
+            from autoscholar.evaluation.live_ablation import run_live_ablations
+
+            directory, accepted = asyncio.run(run_live_ablations(args, repo_root=REPO_ROOT))
+            print(
+                f"Live ablation measurement {'complete' if accepted else 'incomplete'}: {directory}"
+            )
+            return 0 if accepted else 1
         if args.command == "ablation-audit":
             from autoscholar.evaluation.ablation_audit import run_ablation_audit
 
