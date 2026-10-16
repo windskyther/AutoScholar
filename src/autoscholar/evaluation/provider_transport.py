@@ -146,7 +146,15 @@ class GuardedTransport(httpx.AsyncBaseTransport):
         output: Path,
         secrets: tuple[str, ...],
         delegate: httpx.AsyncBaseTransport | None = None,
+        max_output_tokens: int = MAX_OUTPUT_TOKENS,
     ) -> None:
+        if max_output_tokens != MAX_OUTPUT_TOKENS and not (
+            max_output_tokens == 8192
+            and ledger.data.get("protocol_version") == 2
+            and ledger.data.get("cumulative_limit") == 180
+        ):
+            raise ValueError("Expanded output cap requires the versioned remaining-budget pilot")
+        self.max_output_tokens = max_output_tokens
         self.provider, self.endpoint, self.ledger, self.output, self.secrets = (
             provider,
             httpx.URL(endpoint),
@@ -177,7 +185,7 @@ class GuardedTransport(httpx.AsyncBaseTransport):
                 raise ValueError("Expected bounded public request JSON")
             no_secrets(payload, self.secrets)
             if self.provider == "llm":
-                payload["max_tokens"] = MAX_OUTPUT_TOKENS
+                payload["max_tokens"] = self.max_output_tokens
             elif payload.get("search_depth") != "basic" or payload.get("max_results") != 3:
                 raise ValueError("Only three-result basic Tavily searches are authorized")
             raw = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()

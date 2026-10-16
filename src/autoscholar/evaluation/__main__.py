@@ -349,6 +349,8 @@ def main() -> int:
     live_ablations.add_argument("--allow-paid", action="store_true")
     live_ablations.add_argument("--approval-id", required=True)
     live_ablations.add_argument("--sandbox-container", required=True)
+    live_ablations.add_argument("--protocol-version", type=int, choices=(1, 2), default=1)
+    live_ablations.add_argument("--prior-run", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "run":

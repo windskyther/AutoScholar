@@ -930,6 +930,45 @@ real Docker preflight paths with explicitly scripted model decisions, zero API r
 Only this run's dedicated controller/network were removed after child cleanup and ownership
 checks. Public datasets, images, caches, all evidence and normal application data remain.
 
+## Version 2 within the remaining allowance
+
+The 2026-10-16 continuation uses `live-ablations --protocol-version 2 --prior-run <original>`
+with the existing 180-call authorization, not a fresh 180-call grant. Before claiming v2,
+verify the original claim, manifest, ledger/snapshot equality, 21 actual requests and their
+response usage. Bind all 48 primary file hashes; recheck before each dispatch and after the
+run. v2 is limited to **159 new LLM / 0 Tavily**, 12 per task. A fixed exclusive v2 claim
+prevents changing approval IDs to restart/reset it. Original v1 evidence is never rewritten.
+
+The committed `workflow_fixture_v2.json` adds explicit public checkpoint/artifact recovery
+scope. Closed-corpus retrieval ranks by unseen-source preference, lexical overlap and stable
+document ID, returning at most one source per query. This is a disclosed coverage policy on
+three self-authored documents, not a general retrieval-quality claim. v2 adds system-level
+extractive instructions for evidence and research-report citation claims; strict source-text
+validation remains. Type/topology grading accepts arbitrary valid DAG IDs while requiring
+exactly research -> coding -> experiment. The same data/templates/seed/oracle/ablation
+interventions remain in all variants.
+
+The transport permits 8192 output tokens only for this versioned remaining-budget ledger;
+legacy evaluations retain 4096. Workflow total budget stays 120000 tokens (last response may
+cross the threshold); model and thinking settings are unchanged. Accounted unusable model
+completions are task failures without a task replay, and independent scheduled tasks may
+continue. Unknown usage, transport/auth failures, changed evidence, resource violations or
+exhausted allowance stop the pilot. Results are new v2 observations; do not regrade v1 or
+pool outcomes across protocols. Complete measurement is distinct from successful task or
+scenario contracts and from overall Phase 10/main acceptance.
+
+A lost lease or unfinished durable unit is `infrastructure_incomplete`, with an unknown
+task outcome, not a measured model failure. The pilot stops without replaying the unit.
+The original free regression exposed one expired 30-second lease; its evidence is retained.
+Do not lengthen leases or weaken fencing to turn that interrupted run into a passing result.
+
+Before the live v2 run, the full free regression passed **854 tests / 3 skipped**; Ruff,
+mypy (230 files) and changed-source formatting passed. The skips remain the opt-in Compose
+smoke and two Windows symlink permissions. Four real Docker preflight paths matched their
+expected outcomes using explicitly fake model responses (zero vendor requests); see ignored
+`data/validation/live-v2-preflight-a1f47f20/`. These are infrastructure checks, not model
+ability evidence. The isolated full regression retained the earlier interrupted test record.
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider

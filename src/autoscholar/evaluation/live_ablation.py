@@ -28,6 +28,17 @@ from autoscholar.evaluation.live_ablation_contract import (
     LiveAblationLedger,
     LiveWorkflowProvider,
 )
+from autoscholar.evaluation.live_ablation_v2 import (
+    OUTPUT_TOKENS,
+    PRIOR_REQUESTS,
+    REMAINING_REQUESTS,
+    SUFFIX,
+    DiverseCorpusSearch,
+    ExtractiveWorkflowProvider,
+    PriorPilot,
+    RemainingPilotLedger,
+    plan_roles,
+)
 from autoscholar.evaluation.provider_transport import GuardedTransport, approval_path
 from autoscholar.evaluation.provider_validation import load_explicit_settings, no_owned_children
 from autoscholar.evaluation.runner import _git_state, _write_json
@@ -59,10 +70,11 @@ async def execute_task(
     provider: LiveWorkflowProvider,
     sandbox: SandboxExecutor,
     resources: dict[str, str],
+    protocol_version: int = 1,
 ) -> dict[str, Any]:
     recorded = ObservedSandbox(sandbox, resources)
     faulted = WorkflowFaultSandbox(recorded, script.fault)
-    search = ClosedCorpusSearch(fixture)
+    search = (DiverseCorpusSearch if protocol_version == 2 else ClosedCorpusSearch)(fixture)
     async with local_workflow(directory) as state, AsyncExitStack() as stack:
         project = await KnowledgeRepository(state.tasks.session_factory).create_project(
             name="Public live ablation",
@@ -126,11 +138,25 @@ async def execute_task(
                 "searches": search.records,
             },
         )
-        results = snapshot.results
+        roles = (
+            plan_roles(snapshot.plan)
+            if protocol_version == 2
+            else {
+                "research": "research",
+                "code": "code",
+                "train": "train",
+            }
+        )
+        results = {
+            role: snapshot.results[identifier]
+            for role, identifier in roles.items()
+            if identifier in snapshot.results
+        }
         expected_types = {"research": "research", "code": "coding", "train": "experiment"}
-        plan_valid = (
-            snapshot.plan is not None
-            and {step.id: step.type for step in snapshot.plan.steps} == expected_types
+        plan_valid = snapshot.plan is not None and (
+            bool(roles)
+            if protocol_version == 2
+            else {step.id: step.type for step in snapshot.plan.steps} == expected_types
         )
         completed_steps = (
             plan_valid
@@ -259,7 +285,7 @@ async def execute_task(
             earlier = [
                 step
                 for step in steps
-                if step["step_id"] == "train"
+                if step["step_id"] == roles.get("train")
                 and step["child_task_id"] != train_result["child_task_id"]
             ]
             latest_only = bool(answer) and all(
@@ -304,12 +330,20 @@ async def execute_task(
             "latest_results_only": latest_only,
             "independent_checkpoint_oracle": bool(verification and verification.accepted),
         }
+        incomplete = (
+            protocol_version == 2
+            and job.status
+            in {"queued", "running", "pause_requested", "cancel_requested", "recovery_required"}
+            and not provider.failed
+        )
         return {
-            "status": "measured" if not provider.failed else "provider_error",
+            "status": "infrastructure_incomplete"
+            if incomplete
+            else ("measured" if not provider.failed else "provider_error"),
             "workflow_status": parent.status,
             "error_code": parent.error_code,
             "task_success": parent.status == "succeeded" and all(checks.values())
-            if not provider.failed
+            if not provider.failed and not incomplete
             else None,
             "checks": checks,
             "intervention_verified": intervention,
@@ -322,7 +356,8 @@ async def execute_task(
             "verification": verification.model_dump(mode="json") if verification else None,
             "observed_models": sorted(provider.models),
             "step_counts": {
-                key: sum(step["step_id"] == key for step in steps) for key in expected_types
+                key: sum(step["step_id"] == roles.get(key) for step in steps)
+                for key in expected_types
             },
         }
 
@@ -436,52 +471,79 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
     if not root.is_relative_to(repo_root.resolve()):
         raise ValueError("Evaluation root escaped workspace")
     grant = approval_path(root, args.approval_id)
-    claim = root / "live-ablation-v1-claim.json"
+    version = getattr(args, "protocol_version", 1)
+    if version not in (1, 2):
+        raise ValueError("Unknown pilot protocol")
+    prior = None
+    if version == 2:
+        if getattr(args, "prior_run", None) is None:
+            raise ValueError("v2 must bind the original allowance and evidence")
+        prior = PriorPilot(args.prior_run, root=root)
+    claim = root / f"live-ablation-v{version}-claim.json"
     if grant.exists() or claim.exists():
         raise ValueError("This one-shot pilot was already claimed; do not reset/replay")
     fixture, digest = load_fixture(
-        repo_root / "benchmarks/ablations/workflow_fixture_v1.json", WorkflowFixture
+        repo_root / f"benchmarks/ablations/workflow_fixture_v{version}.json", WorkflowFixture
     )
     sandbox = DockerEvaluationSandbox(args.sandbox_container)
     resources = sandbox_resources(await sandbox.health(), dataset=True)
     if not await no_owned_children(sandbox):
         raise ValueError("Dedicated controller already owns child resources")
     settings, _ = load_explicit_settings(repo_root / ".env", require_tavily=False)
+    if prior and settings.llm_model != prior.manifest["configured_model"]:
+        raise ValueError("Keep the originally configured model for this versioned pilot")
     assert settings.llm_api_key is not None
     secret = settings.llm_api_key.get_secret_value()
-    directory = root / ("live-ablation-" + uuid4().hex)
+    directory = root / (("live-ablation-v2-" if prior else "live-ablation-") + uuid4().hex)
     directory.mkdir(parents=True, exist_ok=False)
     manifest = {
         "schema_version": 1,
+        "protocol_version": version,
         "git_revision": revision,
         "tasks": list(TASKS),
         "fixture_sha256": digest,
         "resources": resources,
         "configured_model": settings.llm_model,
         "limits": LIMITS.model_dump(),
-        "physical_limits": {"llm": 180, "tavily": 0, "per_task_llm": 12},
-        "objective_suffix": OBJECTIVE_SUFFIX,
+        "physical_limits": {
+            "llm": REMAINING_REQUESTS if prior else 180,
+            "tavily": 0,
+            "per_task_llm": 12,
+        },
+        "max_output_tokens": OUTPUT_TOKENS if prior else 4096,
+        "prior_run": prior.directory.name if prior else None,
+        "prior_requests": PRIOR_REQUESTS if prior else 0,
+        "cumulative_request_limit": 180,
+        "prior_primary_sha256": prior.hashes if prior else {},
+        "objective_suffix": SUFFIX if prior else OBJECTIVE_SUFFIX,
         "protocol_frozen_before_requests": True,
-        "search_backend": "closed-public-engineering-corpus",
+        "search_backend": "closed-public-engineering-corpus-v2"
+        if prior
+        else "closed-public-engineering-corpus",
         "automatic_task_replays": False,
     }
     _write_json(directory / "manifest.json", manifest)
-    with claim.open("x", encoding="utf-8") as stream:
-        json.dump(
-            {
-                "run_id": directory.name,
-                "approval_id": args.approval_id,
-                "manifest_sha256": payload_digest(manifest),
-            },
-            stream,
-        )
-    ledger = LiveAblationLedger(grant, run_id=directory.name)
+    ledger: LiveAblationLedger
+    if prior:
+        ledger = RemainingPilotLedger(grant, run_id=directory.name, prior=prior)
+    else:
+        with claim.open("x", encoding="utf-8") as stream:
+            json.dump(
+                {
+                    "run_id": directory.name,
+                    "approval_id": args.approval_id,
+                    "manifest_sha256": payload_digest(manifest),
+                },
+                stream,
+            )
+        ledger = LiveAblationLedger(grant, run_id=directory.name)
     transport = GuardedTransport(
         provider="llm",
         endpoint=settings.llm_base_url.rstrip("/") + "/chat/completions",
         ledger=ledger,
         output=directory,
         secrets=(secret,),
+        max_output_tokens=OUTPUT_TOKENS if prior else 4096,
     )
     records: list[dict[str, Any]] = []
     summary: dict[str, Any] = {}
@@ -492,7 +554,10 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
             native = OpenAICompatibleProvider(settings, http_client=client)
             for scenario in SCENARIOS:
                 script = fixture.scripts[scenario].model_copy(
-                    update={"prompt": fixture.scripts[scenario].prompt + OBJECTIVE_SUFFIX}
+                    update={
+                        "prompt": fixture.scripts[scenario].prompt
+                        + (SUFFIX if prior else OBJECTIVE_SUFFIX)
+                    }
                 )
                 for variant in WORKFLOW_VARIANTS:
                     if _git_state(repo_root) != (revision, False):
@@ -500,7 +565,9 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
                     task = f"{scenario}-{variant}"
                     target = directory / task
                     target.mkdir(exist_ok=False)
-                    provider = LiveWorkflowProvider(native, transport, task)
+                    provider = (ExtractiveWorkflowProvider if prior else LiveWorkflowProvider)(
+                        native, transport, task
+                    )
                     record: dict[str, Any] = {
                         "task": task,
                         "scenario": scenario,
@@ -520,7 +587,11 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
                     }
                     records.append(record)
                     _write_json(directory / "cases.json", records)
-                    print(f"Live ablation {task}; requests {len(ledger.attempts)}/180", flush=True)
+                    print(
+                        f"Live ablation v{version} {task}; "
+                        f"new requests {len(ledger.attempts)}/{ledger.limits['llm']}",
+                        flush=True,
+                    )
                     started = time.perf_counter()
                     try:
                         async with asyncio.timeout(660):
@@ -533,6 +604,7 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
                                     provider=provider,
                                     sandbox=sandbox,
                                     resources=resources,
+                                    protocol_version=version,
                                 )
                             )
                     except asyncio.CancelledError:
@@ -560,6 +632,19 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
                                 for key in ("input_tokens", "output_tokens", "total_tokens")
                             )
                         )
+                        if (
+                            prior
+                            and provider.failed
+                            and attempts
+                            and record["physical_accounting_verified"]
+                        ):
+                            # An accounted unusable completion is an observed model failure.
+                            # End this task, never replay it; independent scheduled tasks may run.
+                            record.update(
+                                status="measured",
+                                task_success=False,
+                                failure_class="model_protocol_failure",
+                            )
                         _write_json(directory / "cases.json", records)
                     print(
                         f"  {record['status']}; task_success={record['task_success']}; "
@@ -567,7 +652,11 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
                         flush=True,
                     )
                     if (
-                        provider.failed
+                        (
+                            provider.failed
+                            and record.get("failure_class") != "model_protocol_failure"
+                        )
+                        or record["status"] != "measured"
                         or not record["physical_accounting_verified"]
                         or not await no_owned_children(sandbox)
                     ):
@@ -586,6 +675,16 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
         summary = pilot_summary(
             records, ledger, clean=clean, unchanged=_git_state(repo_root) == (revision, False)
         )
+        if prior:
+            unchanged = prior.unchanged()
+            summary.update(
+                protocol_version=2,
+                prior_evidence_unchanged=unchanged,
+                prior_requests=PRIOR_REQUESTS,
+                cumulative_llm_requests=PRIOR_REQUESTS + len(ledger.attempts),
+                cumulative_request_limit=180,
+            )
+            summary["live_pilot_measurement_complete"] &= unchanged
         _write_json(directory / "acceptance.json", summary)
         lines = [
             "# Live workflow ablation pilot",
@@ -593,7 +692,9 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
             summary["scope"],
             "",
             f"Measurement complete: {summary['live_pilot_measurement_complete']}",
-            f"Actual LLM requests: {len(ledger.attempts)}/180; Tavily: 0.",
+            f"Actual new LLM requests: {len(ledger.attempts)}/{ledger.limits['llm']}; Tavily: 0.",
+            f"Protocol v{version}; earlier pilot requests: {PRIOR_REQUESTS if prior else 0}; "
+            "cumulative limit 180.",
             "",
             "| Task | Outcome | Verified task success | LLM requests |",
             "|---|---|---|---:|",
