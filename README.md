@@ -1301,6 +1301,8 @@ v2 已在 2026-10-16 安全停止，实际调用 **64 次 LLM / 0 次 Tavily**�
 
 最终全量回归 **857 passed / 3 skipped**，跳过项为需手动启用的 Compose 集成测试及两项 Windows 符号链接权限测试。本次新增 API 调用为 **0**。审计核验了 190 个证据文件，旧评分、原始响应和一次性声明不改写；详见本地 `data/evaluation/live-ablation-v2-78345b3c7b834f82b2cfc960a2aa4b6f/diagnostic-20261021.md`。继续付费需单独审阅只允许未执行任务的续测清单；不能删除声明或换授权 ID 重跑整轮。`main` 未合并，`.env`、设计文档及原始数据不上传。
 
+已确认只补测后续 7 组（恢复 No Memory、恢复 No Replanning、五组伪造指标场景），最多新增 **84 次 LLM / 0 次 Tavily**，累计最多 169/180 次。新入口使用 `--continue-v2`，绑定原始记录和审计，禁止重跑旧 8 组；新报告单独标记续测是否完整，原中断结果仍保持未知。具体协议见 [benchmarks/README.md](benchmarks/README.md#approved-seven-task-continuation)。
+
 ## 开发路线
 
 | 阶段 | 重点 |

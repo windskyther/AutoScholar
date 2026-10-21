@@ -19,6 +19,14 @@ from autoscholar.evaluation.docker_sandbox import DockerEvaluationSandbox
 from autoscholar.evaluation.e2e_adapter import initial_plan_is_static
 from autoscholar.evaluation.experiment_adapter import verify_completed_experiment
 from autoscholar.evaluation.isolated_components import ObservedSandbox, sandbox_resources
+from autoscholar.evaluation.live_ablation_continuation import (
+    CLAIM_NAME,
+    CONTINUATION_TASKS,
+    HISTORICAL_REQUESTS,
+    NEW_REQUEST_LIMIT,
+    ContinuationLedger,
+    StoppedV2,
+)
 from autoscholar.evaluation.live_ablation_contract import (
     LIMITS,
     OBJECTIVE_SUFFIX,
@@ -463,7 +471,9 @@ def pilot_summary(
 
 async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path, bool]:
     if not args.allow_paid:
-        raise ValueError("Live ablations require explicit --allow-paid with the new 180/0 grant")
+        raise ValueError(
+            "Live ablations require explicit --allow-paid within an approved allowance"
+        )
     revision, dirty = _git_state(repo_root)
     if not revision or dirty is not False:
         raise ValueError("Live ablations require clean committed source")
@@ -479,7 +489,15 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
         if getattr(args, "prior_run", None) is None:
             raise ValueError("v2 must bind the original allowance and evidence")
         prior = PriorPilot(args.prior_run, root=root)
-    claim = root / f"live-ablation-v{version}-claim.json"
+    stopped = None
+    if getattr(args, "continue_v2", None) is not None:
+        if prior is None:
+            raise ValueError("Continuation requires protocol v2 and the original prior run")
+        stopped = StoppedV2(args.continue_v2, prior)
+    planned = CONTINUATION_TASKS if stopped else TASKS
+    prior_count = HISTORICAL_REQUESTS if stopped else PRIOR_REQUESTS if prior else 0
+    new_limit = NEW_REQUEST_LIMIT if stopped else REMAINING_REQUESTS if prior else 180
+    claim = root / (CLAIM_NAME if stopped else f"live-ablation-v{version}-claim.json")
     if grant.exists() or claim.exists():
         raise ValueError("This one-shot pilot was already claimed; do not reset/replay")
     fixture, digest = load_fixture(
@@ -487,6 +505,10 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
     )
     sandbox = DockerEvaluationSandbox(args.sandbox_container)
     resources = sandbox_resources(await sandbox.health(), dataset=True)
+    if stopped and (
+        resources != stopped.manifest["resources"] or digest != stopped.manifest["fixture_sha256"]
+    ):
+        raise ValueError("Continuation must retain the frozen fixture and sandbox/data resources")
     if not await no_owned_children(sandbox):
         raise ValueError("Dedicated controller already owns child resources")
     settings, _ = load_explicit_settings(repo_root / ".env", require_tavily=False)
@@ -494,27 +516,33 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
         raise ValueError("Keep the originally configured model for this versioned pilot")
     assert settings.llm_api_key is not None
     secret = settings.llm_api_key.get_secret_value()
-    directory = root / (("live-ablation-v2-" if prior else "live-ablation-") + uuid4().hex)
+    prefix = (
+        "live-ablation-v2-tail-" if stopped else "live-ablation-v2-" if prior else "live-ablation-"
+    )
+    directory = root / (prefix + uuid4().hex)
     directory.mkdir(parents=True, exist_ok=False)
     manifest = {
         "schema_version": 1,
         "protocol_version": version,
         "git_revision": revision,
-        "tasks": list(TASKS),
+        "tasks": list(planned),
         "fixture_sha256": digest,
         "resources": resources,
         "configured_model": settings.llm_model,
         "limits": LIMITS.model_dump(),
         "physical_limits": {
-            "llm": REMAINING_REQUESTS if prior else 180,
+            "llm": new_limit,
             "tavily": 0,
             "per_task_llm": 12,
         },
         "max_output_tokens": OUTPUT_TOKENS if prior else 4096,
         "prior_run": prior.directory.name if prior else None,
-        "prior_requests": PRIOR_REQUESTS if prior else 0,
+        "prior_requests": prior_count,
         "cumulative_request_limit": 180,
-        "prior_primary_sha256": prior.hashes if prior else {},
+        "prior_primary_sha256": stopped.hashes if stopped else prior.hashes if prior else {},
+        "continuation_of": stopped.directory.name if stopped else None,
+        "continuation_version": 1 if stopped else None,
+        "authorized_cumulative_limit": prior_count + new_limit,
         "objective_suffix": SUFFIX if prior else OBJECTIVE_SUFFIX,
         "protocol_frozen_before_requests": True,
         "search_backend": "closed-public-engineering-corpus-v2"
@@ -524,7 +552,11 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
     }
     _write_json(directory / "manifest.json", manifest)
     ledger: LiveAblationLedger
-    if prior:
+    if stopped:
+        ledger = ContinuationLedger(
+            grant, run_id=directory.name, stopped=stopped, manifest=manifest
+        )
+    elif prior:
         ledger = RemainingPilotLedger(grant, run_id=directory.name, prior=prior)
     else:
         with claim.open("x", encoding="utf-8") as stream:
@@ -560,9 +592,11 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
                     }
                 )
                 for variant in WORKFLOW_VARIANTS:
+                    task = f"{scenario}-{variant}"
+                    if task not in planned:
+                        continue
                     if _git_state(repo_root) != (revision, False):
                         raise ValueError("Source changed during live pilot")
-                    task = f"{scenario}-{variant}"
                     target = directory / task
                     target.mkdir(exist_ok=False)
                     provider = (ExtractiveWorkflowProvider if prior else LiveWorkflowProvider)(
@@ -676,15 +710,48 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
             records, ledger, clean=clean, unchanged=_git_state(repo_root) == (revision, False)
         )
         if prior:
-            unchanged = prior.unchanged()
+            unchanged = stopped.unchanged() if stopped else prior.unchanged()
             summary.update(
                 protocol_version=2,
                 prior_evidence_unchanged=unchanged,
-                prior_requests=PRIOR_REQUESTS,
-                cumulative_llm_requests=PRIOR_REQUESTS + len(ledger.attempts),
+                prior_requests=prior_count,
+                cumulative_llm_requests=prior_count + len(ledger.attempts),
                 cumulative_request_limit=180,
             )
             summary["live_pilot_measurement_complete"] &= unchanged
+        if stopped:
+            complete = (
+                [row["task"] for row in records] == list(CONTINUATION_TASKS)
+                and all(
+                    row.get("status") == "measured"
+                    and row.get("physical_requests", 0) > 0
+                    and row.get("task_success") is not None
+                    and row.get("physical_accounting_verified")
+                    and row.get("intervention_verified")
+                    for row in records
+                )
+                and clean
+                and summary["source_unchanged"]
+                and unchanged
+            )
+            combined = [dict(row, source_run=stopped.directory.name) for row in stopped.records] + [
+                dict(row, source_run=directory.name) for row in records
+            ]
+            _write_json(directory / "combined_cases.json", combined)
+            combined_summary = pilot_summary(combined, ledger, clean=clean, unchanged=unchanged)
+            summary.update(
+                continuation_measurement_complete=bool(complete),
+                continuation_planned_tasks=len(CONTINUATION_TASKS),
+                cumulative_v2_recorded_tasks=len(combined),
+                cumulative_v2_vendor_tokens=(
+                    stopped.vendor_tokens + summary["vendor_tokens"]
+                    if summary["vendor_tokens"] is not None
+                    else None
+                ),
+                prior_interrupted_outcome_preserved=True,
+                combined_contrasts=combined_summary["contrasts"],
+                combined_scenario_contracts=combined_summary["scenario_contracts"],
+            )
         _write_json(directory / "acceptance.json", summary)
         lines = [
             "# Live workflow ablation pilot",
@@ -693,12 +760,21 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
             "",
             f"Measurement complete: {summary['live_pilot_measurement_complete']}",
             f"Actual new LLM requests: {len(ledger.attempts)}/{ledger.limits['llm']}; Tavily: 0.",
-            f"Protocol v{version}; earlier pilot requests: {PRIOR_REQUESTS if prior else 0}; "
-            "cumulative limit 180.",
+            f"Protocol v{version}; earlier pilot requests: {prior_count}; cumulative limit 180.",
             "",
             "| Task | Outcome | Verified task success | LLM requests |",
             "|---|---|---|---:|",
         ]
+        if stopped:
+            lines += [
+                "Continuation measurement complete: "
+                f"{summary['continuation_measurement_complete']}",
+                "Only seven previously unattempted tasks are authorized here. The original "
+                "interrupted recovery No Reviewer score remains unknown; full pilot is incomplete.",
+                "Combined original/new records with provenance: combined_cases.json. "
+                "Code differs only by the documented terminal-error fix and continuation controls.",
+                "",
+            ]
         lines.extend(
             f"| {row['task']} | {row['status']} | {row.get('task_success')} | "
             f"{row.get('physical_requests')} |"
@@ -718,4 +794,6 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
             "traces and oracle results are retained locally.",
         ]
         (directory / "evaluation_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return directory, bool(summary["live_pilot_measurement_complete"])
+    return directory, bool(
+        summary.get("continuation_measurement_complete", summary["live_pilot_measurement_complete"])
+    )

@@ -351,6 +351,7 @@ def main() -> int:
     live_ablations.add_argument("--sandbox-container", required=True)
     live_ablations.add_argument("--protocol-version", type=int, choices=(1, 2), default=1)
     live_ablations.add_argument("--prior-run", type=Path)
+    live_ablations.add_argument("--continue-v2", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "run":
@@ -359,9 +360,12 @@ def main() -> int:
             from autoscholar.evaluation.live_ablation import run_live_ablations
 
             directory, accepted = asyncio.run(run_live_ablations(args, repo_root=REPO_ROOT))
-            print(
-                f"Live ablation measurement {'complete' if accepted else 'incomplete'}: {directory}"
-            )
+            label = "Seven-task continuation" if args.continue_v2 else "Live ablation"
+            print(f"{label} measurement {'complete' if accepted else 'incomplete'}: {directory}")
+            if args.continue_v2:
+                print(
+                    "Original interrupted outcome remains unknown; full Phase 10 is NOT accepted."
+                )
             return 0 if accepted else 1
         if args.command == "ablation-audit":
             from autoscholar.evaluation.ablation_audit import run_ablation_audit

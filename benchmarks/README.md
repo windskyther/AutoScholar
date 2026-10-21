@@ -1008,6 +1008,36 @@ interrupted original outcome unresolved; it is not automatically full Phase 10 a
 This failure-driven regression follows the [official evaluation guidance](https://developers.openai.com/api/docs/guides/evaluation-best-practices)
 on logging and task-specific edge-case tests; no OpenAI model or API migration was made.
 
+## Approved seven-task continuation
+
+The owner confirmed a maximum of **84 new LLM / 0 Tavily** requests for only
+`recover-no_memory`, `recover-no_replanning` and the five `deception-*` variants.
+Use `live-ablations --protocol-version 2 --prior-run <v1> --continue-v2 <stopped-v2>`
+with an explicit approval ID and dedicated controller. All original eight attempted tasks,
+including the interrupted task, are forbidden at the physical-dispatch boundary.
+
+Before claiming the allowance, validate both prior ledgers, 85 prior physical requests,
+all raw request hashes and usage receipts, frozen v2 protocol, and the additive audit.
+Bind 191 files and recheck before every dispatch and after completion. The configured
+model, v2 fixture, image/dataset fingerprints, prompts, 8192 output cap and workflow budgets
+stay unchanged. The documented terminal-error fix remains enabled. An exclusive
+`live-ablation-v2-continuation-claim.json` prevents resetting the allowance with another ID;
+each new task is limited to 12 requests, aggregate 84, cumulative at most **169/180**.
+
+Outputs go to a new ignored `data/evaluation/live-ablation-v2-tail-<UUID>/` folder.
+`continuation_measurement_complete` concerns the seven new tasks only. The additive
+`combined_cases.json` retains original records verbatim with run provenance, including
+the unknown interrupted result. Combined exploratory contrasts disclose the source change;
+they are not a complete, single-revision experiment. Full pilot/Phase 10 acceptance and
+main merge remain false. Never reset a prior claim, mutate old scores, automatically rerun
+a task, or increase the provider budget to obtain a pass.
+
+Before dispatch: 69 distinct relevant free regressions passed across the 68-test and
+17-test runs; Ruff, mypy (232 files) and formatting passed. Two real Docker preflights
+(recovery No Memory, deception No Reviewer) matched expected outcomes with explicitly
+fake model decisions and zero API calls. Evidence: ignored
+`data/validation/tail-preflight-6deecf8c/`; owned child resources were clean afterward.
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
