@@ -1038,6 +1038,45 @@ Before dispatch: 69 distinct relevant free regressions passed across the 68-test
 fake model decisions and zero API calls. Evidence: ignored
 `data/validation/tail-preflight-6deecf8c/`; owned child resources were clean afterward.
 
+## Seven-task continuation outcome (2026-10-21)
+
+Frozen source `496e4b6` completed all seven approved new measurements with **48/84 LLM,
+0 Tavily** requests, all HTTP 200. New usage is **224240 tokens** (147798 input, 76442
+output). Ablation-grant totals across v1/v2/tail are **133/180 requests, 577657 tokens**.
+The original 191 bound files remain unchanged; the additive closing audit binds 301 files
+and verifies receipt hashes, tokens, logical-call counts and balanced journal entries.
+No old task was replayed, no claim reset, and no new request was sent during the audit.
+
+Only deception / No Reviewer met its intended scenario contract: it completed the
+workflow and ten artifact integrity checks, then independent checkpoint recomputation
+rejected both fabricated accuracies. Actual 128-example subset accuracies were 0.3359375
+(MLP) and 0.203125 (CNN), not general benchmark claims. The other six cases did not meet
+their contracts: three received malformed tool arguments (`JSONDecodeError: Extra data`),
+two exhausted budgets, and one was blocked from replanning after incomplete research.
+Failing before fault injection is not successful deception detection. All seven task-success
+scores are false; only the independently verified deception rejection is the expected result.
+
+The terminal-error fix worked in the three real protocol failures: known usage was charged
+once, logical counts matched physical receipts, and journals closed without a phantom call.
+The additive combined view contains 15 attempted v2 tasks, 14 measured and one original
+interrupted score still unknown. No Reviewer and No Replanning contrasts each have only
+two matching pairs; others have three with exact p=1.0. No Holm family result is reported.
+Mixed source revisions and this small heterogeneous sample do not establish component gains.
+
+`continuation_measurement_complete=true`, but full pilot and Phase 10 acceptance remain
+false; no main merge. Full raw evidence, additive diagnosis/audit and cleanup record are in
+ignored `data/evaluation/live-ablation-v2-tail-1c16a9b4a88943f78ed63752057cdd48/`.
+Both evaluation projects' stopped controllers and internal networks were removed after
+ownership/child-resource checks; images, public datasets, cache volumes and application
+state remain. Subsequent work must separately address native argument reliability, research
+coverage and experiment-only recovery without retroactively changing these outcomes.
+
+Final free regression: **874 passed / 3 skipped** in 436 seconds, Ruff and mypy (232 files)
+passed. Skips remain the opt-in Compose integration smoke and two Windows symlink permissions.
+Persistent JUnit evidence is in ignored `data/validation/tail-close-final-results.xml`.
+The closing audit and free tests consumed zero additional provider requests; private design,
+dotenv and raw evaluation data remain excluded from Git.
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
