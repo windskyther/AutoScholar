@@ -25,7 +25,14 @@ from autoscholar.evaluation.provider_transport import GuardedTransport
 from autoscholar.evaluation.workflow_ablation import WORKFLOW_VARIANTS, WorkflowVariant
 from autoscholar.evaluation.workflow_fixture import WorkflowFixture, workflow_plan
 from autoscholar.evaluation.workflow_knowledge import PUBLIC_KNOWLEDGE
-from autoscholar.llm.models import ConversationMessage, LLMResult, ToolChoice, ToolDefinition
+from autoscholar.llm.errors import LLMResponseError
+from autoscholar.llm.models import (
+    ConversationMessage,
+    LLMResult,
+    TokenUsage,
+    ToolChoice,
+    ToolDefinition,
+)
 from autoscholar.orchestration.durable import DurableService
 from tests.test_evaluation_workflow import RESOURCES, ROOT, WorkflowReplaySandbox
 from tests.test_live_ablation import SnapshotFixtureProvider
@@ -108,6 +115,71 @@ def test_prior_tampering_blocks_requests(tmp_path: Path, target: str) -> None:
     with pytest.raises(ValueError, match="changed"):
         ledger.reserve("llm", TASKS[0] + "--1", {})
     assert not ledger.attempts
+
+
+@pytest.mark.parametrize("stage", ["submit_task_plan", "submit_review", "submit_plan_revision"])
+async def test_stopped_live_completion_has_no_phantom_retry(tmp_path: Path, stage: str) -> None:
+    class EmptyCompletion(RenamedFixtureProvider):
+        failures = 0
+
+        async def generate(
+            self,
+            messages: list[ConversationMessage],
+            *,
+            tools: list[ToolDefinition] | None = None,
+            tool_choice: ToolChoice = "none",
+        ) -> LLMResult:
+            if tools and tools[0].name == stage:
+                self.failures += 1
+                raise LLMResponseError(
+                    code="llm_empty_response",
+                    message="Fake received empty completion",
+                    usage=TokenUsage(input_tokens=5, output_tokens=8, total_tokens=13),
+                )
+            return await super().generate(messages, tools=tools, tool_choice=tool_choice)
+
+    data = fixture()
+    script = data.scripts["recover"]
+    ledger = LiveAblationLedger(tmp_path / "fake.json", run_id="fake-only")
+    transport = GuardedTransport(
+        provider="llm",
+        endpoint="https://example.org/chat/completions",
+        ledger=ledger,
+        output=tmp_path,
+        secrets=(),
+        delegate=httpx.MockTransport(lambda request: httpx.Response(500)),
+    )
+    native = EmptyCompletion(data, script, project_source=PUBLIC_KNOWLEDGE)
+    provider = ExtractiveWorkflowProvider(native, transport, "recover-baseline")
+    outcome = await live.execute_task(
+        directory=tmp_path,
+        fixture=data,
+        script=script,
+        variant="baseline",
+        provider=provider,
+        sandbox=WorkflowReplaySandbox(),
+        resources=RESOURCES,
+        protocol_version=2,
+    )
+    assert native.failures == 1 and provider.failed
+    assert outcome["status"] == "provider_error"
+    assert outcome["workflow_status"] == "failed"
+    assert outcome["error_code"] == "llm_empty_response"
+    assert outcome["usage"]["model_calls"] == provider.calls
+    assert outcome["usage"]["total_tokens"] == 3 * (provider.calls - 1) + 13
+    workflow = json.loads((tmp_path / "workflow.json").read_text(encoding="utf-8"))
+    starts = {
+        event["payload"]["call_id"]
+        for event in workflow["events"]
+        if event["kind"] == "call_started"
+    }
+    finishes = {
+        event["payload"]["call_id"]
+        for event in workflow["events"]
+        if event["kind"] == "call_finished"
+    }
+    assert starts == finishes
+    assert not ledger.attempts  # Explicit fake completion, never a vendor request.
 
 
 async def test_output_cap_requires_versioned_budget(tmp_path: Path) -> None:

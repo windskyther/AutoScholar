@@ -305,8 +305,10 @@ class AutonomousService:
                     # The native call name/cardinality/schema remain mandatory below.
                     tool_choice="auto",
                 )
-            except LLMResponseError:
+            except LLMResponseError as exc:
                 # BudgetedLLM charges invalid completions before this bounded retry.
+                if not exc.retryable:
+                    raise
                 reason = "response was empty or tool arguments were not a JSON object"
             else:
                 if len(result.tool_calls) == 1 and result.tool_calls[0].name == name:

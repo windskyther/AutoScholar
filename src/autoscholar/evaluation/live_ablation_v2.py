@@ -15,6 +15,7 @@ from autoscholar.evaluation.live_ablation_contract import (
 )
 from autoscholar.evaluation.provider_prior import read_public
 from autoscholar.evaluation.provider_transport import Provider, approval_path
+from autoscholar.llm.errors import LLMResponseError
 from autoscholar.llm.models import (
     ChatMessage,
     ConversationMessage,
@@ -124,7 +125,14 @@ class ExtractiveWorkflowProvider(LiveWorkflowProvider):
                 else item
                 for item in messages
             ]
-        return await super().generate(messages, tools=tools, tool_choice=tool_choice)
+        try:
+            return await super().generate(messages, tools=tools, tool_choice=tool_choice)
+        except LLMResponseError as exc:
+            # The live wrapper has stopped this task. Propagate known usage through
+            # BudgetedLLM, but prohibit the coordinator's schema-correction attempt.
+            # Otherwise it journals/charges another call that never reaches transport.
+            exc.retryable = False
+            raise
 
 
 class PriorPilot:

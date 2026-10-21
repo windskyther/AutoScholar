@@ -969,6 +969,45 @@ expected outcomes using explicitly fake model responses (zero vendor requests); 
 `data/validation/live-v2-preflight-a1f47f20/`. These are infrastructure checks, not model
 ability evidence. The isolated full regression retained the earlier interrupted test record.
 
+## 2026-10-21 stopped v2 audit and terminal-error fix
+
+The frozen `ad66197` run stopped on October 16 after **64 LLM / 0 Tavily** requests,
+all HTTP 200; **287304 tokens** (181132 input, 106172 output). With v1 this is
+85/180 requests and 353417 tokens, leaving 95 unused slots. Seven tasks were measured
+(three successful), one remained unknown and seven were not attempted. Normal baseline,
+No Reviewer and No Replanning succeeded. Recovery baseline and No Planner requested
+code + experiment reruns instead of experiment-only recovery and exhausted a budget.
+The report does not establish successful recovery or complete paired ablations.
+
+The eighth task, recovery No Reviewer, received an empty, length-limited completion
+with all 8192 output tokens used as reasoning. Its usage was correctly charged. The
+coordinator's format-correction path then opened a ninth logical call, rejected by the
+already-stopped live wrapper before HTTP dispatch. Eight physical calls and all 41699
+tokens are reconciled, but the original workflow had nine logical calls and an unmatched
+journal entry. The strict accounting guard stopped the run. Keep the original unknown
+score; an offline diagnosis must not retroactively promote a frozen measurement.
+
+The prospective fix adds a default-enabled retryability flag to `LLMResponseError`.
+Only the stopped v2 wrapper disables it; the coordinator propagates that received error
+without a phantom format-correction call. Usage still passes through `BudgetedLLM`.
+Three new free regressions cover Planner, Reviewer and Replanner, known usage and balanced
+journal entries. Related regressions: **84 passed**, Ruff and mypy (230 files) passed.
+The normal production one-correction behavior remains covered and unchanged.
+Full regression after the fix: **857 passed / 3 skipped** in 604 seconds; the skips
+are the opt-in Compose integration smoke and two Windows symlink-permission tests.
+
+The ignored run folder contains additive `diagnostic-20261021.md` and
+`audit-20261021.json`, binding 190 primary evidence files. This follow-up made **zero new
+API requests**. Docker was offline; the previous finalizer reported no owned children,
+but this audit does not claim the old controller/network were removed. No main merge.
+
+Do not reset the consumed claim. A separately reviewed, versioned continuation must bind
+both prior runs, allow only the seven unattempted IDs and cap requests at 84 (7 x 12;
+cumulative <=169/180), without replaying any old task. Even that continuation leaves the
+interrupted original outcome unresolved; it is not automatically full Phase 10 acceptance.
+This failure-driven regression follows the [official evaluation guidance](https://developers.openai.com/api/docs/guides/evaluation-best-practices)
+on logging and task-specific edge-case tests; no OpenAI model or API migration was made.
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
