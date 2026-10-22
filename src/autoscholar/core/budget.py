@@ -98,6 +98,10 @@ class BudgetedLLM:
         # Config imports BudgetLimits before the provider package can be initialized.
         from autoscholar.llm.errors import LLMResponseError
 
+        # A locally stopped wrapper cannot dispatch: do not create a phantom call/journal.
+        check_available = getattr(self.provider, "check_available", None)
+        if callable(check_available):
+            check_available()
         consume("model_calls")
         protocol_error: LLMResponseError | None = None
         result: LLMResult | None = None

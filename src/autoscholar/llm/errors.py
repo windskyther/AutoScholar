@@ -20,11 +20,22 @@ class LLMResponseError(LLMUpstreamError):
     """A received but unusable completion still incurs measurable token usage."""
 
     def __init__(
-        self, *, code: str, message: str, usage: TokenUsage | None, retryable: bool = True
+        self,
+        *,
+        code: str,
+        message: str,
+        usage: TokenUsage | None,
+        retryable: bool = True,
+        model: str | None = None,
+        finish_reason: str | None = None,
+        validation_reason: str | None = None,
     ) -> None:
         super().__init__(code=code, message=message)
         self.usage = usage
         self.retryable = retryable
+        self.model = model
+        self.finish_reason = finish_reason
+        self.validation_reason = validation_reason
 
 
 class LLMUnavailableError(AppError):

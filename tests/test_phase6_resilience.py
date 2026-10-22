@@ -301,6 +301,7 @@ async def test_revision_cannot_change_contract(tmp_path: Path, case: str) -> Non
             "reason": "Invalid revision",
         },
     )
+    replies[4] = replies[3]
     provider = ScriptedProvider(replies)
     service, engine = await workflow(tmp_path, provider, InvalidOnceSandbox())
     try:
@@ -309,7 +310,7 @@ async def test_revision_cannot_change_contract(tmp_path: Path, case: str) -> Non
         assert result.task.error_code == "autonomous_protocol_invalid"
         assert len(await service.workflows.history(result.task.id, "plans")) == 1
         assert result.task.metrics["training_runs"] == 1
-        assert len(provider.calls) == 4
+        assert len(provider.calls) == 5
     finally:
         await engine.dispose()
 

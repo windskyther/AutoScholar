@@ -1311,6 +1311,24 @@ v2 已在 2026-10-16 安全停止，实际调用 **64 次 LLM / 0 次 Tavily**�
 
 最终免费回归 **874 passed / 3 skipped**，Ruff/mypy（232 文件）通过；跳过项仍为手动启用的 Compose 集成测试及两项 Windows 符号链接权限测试。JUnit 结果保留在忽略的 `data/validation/tail-close-final-results.xml`。免费回归和收尾审计没有新增 API 调用，设计文档、`.env` 及原始运行数据不上传。
 
+### 真实联测问题修复与三组定向补验（v3）
+
+工具参数现在严格解析为唯一 JSON 对象，拒绝尾随内容、重复键和非有限数值，错误响应仍保留实际用量。协调器的纠正提示明确 JSON 错误类别；v3 评测中每个任务至多允许一次已收到且用量核对一致的非法参数纠正，计入原有 12 次调用上限。参数截断造成的无效响应、空响应、未知用量和网络异常停止任务。已停止的评测 Provider 在创建调用记录前被拦截。
+
+Research 的外部查询与平台自动检索的本地文档职责分开；同一来源在不同查询主题下分别保留候选记录，缺失主题的纠正消息列出可选候选 ID，来源和主题覆盖要求保留。首版计划中的实验指标无效或产物缺失时，重规划先核验已验证代码及实验交接的源码摘要，再约束为保留原计划、仅重跑受影响实验；不符合约束的修复计划最多纠正一次。
+
+免费准备下一轮清单，不读取 `.env`、不启动 Docker、不请求供应商，也不领取付费授权：
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation repairs
+```
+
+清单写入忽略的 `data/evaluation/repair-plan-<UUID>/`，绑定当前提交、公开夹具和判分规则。需提交后的干净源码才能用于真实补验。计划包括正常 baseline、故障恢复 baseline、故障恢复 No Replanning 三组，新增最多 **36 次 LLM / 0 次 Tavily**，每组最多 12 次、120000-token 停止阈值，最后一次返回可能越过阈值；每次最多输出 8192 token。已有七组续测授权与历史分数保留，新三组执行需单独授权。具体命令与通过标准见 [评测说明](benchmarks/README.md#targeted-repair-verification-v3)。
+
+2026-10-22 免费验收：完整回归 **910 passed / 3 skipped**，Ruff、mypy（238 文件）通过。模型替身 + 真实 Docker 的三组预检通过，包含拒绝无关代码重跑后的实验恢复、独立 checkpoint 复算及故障后的 No Replanning 停止；SDK + Mock HTTP 全入口测试核对三组调用用量并拦截重复执行。源码变化保护与旧计划约束的定向复验 19 项通过。旧超时测试改用持久化 SQLite，避免取消连接后内存库丢表；两个非法修复计划测试组按至多一次纠正检查调用数，未放松原目标、步骤类型或规格约束。
+
+最终 JUnit 保存在忽略的 `data/validation/phase10-repairs-complete-results.xml`，Docker 记录在 `data/validation/repairs-preflight-31045ae3/`。本轮供应商请求 **0**，原始 301 个证据文件摘要未变；已按所有权清理本轮专用控制器和隔离网络，镜像、数据卷及记录保留。三组真实 LLM 补验尚未执行，Phase 10 整体验收与 `main` 合并仍待单独确认。
+
 ## 开发路线
 
 | 阶段 | 重点 |

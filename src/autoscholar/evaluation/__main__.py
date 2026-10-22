@@ -352,8 +352,25 @@ def main() -> int:
     live_ablations.add_argument("--protocol-version", type=int, choices=(1, 2), default=1)
     live_ablations.add_argument("--prior-run", type=Path)
     live_ablations.add_argument("--continue-v2", type=Path)
+    repairs = commands.add_parser(
+        "repairs", help="Prepare three-task repair plan offline; paid execution requires approval"
+    )
+    repairs.add_argument("--allow-paid", action="store_true")
+    repairs.add_argument("--plan", type=Path)
+    repairs.add_argument("--approval-id")
+    repairs.add_argument("--sandbox-container")
     args = parser.parse_args()
     try:
+        if args.command == "repairs":
+            from autoscholar.evaluation.repair_validation import prepare_repairs, run_repairs
+
+            if not args.allow_paid:
+                directory = prepare_repairs(REPO_ROOT)
+                print(f"Free repair plan prepared; external API calls: 0: {directory}")
+                return 0
+            directory, accepted = asyncio.run(run_repairs(args, repo_root=REPO_ROOT))
+            print(f"Targeted repairs {'passed' if accepted else 'NOT accepted'}: {directory}")
+            return 0 if accepted else 1
         if args.command == "run":
             return asyncio.run(_run(args))
         if args.command == "live-ablations":

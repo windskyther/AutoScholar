@@ -96,6 +96,10 @@ class LiveWorkflowProvider:
     async def close(self) -> None:
         pass  # Shared provider belongs to the run, not an individual task.
 
+    def check_available(self) -> None:
+        if self.failed or self.calls >= PER_TASK_REQUESTS:
+            raise ValueError("Live task stopped; no retry/reset of its request allowance")
+
     async def generate(
         self,
         messages: list[ConversationMessage],
@@ -103,8 +107,7 @@ class LiveWorkflowProvider:
         tools: list[ToolDefinition] | None = None,
         tool_choice: ToolChoice = "none",
     ) -> LLMResult:
-        if self.failed or self.calls >= PER_TASK_REQUESTS:
-            raise ValueError("Live task stopped; no retry/reset of its request allowance")
+        self.check_available()
         self.calls += 1
         self.transport.case_id = f"{self.task}--{self.calls}"
         names = [tool.name for tool in tools or []]

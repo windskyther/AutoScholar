@@ -82,7 +82,7 @@ async def execute_task(
 ) -> dict[str, Any]:
     recorded = ObservedSandbox(sandbox, resources)
     faulted = WorkflowFaultSandbox(recorded, script.fault)
-    search = (DiverseCorpusSearch if protocol_version == 2 else ClosedCorpusSearch)(fixture)
+    search = (DiverseCorpusSearch if protocol_version >= 2 else ClosedCorpusSearch)(fixture)
     async with local_workflow(directory) as state, AsyncExitStack() as stack:
         project = await KnowledgeRepository(state.tasks.session_factory).create_project(
             name="Public live ablation",
@@ -148,7 +148,7 @@ async def execute_task(
         )
         roles = (
             plan_roles(snapshot.plan)
-            if protocol_version == 2
+            if protocol_version >= 2
             else {
                 "research": "research",
                 "code": "code",
@@ -163,7 +163,7 @@ async def execute_task(
         expected_types = {"research": "research", "code": "coding", "train": "experiment"}
         plan_valid = snapshot.plan is not None and (
             bool(roles)
-            if protocol_version == 2
+            if protocol_version >= 2
             else {step.id: step.type for step in snapshot.plan.steps} == expected_types
         )
         completed_steps = (
@@ -339,7 +339,7 @@ async def execute_task(
             "independent_checkpoint_oracle": bool(verification and verification.accepted),
         }
         incomplete = (
-            protocol_version == 2
+            protocol_version >= 2
             and job.status
             in {"queued", "running", "pause_requested", "cancel_requested", "recovery_required"}
             and not provider.failed

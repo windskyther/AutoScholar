@@ -24,6 +24,7 @@ from autoscholar.llm.models import (
     ToolDefinition,
     ToolResultMessage,
 )
+from autoscholar.llm.tool_arguments import ToolArgumentsError, decode_tool_arguments
 
 
 class OpenAICompatibleProvider:
@@ -98,6 +99,7 @@ class OpenAICompatibleProvider:
                 total_tokens=response.usage.total_tokens,
             )
         message = response.choices[0].message if response.choices else None
+        finish_reason = response.choices[0].finish_reason if response.choices else None
         content = message.content if message is not None else None
         raw_message: Any = message
         reasoning_content = (
@@ -110,19 +112,17 @@ class OpenAICompatibleProvider:
             for typed_call in message.tool_calls:
                 raw_call: Any = typed_call
                 try:
-                    arguments = json.loads(raw_call.function.arguments)
-                except (json.JSONDecodeError, TypeError) as exc:
+                    arguments = decode_tool_arguments(raw_call.function.arguments)
+                except ToolArgumentsError as exc:
                     raise LLMResponseError(
                         code="llm_invalid_tool_call",
                         message="The language model returned invalid tool arguments",
                         usage=usage,
+                        retryable=finish_reason != "length",
+                        model=response.model or self._model,
+                        finish_reason=finish_reason,
+                        validation_reason=exc.reason,
                     ) from exc
-                if not isinstance(arguments, dict):
-                    raise LLMResponseError(
-                        code="llm_invalid_tool_call",
-                        message="The language model returned invalid tool arguments",
-                        usage=usage,
-                    )
                 tool_calls.append(
                     ToolCall(
                         id=raw_call.id,
@@ -136,6 +136,9 @@ class OpenAICompatibleProvider:
                 code="llm_empty_response",
                 message="The language model provider returned no text or tool calls",
                 usage=usage,
+                retryable=finish_reason != "length",
+                model=response.model or self._model,
+                finish_reason=finish_reason,
             )
 
         return LLMResult(

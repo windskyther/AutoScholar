@@ -1077,12 +1077,105 @@ Persistent JUnit evidence is in ignored `data/validation/tail-close-final-result
 The closing audit and free tests consumed zero additional provider requests; private design,
 dotenv and raw evaluation data remain excluded from Git.
 
+## Targeted repair verification v3
+
+The next verification is a separate three-task protocol, not a continuation/reset of an old
+grant. Free preparation is `python -m autoscholar.evaluation repairs`. It writes a reviewable
+`plan.json` and `evaluation_report.md` under ignored `data/evaluation/repair-plan-<UUID>/`,
+without reading dotenv, starting Docker, claiming an allowance or making provider requests.
+The plan binds clean committed source, the public v2 fixture, budgets and acceptance rules.
+
+Repairs covered:
+
+- Decode exactly one unambiguous JSON object. Trailing values/prose, duplicate keys, NaN,
+  Infinity and overflowed floats fail with known usage. Never salvage a partial object.
+- Separate external query planning from automatic local-document retrieval. Deduplicate
+  sources within each topic/source type while preserving query/topic associations across topics.
+  Evidence correction identifies available candidate IDs without auto-selecting evidence.
+- For invalid/missing experiment artifacts in the first plan version, verify the coding snapshot and
+  experiment source digest, then constrain the revision to the same plan and affected
+  experiments. Unnecessary code/research reruns are rejected with one bounded correction.
+  A concrete coding review issue still permits code repair with downstream invalidation.
+
+| Task | Required outcome |
+|---|---|
+| normal-baseline | Production checks, source handoff and independent checkpoint oracle pass; research/code run once |
+| recover-baseline | One injected metrics fault, one experiment-only recovery, two training runs, independent oracle passes |
+| recover-no_replanning | Reach the injected fault, then `evaluation_replanning_disabled`; no revision or second training |
+
+All require durable/physical usage reconciliation, unchanged source and no owned child
+resources. Early failures before fault injection do not meet the negative-control contract.
+At most **36 new LLM / 0 Tavily** requests, **12 per task**; corrections count within that
+ceiling. Each task keeps the 120000-token stopping threshold (one final returned response
+can cross it), 8192 output-token cap, existing model, one replan, two training runs and zero
+code repairs. The v3 wrapper allows at most one native-JSON correction per task, only at a
+coordinator stage with a received HTTP 200 and fully reconciled usage. Network/unknown-usage,
+empty completions, malformed length-limited arguments and repeated invalid completions stop.
+Coordinator schema/semantic correction
+is still bounded to two attempts per stage within the same physical ceiling. No full-task
+automatic replay, model switch, relaxed grading, or reuse of an old grant is permitted.
+
+Free actual-Docker preflight uses an explicit scripted provider and independently recomputes
+the saved checkpoints. It also deliberately asks to rerun code once; the coordinator must
+reject that revision, preserve the source and recover through experiment-only execution.
+It is launched as a module from the repository root:
+
+```powershell
+$env:AUTOSCHOLAR_EVAL_MANAGER_IMAGE = (docker image inspect autoscholar-api:phase9-acceptance --format '{{.Id}}').Trim()
+$env:AUTOSCHOLAR_EVAL_SANDBOX_IMAGE = (docker image inspect autoscholar-python-sandbox:phase4 --format '{{.Id}}').Trim()
+docker compose --env-file benchmarks/phase10d.defaults -f benchmarks/phase10d.compose.yaml -p autoscholar-eval-repairs-20261022 up -d --pull never
+if ($LASTEXITCODE -ne 0) { throw 'Dedicated repair controller startup failed' }
+.venv\Scripts\python.exe -m tests.integration.phase10_repairs_acceptance --sandbox-container autoscholar-eval-repairs-20261022-sandbox-manager-1
+if ($LASTEXITCODE -ne 0) { throw 'Inspect the preserved free preflight evidence before continuing' }
+```
+
+Use a dedicated project, cached image SHA-256 identities and the existing read-only public
+MNIST volume. No provider credentials reach this controller. Raw results stay under ignored
+`data/validation/repairs-preflight-<UUID>/`. Verify controller ownership and absence of its
+children before removing only that project's temporary container/network; preserve images,
+the public dataset and all evidence. A future paid invocation must recreate its controller.
+
+Only after the owner separately approves the prepared three-task plan:
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation repairs --allow-paid --plan data/evaluation/repair-plan-<UUID>/plan.json --approval-id phase10-repairs-v3-approved --sandbox-container autoscholar-eval-repairs-20261022-sandbox-manager-1
+```
+
+Replace `<UUID>` with the exact clean-source plan reviewed by the owner. Source/plan checks
+run before dispatch. A fixed v3 claim prevents restarting with another approval ID. Only
+public MNIST goals, seeded templates, public retrieval evidence and results are sent;
+dotenv, credentials and the private design are never request payloads.
+Actual paid reports go to ignored `data/evaluation/live-repairs-v3-<UUID>/`.
+
+Passing this targeted check establishes the three repair paths within their stated scope.
+Full workflow ablation evidence, final Phase 10 acceptance and main merge remain separate.
+Unknown/failed historical records are retained; component gains or statistical significance
+are not required to make a valid measurement. Broader independent samples are needed before
+claiming general component effects.
+
+2026-10-22 free verification: **910 passed / 3 skipped**, Ruff and mypy (238 files) passed.
+Persistent JUnit: ignored `data/validation/phase10-repairs-complete-results.xml` (913 cases,
+zero failures/errors). The opt-in Compose smoke and two Windows symlink-permission cases
+remain skipped. Focused source-integrity/contract/entrypoint regression: 19 passed.
+The timeout test now uses file-backed SQLite so cancellation cannot discard the test schema;
+invalid-revision fixtures exercise both bounded attempts without relaxing the contract.
+
+The three real-Docker paths passed with explicit scripted model decisions; independent
+checkpoint recomputation passed for positive cases and the negative control reached the
+injected fault before stopping. Evidence: ignored `data/validation/repairs-preflight-31045ae3/`.
+The complete entrypoint also passed with real SDK parsing and Mock HTTP usage receipts,
+including new-approval-ID replay rejection. None of these checks contacted a vendor.
+The 301 historical evidence hashes remain unchanged. Only the owned temporary controller
+and internal network were removed; cached images, dataset volumes and reports remain.
+The separately approved live v3 check is still pending; full Phase 10/main gates stay false.
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
 closure now have passing evidence, including separately approved tool and Chinese v2
 confirmations. Original frozen v1 failures remain visible and are not retroactively passed.
-Autonomous real-LLM E2E and real-LLM workflow ablations remain unverified; any additional
+Real normal baseline has passed in the closed-corpus pilot, but fault recovery, full paired
+real-LLM ablations and overall acceptance remain incomplete; any additional
 paid request or main merge needs separate owner approval. Broader corpora,
 PDF ingestion/generation quality and independent paid-provider ability remain outside this
 result. The generic injected RAG adapter accepts an explicitly provisioned
