@@ -1167,7 +1167,21 @@ The complete entrypoint also passed with real SDK parsing and Mock HTTP usage re
 including new-approval-ID replay rejection. None of these checks contacted a vendor.
 The 301 historical evidence hashes remain unchanged. Only the owned temporary controller
 and internal network were removed; cached images, dataset volumes and reports remain.
-The separately approved live v3 check is still pending; full Phase 10/main gates stay false.
+At the end of that free preflight, the live v3 check was pending. It was subsequently
+executed under separate owner approval as recorded below; full Phase 10/main gates stay false.
+
+2026-10-22 live v3 result, frozen source `cd514d9`: all three measurements completed,
+**24/36 LLM requests, 0 Tavily, 107607 known tokens**. Only the No Replanning fault-stop
+contract passed; normal/recovery baselines failed. All receipts and durable calls reconcile,
+and all 24 native tool argument objects are syntactically valid JSON. Recovery call 8
+misnested revision fields; call 9 passed schema validation but failed unresolved-issue
+coverage after an incorrect Reviewer citation complaint. The normal run's initially
+successful experiment passed an additive, zero-provider checkpoint/artifact recheck;
+its failed workflow grade remains unchanged. No automatic replay or quota reset occurred.
+The owned controller/network were removed while preserving images, volumes and evidence.
+See the [public result and repair priorities](phase10-repairs-v3-20261022.md).
+`targeted_repairs_acceptance`, `phase10_overall_acceptance` and `main_merge_authorized`
+remain false. This is not a new full ablation or statistical component-benefit result.
 
 ## Next stages
 
