@@ -1183,6 +1183,30 @@ See the [public result and repair priorities](phase10-repairs-v3-20261022.md).
 `targeted_repairs_acceptance`, `phase10_overall_acceptance` and `main_merge_authorized`
 remain false. This is not a new full ablation or statistical component-benefit result.
 
+### Free Reviewer/recovery follow-up
+
+The post-v3 implementation now supplies verified positive facts to Reviewer, bounds
+corrections of contradictory findings, requires an exact current-source quote for a claimed
+source defect, and retains the immutable DAG server-side for a verified experiment-only retry.
+Ordinary plan-revision identity/specification/issue-coverage validation is also inside the
+bounded correction callback. Deterministic rules and the independent oracle remain enforced.
+
+Three saved real Reviewer responses were replayed read-only with explicit scripted
+corrections and actual Docker training/checkpoint grading: normal, recovery and No Replanning
+all met their free-test contracts. This does NOT demonstrate real-model correction reliability.
+New vendor requests: **0 LLM / 0 Tavily**. Old grades, the approval ledger/claim, 96 original
+v3 files and 301 historical evidence hashes were preserved. See the
+[implementation, free results and reproducible commands](phase10-review-recovery-free-20261022.md).
+No old quota reset, new paid execution or main merge is included.
+
+Final free regression: **932 passed / 3 skipped** (935 cases, no failures/errors), Ruff,
+mypy (240 files) and changed-file formatting passed. The opt-in Compose smoke and two
+Windows symlink-permission tests remain skipped. Persistent JUnit:
+`data/validation/review-recovery-complete-shortpath-results.xml` (ignored).
+The initial deep-temp-path run had seven pack failures because its report path reached
+261 characters; those records remain. The same pack passed 37/37 with a fresh short path,
+followed by the complete passing short-path regression. No grader change was made.
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider

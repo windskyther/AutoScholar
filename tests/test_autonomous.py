@@ -50,7 +50,6 @@ def script(*, replan: bool = False) -> list[LLMResult]:
                 call(
                     "submit_plan_revision",
                     {
-                        "plan": plan().model_dump(),
                         "rerun_steps": ["train"],
                         "reason": "Retry invalid artifact; preserve validated coding output",
                     },
@@ -287,6 +286,10 @@ async def test_autonomous_and_child_routes_require_token(tmp_path: Path) -> None
 
 async def test_successful_attempt_artifacts_survive_later_replan(tmp_path: Path) -> None:
     responses = script(replan=True)
+    responses[3] = call(
+        "submit_plan_revision",
+        {"plan": plan().model_dump(), "rerun_steps": ["train"], "reason": "Repeat measurement"},
+    )
     responses[2] = call(
         "submit_review",
         {

@@ -59,6 +59,20 @@ class ReviewIssue(StrictModel):
     code: str = Field(min_length=1, max_length=100)
     step_id: str = Field(min_length=1, max_length=40)
     message: str = Field(min_length=1, max_length=2000)
+    check: Literal[
+        "requirement",
+        "coding_validation",
+        "source_handoff",
+        "artifacts",
+        "raw_metrics",
+        "verbatim_citation",
+        "source_defect",
+    ] = Field(
+        default="requirement",
+        description="Machine-check category, or requirement for a concrete unmet requirement",
+    )
+    source_path: str | None = Field(default=None, max_length=500)
+    source_quote: str | None = Field(default=None, min_length=1, max_length=2000)
 
 
 class ReviewResult(StrictModel):
@@ -87,3 +101,10 @@ class PlanRevision(StrictModel):
         if not set(self.rerun_steps) <= {step.id for step in self.plan.steps}:
             raise ValueError("rerun references unknown step")
         return self
+
+
+class ExperimentRetry(StrictModel):
+    """The server retains the immutable DAG for a verified collection-only retry."""
+
+    rerun_steps: list[str] = Field(min_length=1, max_length=20)
+    reason: str = Field(min_length=1, max_length=2000)

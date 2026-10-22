@@ -128,10 +128,11 @@ class ScriptedWorkflowProvider:
             arguments = workflow_plan(self.script).model_dump()
         elif name == "submit_plan_revision":
             arguments = {
-                "plan": workflow_plan(self.script).model_dump(),
                 "rerun_steps": ["train"],
                 "reason": "Retry the failed experiment only; preserve validated research and code",
             }
+            if "plan" in tools[0].parameters.get("properties", {}):
+                arguments["plan"] = workflow_plan(self.script).model_dump()
         elif name == "submit_review":
             # Deliberately PASS even on invalid artifacts: deterministic rules must override it.
             arguments = {"status": "PASS", "issues": [], "suggested_steps": []}

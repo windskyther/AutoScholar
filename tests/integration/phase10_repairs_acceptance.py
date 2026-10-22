@@ -2,8 +2,11 @@
 
 import argparse
 import asyncio
+import hashlib
+import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -11,7 +14,7 @@ import httpx
 from autoscholar.evaluation.docker_sandbox import DockerEvaluationSandbox
 from autoscholar.evaluation.isolated_components import sandbox_resources
 from autoscholar.evaluation.live_ablation import execute_task
-from autoscholar.evaluation.live_ablation_v2 import SUFFIX
+from autoscholar.evaluation.live_ablation_v2 import SUFFIX, plan_roles
 from autoscholar.evaluation.provider_transport import GuardedTransport
 from autoscholar.evaluation.provider_validation import no_owned_children
 from autoscholar.evaluation.repair_protocol import (
@@ -27,11 +30,16 @@ from autoscholar.llm.models import (
     ToolChoice,
     ToolDefinition,
 )
+from autoscholar.orchestration.models import TaskPlan
 from tests.test_live_ablation_v2 import RenamedFixtureProvider, fixture
 
 
 class UnnecessaryCodingRetryProvider(RenamedFixtureProvider):
     invalid_revision_sent = False
+    recorded_review: dict[str, Any] | None = None
+    recorded_ids: dict[str, str] | None = None
+    review_replayed = False
+    review_corrections = 0
 
     async def generate(
         self,
@@ -48,6 +56,25 @@ class UnnecessaryCodingRetryProvider(RenamedFixtureProvider):
             fixture_messages = messages[:2]
         result = await super().generate(fixture_messages, tools=tools, tool_choice=tool_choice)
         call = result.tool_calls[0]
+        if call.name == "submit_review" and self.recorded_review and not self.review_replayed:
+            self.review_replayed = True
+            assert self.recorded_ids is not None
+            arguments = json.loads(json.dumps(self.recorded_review))
+            for issue in arguments["issues"]:
+                issue["step_id"] = self.recorded_ids[issue["step_id"]]
+            arguments["suggested_steps"] = [
+                self.recorded_ids[key] for key in arguments["suggested_steps"]
+            ]
+            return replace(result, tool_calls=(replace(call, arguments=arguments),))
+        if call.name == "submit_review" and len(messages) > 2:
+            assert any(
+                text in messages[-1].content
+                for text in (
+                    "contradicts verified facts",
+                    "source defect requires source_path",
+                )
+            )
+            self.review_corrections += 1
         if call.name == "submit_plan_revision" and not self.invalid_revision_sent:
             self.invalid_revision_sent = True
             return replace(
@@ -61,7 +88,7 @@ class UnnecessaryCodingRetryProvider(RenamedFixtureProvider):
         return result
 
 
-async def main(controller: str) -> None:
+async def main(controller: str, replay_run: Path | None = None) -> None:
     output = (
         Path(__file__).resolve().parents[2]
         / "data/validation"
@@ -73,6 +100,20 @@ async def main(controller: str) -> None:
     if not await no_owned_children(sandbox):
         raise ValueError("Dedicated controller already owns children")
     records = []
+    replay_hashes: dict[Path, str] = {}
+    if replay_run is not None:
+        replay_run = replay_run.resolve()
+        root = (Path(__file__).resolve().parents[2] / "data/evaluation").resolve()
+        if not replay_run.is_relative_to(root):
+            raise ValueError("Replay evidence must remain within ignored evaluation data")
+        audit = json.loads((replay_run / "audit-close-20261022.json").read_text(encoding="utf-8"))
+        for name, digest in audit["primary_sha256"].items():
+            path = (root / name).resolve()
+            assert (
+                path.is_relative_to(root)
+                and hashlib.sha256(path.read_bytes()).hexdigest() == digest
+            )
+            replay_hashes[path] = digest
     try:
         for task in REPAIR_TASKS:
             scenario, _, variant = task.partition("-")
@@ -93,6 +134,22 @@ async def main(controller: str) -> None:
                 max_output_tokens=8192,
             )
             native = UnnecessaryCodingRetryProvider(data, script, project_source=PUBLIC_KNOWLEDGE)
+            if replay_run is not None:
+                original = json.loads(
+                    (replay_run / task / "workflow.json").read_text(encoding="utf-8")
+                )
+                initial = TaskPlan.model_validate(
+                    min(original["plans"], key=lambda p: p["version"])["payload"]
+                )
+                roles = plan_roles(initial)
+                assert roles is not None
+                native.recorded_ids = {key: "x-" + role for role, key in roles.items()}
+                receipt = json.loads(
+                    (replay_run / f"response-llm-{task}--7.json").read_text(encoding="utf-8")
+                )
+                old_call = receipt["choices"][0]["message"]["tool_calls"][0]
+                assert old_call["function"]["name"] == "submit_review"
+                native.recorded_review = json.loads(old_call["function"]["arguments"])
             provider = RepairWorkflowProvider(native, transport, task)
             row = await execute_task(
                 directory=target,
@@ -105,12 +162,21 @@ async def main(controller: str) -> None:
                 protocol_version=3,
             )
             row.update(task=task, fixture_model=True, actual_vendor_requests=len(ledger.attempts))
+            row.update(
+                recorded_review_replayed=native.review_replayed,
+                review_corrections=native.review_corrections,
+            )
             records.append(row)
             _write_json(output / "preflight.json", records)
             expected = variant != "no_replanning"
             assert row["status"] == "measured" and row["task_success"] is expected, row
             assert row["intervention_verified"] and not ledger.attempts
             assert row["step_counts"]["research"] == row["step_counts"]["code"] == 1
+            if replay_run is not None:
+                assert native.review_replayed
+                # The saved negative-control review already reports the real failure;
+                # it must stop without replanning, not manufacture a correction.
+                assert native.review_corrections == (0 if variant == "no_replanning" else 1)
             if task == "recover-baseline":
                 assert native.invalid_revision_sent
                 assert provider.stage_calls["submit_plan_revision"] == 2
@@ -132,9 +198,17 @@ async def main(controller: str) -> None:
         )
         print(f"Free Docker repair preflight: {output}; clean={clean}", flush=True)
         assert clean
+        assert all(
+            hashlib.sha256(path.read_bytes()).hexdigest() == digest
+            for path, digest in replay_hashes.items()
+        )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sandbox-container", required=True)
-    asyncio.run(main(parser.parse_args().sandbox_container))
+    parser.add_argument(
+        "--replay-run", type=Path, help="Read-only saved Reviewer responses; no APIs"
+    )
+    args = parser.parse_args()
+    asyncio.run(main(args.sandbox_container, args.replay_run))

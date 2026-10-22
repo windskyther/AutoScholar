@@ -26,12 +26,14 @@ from autoscholar.core.budget import (
     current_budget,
     current_parent,
 )
+from autoscholar.experiment.analysis import analyze_experiment
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.models import ExperimentSpecification, RawExperimentMetrics
 from autoscholar.experiment.service import ExperimentService
 from autoscholar.llm import ChatMessage, ConversationMessage, LLMProvider, ToolDefinition
 from autoscholar.llm.errors import LLMResponseError
 from autoscholar.orchestration.models import (
+    ExperimentRetry,
     PlanRevision,
     PlanStep,
     ReviewIssue,
@@ -39,6 +41,11 @@ from autoscholar.orchestration.models import (
     TaskPlan,
 )
 from autoscholar.orchestration.repository import WorkflowRepository
+from autoscholar.orchestration.review_facts import (
+    contradicted_issue,
+    step_facts,
+    unsupported_source_issue,
+)
 from autoscholar.rag.models import RetrievalMode
 
 
@@ -644,6 +651,14 @@ class AutonomousService:
                 code = output.get("error_code", "step_incomplete")
             elif step.type in {"research", "knowledge"} and not output.get("evidence"):
                 code = "evidence_missing"
+            elif step.type == "coding":
+                try:
+                    if source_digest(
+                        self.workspace.source_snapshot(output["child_task_id"])
+                    ) != output.get("source_sha256"):
+                        code = "source_handoff_mismatch"
+                except ValueError:
+                    code = "source_handoff_mismatch"
             elif step.type == "experiment":
                 if output["source_sha256"] != output["expected_source_sha256"]:
                     code = "source_handoff_mismatch"
@@ -656,8 +671,20 @@ class AutonomousService:
                     try:
                         if {item.path for item in artifacts} != set(self.artifacts.allowed):
                             raise WorkflowError()
-                        for artifact in artifacts:
-                            self.artifacts.read_verified(output["child_task_id"], artifact)
+                        contents = {
+                            artifact.path: self.artifacts.read_verified(
+                                output["child_task_id"], artifact
+                            )
+                            for artifact in artifacts
+                        }
+                        raw = RawExperimentMetrics.model_validate_json(
+                            contents["outputs/raw_metrics.json"]
+                        )
+                        if (
+                            analyze_experiment(run.specification, raw).metrics != output["metrics"]
+                            or json.loads(contents["outputs/metrics.json"]) != output["metrics"]
+                        ):
+                            raise WorkflowError()
                         if (
                             source_digest(self.workspace.source_snapshot(output["child_task_id"]))
                             != (output["expected_source_sha256"])
@@ -669,6 +696,7 @@ class AutonomousService:
                             or experiment.status != "succeeded"
                             or experiment.metrics != output["metrics"]
                             or experiment.source_sha256 != output["source_sha256"]
+                            or any(a.experiment_id != experiment.id for a in artifacts)
                         ):
                             raise WorkflowError()
                     except (ValueError, WorkflowError):
@@ -687,6 +715,37 @@ class AutonomousService:
         run = state["run"]
         assert run.plan is not None
         issues = await self._rules(run)
+        facts = {
+            step.id: await step_facts(
+                step_type=step.type,
+                result=run.results[step.id],
+                tasks=self.tasks,
+                workspace=self.workspace,
+                artifacts=self.artifacts,
+                specification=run.specification,
+            )
+            for step in run.plan.steps
+        }
+        keys = {step.id for step in run.plan.steps}
+
+        def validate_review(review: ReviewResult) -> None:
+            if not ({item.step_id for item in review.issues} | set(review.suggested_steps)) <= keys:
+                raise WorkflowError("submit_review referenced step IDs outside the active plan")
+            for issue in review.issues:
+                if contradicted_issue(issue, facts[issue.step_id]):
+                    raise WorkflowError(
+                        f"Review issue {issue.code} contradicts verified facts "
+                        f"for {issue.step_id}. Use verified_checks; "
+                        "do not claim validated files/checks/quotes are absent. "
+                        "Report a concrete unmet requirement instead, or PASS if none remains."
+                    )
+                if unsupported_source_issue(issue, facts[issue.step_id]):
+                    raise WorkflowError(
+                        "A source defect requires source_path and an exact nonblank source_quote "
+                        "from verified_checks.source_excerpts. A collection/metrics failure "
+                        "alone is not a source defect; keep the deterministic experiment issue."
+                    )
+
         review = await self._structured(
             "submit_review",
             ReviewResult,
@@ -694,6 +753,14 @@ class AutonomousService:
             "with actionable issues and existing step IDs. Check evidence support, code "
             "handoff, missing experiments and measured outputs. Low accuracy or CNN doing "
             "worse than MLP alone is NOT failure. Small engineering subsets are intentional. "
+            "Use verified_checks as authoritative positive validation facts, not model claims. "
+            "Set each issue's check to its machine category, or requirement for a specific "
+            "unmet requirement. For a source_defect supply source_path and an exact source_quote "
+            "from source_excerpts identifying the defect, not a generic metrics failure. "
+            "Static/pytest success does not prove arbitrary requirements, "
+            "but missing artifact confirmation, summary-only fields or an exact source quote "
+            "are not defects when the relevant checks passed. An experiment collection "
+            "failure alone is not evidence of a code defect; require a concrete source defect. "
             "Never override deterministic failures or invent data. Do not perform research "
             "or execute code. Call submit_review solely to report the review decision.",
             {
@@ -701,12 +768,11 @@ class AutonomousService:
                 "plan": run.plan.model_dump(),
                 "results": run.results,
                 "deterministic_issues": [item.model_dump() for item in issues],
+                "verified_checks": facts,
                 "experiment_contract": experiment_contract(),
             },
+            validate=validate_review,
         )
-        keys = {step.id for step in run.plan.steps}
-        if not ({item.step_id for item in review.issues} | set(review.suggested_steps)) <= keys:
-            raise WorkflowError("submit_review referenced step IDs outside the active plan")
         # Recheck after the model wait, so a stale integrity check cannot become PASS.
         combined = {
             (item.step_id, item.code): item
@@ -730,10 +796,11 @@ class AutonomousService:
         run = state["run"]
         assert run.plan is not None and run.review is not None
         consume("replans")
+        self._check_retained_sources(run)
         retry_steps = await self._experiment_retry_steps(run)
 
         def validate_revision(revision: PlanRevision) -> None:
-            self._validate_plan(run, revision.plan)
+            self._revision_affected(run, revision)
             if retry_steps and (
                 revision.plan != run.plan or set(revision.rerun_steps) != retry_steps
             ):
@@ -743,53 +810,64 @@ class AutonomousService:
                     "and research."
                 )
 
-        revision = await self._structured(
-            "submit_plan_revision",
-            PlanRevision,
-            "Repair the plan using the review. Retain every original step ID and type and "
-            "the original goal. Change failed steps or their prerequisites; specify rerun_steps. "
-            "All downstream dependents of changed/rerun steps rerun automatically. "
-            "Do not rerun unaffected successful work. Preserve the fixed specification.",
-            {
-                "objective": run.objective,
-                "plan": run.plan.model_dump(),
-                "review": run.review.model_dump(),
-                "results": run.results,
-                "budget_used": run.budget.used,
-                "budget_limits": run.budget.limits.model_dump(),
-                "memory_context_untrusted": run.memory_context,
-                "experiment_contract": experiment_contract(),
-                "repair_constraints": {
-                    "experiment_only": bool(retry_steps),
-                    "rerun_steps": sorted(retry_steps),
-                    "preserve_entire_plan": bool(retry_steps),
-                },
+        payload = {
+            "objective": run.objective,
+            "plan": run.plan.model_dump(),
+            "review": run.review.model_dump(),
+            "results": run.results,
+            "budget_used": run.budget.used,
+            "budget_limits": run.budget.limits.model_dump(),
+            "memory_context_untrusted": run.memory_context,
+            "experiment_contract": experiment_contract(),
+            "repair_constraints": {
+                "experiment_only": bool(retry_steps),
+                "rerun_steps": sorted(retry_steps),
+                "preserve_entire_plan": bool(retry_steps),
             },
-            validate=validate_revision,
-        )
-        self._validate_plan(run, revision.plan)
-        old = {step.id: step for step in run.plan.steps}
-        new = {step.id: step for step in revision.plan.steps}
-        if (
-            not old.keys() <= new.keys()
-            or revision.plan.goal != run.plan.goal
-            or any(new[key].type != item.type for key, item in old.items())
-        ):
-            raise WorkflowError(
-                "Revision must retain every original step ID/type and the exact original goal"
-            )
-        affected = set(revision.rerun_steps) | {
-            key for key in new if key not in old or new[key] != old[key]
         }
-        while True:
-            downstream = {key for key, step in new.items() if set(step.dependencies) & affected}
-            if downstream <= affected:
-                break
-            affected |= downstream
-        if not {issue.step_id for issue in run.review.issues} <= affected:
-            raise WorkflowError(
-                "Revision must rerun all unresolved issue steps or their prerequisites"
+        if retry_steps:
+
+            def validate_retry(retry: ExperimentRetry) -> None:
+                if (
+                    len(retry.rerun_steps) != len(retry_steps)
+                    or set(retry.rerun_steps) != retry_steps
+                ):
+                    raise WorkflowError(
+                        "Artifact-only recovery must rerun exactly the experiment IDs in "
+                        "repair_constraints; never rerun code/research or submit a plan."
+                    )
+
+            retry = await self._structured(
+                "submit_plan_revision",
+                ExperimentRetry,
+                "The server retains the immutable validated plan. Submit only rerun_steps "
+                "and reason. Rerun exactly the experiment IDs in repair_constraints; "
+                "do not submit plan, source changes, code or research reruns.",
+                payload,
+                validate=validate_retry,
             )
+            # Recheck lineage after the model wait, before invalidating retained results.
+            if await self._experiment_retry_steps(run) != retry_steps:
+                raise WorkflowError("Experiment recovery eligibility changed")
+            revision = PlanRevision(
+                plan=run.plan.model_copy(deep=True),
+                rerun_steps=retry.rerun_steps,
+                reason=retry.reason,
+            )
+        else:
+            revision = await self._structured(
+                "submit_plan_revision",
+                PlanRevision,
+                "Repair the plan using the review. Retain every original step ID and type and "
+                "the original goal. Change failed steps or their prerequisites; "
+                "specify rerun_steps. "
+                "All downstream dependents of changed/rerun steps rerun automatically. "
+                "Do not rerun unaffected successful work. Preserve the fixed specification.",
+                payload,
+                validate=validate_revision,
+            )
+        self._check_retained_sources(run)
+        affected = self._revision_affected(run, revision)
         for key in affected:
             run.results.pop(key, None)
             previous = run.sources.pop(key, None)
@@ -804,6 +882,50 @@ class AutonomousService:
             revision.reason,
         )
         return state
+
+    def _check_retained_sources(self, run: Run) -> None:
+        assert run.plan is not None
+        for step in run.plan.steps:
+            result = run.results.get(step.id, {})
+            if step.type != "coding" or result.get("status") != "succeeded":
+                continue
+            source = run.sources.get(step.id)
+            if (
+                not source
+                or source_digest(source) != result.get("source_sha256")
+                or self.workspace.source_snapshot(result["child_task_id"]) != source
+            ):
+                raise WorkflowError("Validated coding source changed before replanning")
+
+    def _revision_affected(self, run: Run, revision: PlanRevision) -> set[str]:
+        """Validate every semantic constraint inside the bounded correction as well."""
+        assert run.plan is not None and run.review is not None
+        self._validate_plan(run, revision.plan)
+        old = {step.id: step for step in run.plan.steps}
+        new = {step.id: step for step in revision.plan.steps}
+        if (
+            not old.keys() <= new.keys()
+            or revision.plan.goal != run.plan.goal
+            or any(new[key].type != item.type for key, item in old.items())
+        ):
+            raise WorkflowError(
+                "Revision must retain every original step ID/type and the exact original goal"
+            )
+        affected = set(revision.rerun_steps) | {
+            key for key in new if key not in old or new[key] != old[key]
+        }
+        if len(revision.rerun_steps) != len(set(revision.rerun_steps)):
+            raise WorkflowError("Revision rerun_steps must be unique")
+        while True:
+            downstream = {key for key, step in new.items() if set(step.dependencies) & affected}
+            if downstream <= affected:
+                break
+            affected |= downstream
+        if not {issue.step_id for issue in run.review.issues} <= affected:
+            raise WorkflowError(
+                "Revision must rerun all unresolved issue steps or their prerequisites"
+            )
+        return affected
 
     async def _experiment_retry_steps(self, run: Run) -> set[str]:
         """Permit one unchanged artifact retry only with verified successful source lineage."""
@@ -842,6 +964,19 @@ class AutonomousService:
             experiments = await self.tasks.list_experiments(result["child_task_id"])
             if not experiments or experiments[-1].source_sha256 != source_digest(transferred):
                 raise WorkflowError("Experiment source lineage changed before recovery")
+            child = await self.tasks.get_task(result["child_task_id"])
+            training = [t for t in child.tool_calls if t.tool_name == "run_python"] if child else []
+            try:
+                measured = json.loads(training[-1].output) if training else {}
+            except ValueError:
+                measured = {}
+            if (
+                not isinstance(measured, dict)
+                or measured.get("status") != "succeeded"
+                or measured.get("exit_code") != 0
+                or training[-1].status != "succeeded"
+            ):
+                raise WorkflowError("Experiment-only retry needs a successful saved training trace")
         return affected
 
     async def _writer(self, state: FlowState) -> FlowState:

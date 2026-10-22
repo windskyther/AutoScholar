@@ -255,10 +255,11 @@ class RenamedFixtureProvider(SnapshotFixtureProvider):
         if call.name not in {"submit_task_plan", "submit_plan_revision"}:
             return result
         args = json.loads(json.dumps(call.arguments))
-        plan = args if call.name == "submit_task_plan" else args["plan"]
-        for step in plan["steps"]:
-            step["id"] = "x-" + step["id"]
-            step["dependencies"] = ["x-" + key for key in step["dependencies"]]
+        plan = args if call.name == "submit_task_plan" else args.get("plan")
+        if plan:
+            for step in plan["steps"]:
+                step["id"] = "x-" + step["id"]
+                step["dependencies"] = ["x-" + key for key in step["dependencies"]]
         if call.name == "submit_plan_revision":
             args["rerun_steps"] = ["x-" + key for key in args["rerun_steps"]]
         return replace(result, tool_calls=(replace(call, arguments=args),))
