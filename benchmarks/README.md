@@ -1238,6 +1238,17 @@ cannot bypass the fixed v4 claim. The three-scenario measurement, scenario accep
 full Phase 10 and owner-only main approval remain separate. This entry does not create
 new full-ablation evidence or regrade any historical failure/unknown.
 
+2026-10-23 v4 result: **14 LLM / 0 Tavily, 61738 known tokens**. Normal baseline
+passed with one research/code/training execution and independent checkpoint verification.
+Recovery stopped before training/fault injection; No Replanning was not started. A model-created
+10231-character helper enlarged the full-source snapshot: posthoc reconstruction was 33749
+bytes against the unchanged 32768-byte cap. Mock HTTP reproduced rejection before any
+physical reservation/network dispatch. Recovery retained eight logical calls versus seven
+physical requests and one unclosed journal entry; its original task outcome stays unknown.
+All 14 actual receipts are HTTP 200 with valid native JSON and known usage. No full-task replay
+or remaining-allowance reset occurred. The three-task measurement and Phase 10/main gates
+remain false. See the [v4 result and precise next gap](phase10-review-recovery-v4-20261023.md).
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
