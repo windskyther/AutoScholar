@@ -1372,6 +1372,13 @@ v5 独立验收入口已准备：相关回归 **248 passed**，三组“保存�
 最多新增 36 次 LLM / 0 次 Tavily 的真实三组验收仍待单独批准，详见
 [v5 准备与通过标准](benchmarks/phase10-request-preflight-v5-preparation-20261023.md)。
 
+随后按单独确认完成 v5 三组真实测量：**29 次 LLM / 0 次 Tavily，168088 token**。
+正常组通过，关闭重规划的负对照按预期停止；恢复组的 Reviewer 将指标收集故障升级为
+代码验证问题，重规划未启用实验单步恢复约束，第二个 coding 步骤触及 `code_repairs=0`。
+三组调用/用量均可核对，无未闭合调用；旧 464 份证据摘要未变，临时资源已清理。
+**定向验收未通过，Phase 10 整体验收仍未通过**，未自动补跑或合并 main。
+具体原因与零 API 诊断见 [v5 真实验收报告](benchmarks/phase10-request-preflight-v5-20261023.md)。
+
 ## 开发路线
 
 | 阶段 | 重点 |

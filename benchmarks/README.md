@@ -1283,6 +1283,18 @@ An exact clean-source plan and separate owner approval are required for up to **
 failed tasks cannot be automatically replayed. Overall Phase 10 and main merge remain
 unapproved. See the [v5 preparation report](phase10-request-preflight-v5-preparation-20261023.md).
 
+2026-10-23 separately approved v5 live result, frozen source `9f4557f`: all three tasks
+measured, **29 LLM / 0 Tavily**, **117828 input + 50260 output = 168088 tokens**.
+All receipts are HTTP 200 with valid native JSON and usage matching durable accounting;
+there are no unclosed LLM operations. Normal passed in 12 requests with verified artifacts
+and independent checkpoints. Recovery used 8 requests, but a `requirement` diagnosis against
+validated coding and custom issue codes disabled experiment-only eligibility; a second coding
+attempt hit `code_repairs=0`, before any second training. No Replanning used 9 requests and
+stopped as expected after the injected fault. Three-task measurement is complete, targeted
+acceptance is **false**. No remaining-budget replay occurred. Read-only diagnosis preserves
+all results and 464 historical hashes; owned temporary resources were cleaned. See the
+[v5 live report and precise recovery gaps](phase10-request-preflight-v5-20261023.md).
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
