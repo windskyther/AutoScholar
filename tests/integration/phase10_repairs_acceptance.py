@@ -88,7 +88,7 @@ class UnnecessaryCodingRetryProvider(RenamedFixtureProvider):
         return result
 
 
-async def main(controller: str, replay_run: Path | None = None) -> None:
+async def main(controller: str, replay_run: Path | None = None, protocol_version: int = 3) -> None:
     output = (
         Path(__file__).resolve().parents[2]
         / "data/validation"
@@ -123,7 +123,11 @@ async def main(controller: str, replay_run: Path | None = None) -> None:
             )
             target = output / task
             target.mkdir()
-            ledger = RepairLedger(target / "fake-ledger.json", run_id="free-preflight")
+            ledger = RepairLedger(
+                target / "fake-ledger.json",
+                run_id="free-preflight",
+                protocol_version=protocol_version,
+            )
             transport = GuardedTransport(
                 provider="llm",
                 endpoint="https://example.org/chat/completions",
@@ -159,7 +163,7 @@ async def main(controller: str, replay_run: Path | None = None) -> None:
                 provider=provider,
                 sandbox=sandbox,
                 resources=resources,
-                protocol_version=3,
+                protocol_version=protocol_version,
             )
             row.update(task=task, fixture_model=True, actual_vendor_requests=len(ledger.attempts))
             row.update(
@@ -207,8 +211,9 @@ async def main(controller: str, replay_run: Path | None = None) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sandbox-container", required=True)
+    parser.add_argument("--protocol-version", type=int, choices=(3, 4, 5), default=3)
     parser.add_argument(
         "--replay-run", type=Path, help="Read-only saved Reviewer responses; no APIs"
     )
     args = parser.parse_args()
-    asyncio.run(main(args.sandbox_container, args.replay_run))
+    asyncio.run(main(args.sandbox_container, args.replay_run, args.protocol_version))

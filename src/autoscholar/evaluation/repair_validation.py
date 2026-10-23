@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -11,7 +12,7 @@ from uuid import uuid4
 import httpx
 
 from autoscholar.evaluation.component_fixture import load_fixture
-from autoscholar.evaluation.datasets import payload_digest
+from autoscholar.evaluation.datasets import payload_digest, read_bounded
 from autoscholar.evaluation.docker_sandbox import DockerEvaluationSandbox
 from autoscholar.evaluation.isolated_components import sandbox_resources
 from autoscholar.evaluation.live_ablation import execute_task, pilot_summary
@@ -63,10 +64,10 @@ def runner_only_changes(repo_root: Path, revision: str) -> bool:
     return set(changed) <= _RUNNER_PATHS
 
 
-def approved_proposal(path: Path, repo_root: Path) -> dict[str, Any]:
+def approved_proposal(path: Path, repo_root: Path, protocol_version: int = 4) -> dict[str, Any]:
     root = (repo_root / "data/evaluation").resolve()
     proposal, digest = read_public(path.resolve(), root)
-    expected = repair_contract(4)
+    expected = repair_contract(protocol_version)
     expected["scope"] += "_proposal"
     if (
         not isinstance(proposal, dict)
@@ -85,10 +86,22 @@ def approved_proposal(path: Path, repo_root: Path) -> dict[str, Any]:
     protected = proposal.get("protected_previous_records_sha256")
     if not isinstance(protected, dict) or not protected:
         raise ValueError("Approved proposal must protect the old grant and claim")
+    if (
+        protocol_version == 5
+        and not {"live-repair-v3-claim.json", "live-repair-v4-claim.json"} <= protected.keys()
+    ):
+        raise ValueError("Protocol 5 must retain both consumed prior repair claims")
     for name, expected_digest in protected.items():
         if not isinstance(name, str) or not isinstance(expected_digest, str):
             raise ValueError("Invalid protected evidence binding")
-        _, actual_digest = read_public(root / name, root)
+        if protocol_version == 5:
+            # Frozen artifacts include SQLite/source/checkpoints, not only JSON receipts.
+            target = (root / name).resolve()
+            if not target.is_relative_to(root):
+                raise ValueError("Protected evidence escaped evaluation output")
+            actual_digest = hashlib.sha256(read_bounded(target)).hexdigest()
+        else:
+            _, actual_digest = read_public(root / name, root)
         if actual_digest != expected_digest:
             raise ValueError("Prior evidence/approval changed; no dispatch permitted")
     _, current_fixture = load_fixture(
@@ -109,10 +122,12 @@ def prepare_repairs(
     """No dotenv, Docker, provider initialization, claim creation or network request."""
     contract = repair_contract(protocol_version)
     binding = None
-    if protocol_version == 4:
+    if protocol_version >= 4:
         if proposal is None:
-            raise ValueError("Protocol 4 requires the separately approved proposal")
-        binding = approved_proposal(proposal, repo_root)
+            raise ValueError(
+                f"Protocol {protocol_version} requires the separately approved proposal"
+            )
+        binding = approved_proposal(proposal, repo_root, protocol_version)
     revision, dirty = _git_state(repo_root)
     _, digest = load_fixture(
         repo_root / "benchmarks/ablations/workflow_fixture_v2.json", WorkflowFixture
@@ -167,11 +182,11 @@ def load_repair_plan(path: Path, repo_root: Path, protocol_version: int = 3) -> 
         or plan.get("paid_execution_approved") is not False
     ):
         raise ValueError("Repair plan/source changed; prepare and review a new clean-source plan")
-    if protocol_version == 4:
+    if protocol_version >= 4:
         binding = plan.get("approved_proposal")
         if not isinstance(binding, dict) or not isinstance(binding.get("path"), str):
             raise ValueError("Plan lacks an approved proposal binding")
-        if approved_proposal(root / binding["path"], repo_root) != binding:
+        if approved_proposal(root / binding["path"], repo_root, protocol_version) != binding:
             raise ValueError("Approved proposal changed; no dispatch permitted")
     return plan
 

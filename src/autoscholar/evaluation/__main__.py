@@ -359,7 +359,7 @@ def main() -> int:
     repairs.add_argument("--plan", type=Path)
     repairs.add_argument("--approval-id")
     repairs.add_argument("--sandbox-container")
-    repairs.add_argument("--protocol-version", type=int, choices=(3, 4), default=3)
+    repairs.add_argument("--protocol-version", type=int, choices=(3, 4, 5), default=3)
     repairs.add_argument("--proposal", type=Path)
     args = parser.parse_args()
     try:

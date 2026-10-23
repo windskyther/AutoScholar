@@ -155,6 +155,7 @@ class GuardedTransport(httpx.AsyncBaseTransport):
         repair_pilot = (ledger.data.get("protocol_version"), ledger.data.get("scope")) in {
             (3, "phase10_targeted_repairs_v3"),
             (4, "phase10_reviewer_retry_acceptance_v4"),
+            (5, "phase10_request_preflight_acceptance_v5"),
         } and ledger.limits == {"llm": 36, "tavily": 0}
         if max_output_tokens != MAX_OUTPUT_TOKENS and not (
             max_output_tokens == 8192 and (versioned_pilot or repair_pilot)

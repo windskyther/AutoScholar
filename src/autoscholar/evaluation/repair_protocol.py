@@ -36,8 +36,8 @@ JSON_RULE = (
 
 
 def repair_claim(protocol_version: int) -> str:
-    if type(protocol_version) is not int or protocol_version not in (3, 4):
-        raise ValueError("Only frozen repair protocols 3 and 4 are supported")
+    if type(protocol_version) is not int or protocol_version not in (3, 4, 5):
+        raise ValueError("Only frozen repair protocols 3, 4 and 5 are supported")
     return f"live-repair-v{protocol_version}-claim.json"
 
 
@@ -79,7 +79,7 @@ def repair_contract(protocol_version: int = 3) -> dict[str, Any]:
             "or a statistical component-benefit claim. Old results remain separate."
         ),
     }
-    if protocol_version == 4:
+    if protocol_version >= 4:
         contract.update(
             protocol_version=4,
             scope="phase10_reviewer_retry_acceptance_v4",
@@ -93,6 +93,21 @@ def repair_contract(protocol_version: int = 3) -> dict[str, Any]:
             runtime_schema_sha256={
                 "review": payload_digest(ReviewResult.model_json_schema()),
                 "experiment_retry": payload_digest(ExperimentRetry.model_json_schema()),
+            },
+        )
+    if protocol_version == 5:
+        contract.update(
+            protocol_version=5,
+            scope="phase10_request_preflight_acceptance_v5",
+            request_admission={
+                "max_request_bytes": 32768,
+                "snapshot_feedback_reserve_bytes": 1024,
+                "check_sdk_and_forwarded_utf8_bytes": True,
+                "before_budget_and_journal": True,
+                "late_proven_unsent_rejection_unwinds_only_own_reservation": True,
+                "unknown_remote_outcomes_remain_pending": True,
+                "oversized_snapshot_write_preserves_original_source": True,
+                "source_truncation": False,
             },
         )
     return contract

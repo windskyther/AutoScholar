@@ -281,7 +281,7 @@ def test_repair_gate_requires_the_intended_scenario_not_just_a_failed_status(
     assert summary["main_merge_authorized"] is False
 
 
-@pytest.mark.parametrize("version", [3, 4])
+@pytest.mark.parametrize("version", [3, 4, 5])
 async def test_complete_entrypoint_with_mock_wire_usage_and_scripted_training(
     wire_root: Path, monkeypatch: pytest.MonkeyPatch, version: int
 ) -> None:
@@ -292,7 +292,7 @@ async def test_complete_entrypoint_with_mock_wire_usage_and_scripted_training(
     root = tmp_path / "data/evaluation"
     root.mkdir(parents=True)
     prior_claim = root / "live-repair-v3-claim.json"
-    if version == 4:
+    if version >= 4:
         prior_claim.write_text('{"old_record":"must remain unchanged"}', encoding="utf-8")
     old_claim = prior_claim.read_bytes() if prior_claim.exists() else None
     scripted = RenamedFixtureProvider(data, data.scripts["normal"], project_source=PUBLIC_KNOWLEDGE)

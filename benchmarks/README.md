@@ -1263,6 +1263,26 @@ independent checkpoint verification passed using explicit mock model responses. 
 This does not regrade v4 or prove new live-model recovery; old claims/allowances cannot be reused.
 See the [free repair report](phase10-request-preflight-free-20261023.md).
 
+### Request-preflight acceptance v5 preparation
+
+Protocol 5 freezes the repaired request admission behavior under its own scope, proposal,
+plan, grant and `live-repair-v5-claim.json`. Versions 3/4 retain their original contracts and
+consumed claims. The proposal also protects raw historical SQLite/source/checkpoint hashes;
+path escapes, changed evidence, changed source/fixture and duplicate execution block dispatch.
+The request/output/call budgets and three-scenario grading remain unchanged.
+
+Preparation passed **248** related regressions, Ruff, mypy (244 files) and changed-file
+formatting. Three saved-review/scripted-model/real-Docker preflights passed: normal training
+once, fault recovery with experiment-only retry and two training runs, and No Replanning
+stopping after one injected fault/one training run. Successful experiment checkpoints were
+independently recomputed; negative-control task failure remains visible. No real vendor
+requests occurred. The earlier full business regression remains 967 passed / 3 skipped.
+
+An exact clean-source plan and separate owner approval are required for up to **36 new LLM,
+0 Tavily** requests (12 per task, corrections included). Old allowances cannot be reused and
+failed tasks cannot be automatically replayed. Overall Phase 10 and main merge remain
+unapproved. See the [v5 preparation report](phase10-request-preflight-v5-preparation-20261023.md).
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
