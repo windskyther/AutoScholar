@@ -12,6 +12,7 @@ import httpx
 from autoscholar.evaluation.datasets import decode_json, payload_digest
 from autoscholar.evaluation.models import MeasuredUsage
 from autoscholar.evaluation.runner import _write_json
+from autoscholar.llm.errors import LLMRequestRejected
 
 Provider = Literal["llm", "tavily"]
 LIMITS: dict[Provider, int] = {"llm": 10, "tavily": 2}
@@ -178,30 +179,83 @@ class GuardedTransport(httpx.AsyncBaseTransport):
         self.case_id: str | None = None
         self.lock = asyncio.Lock()
 
+    def validate_payload(self, payload: dict[str, Any], reserve_bytes: int = 0) -> dict[str, Any]:
+        """Pure admission, shared by SDK previews and dispatch. Never reserve or write."""
+        if type(reserve_bytes) is not int or reserve_bytes < 0:
+            raise ValueError("Request preview reserve must be a nonnegative integer")
+        try:
+            incoming_size = len(httpx.Request("POST", self.endpoint, json=payload).content)
+        except (ValueError, TypeError, UnicodeError) as exc:
+            raise LLMRequestRejected(
+                code="llm_request_invalid", message="Provider request cannot be serialized safely"
+            ) from exc
+        try:
+            no_secrets(payload, self.secrets)
+        except ValueError as exc:
+            raise LLMRequestRejected(
+                code="llm_request_credentials_rejected", message="Credential content rejected"
+            ) from exc
+        capped = dict(payload)
+        if self.provider == "llm":
+            capped["max_tokens"] = self.max_output_tokens
+        elif capped.get("search_depth") != "basic" or capped.get("max_results") != 3:
+            raise LLMRequestRejected(
+                code="llm_request_policy_rejected",
+                message="Only three-result basic Tavily searches are authorized",
+            )
+        outgoing_size = len(json.dumps(capped, ensure_ascii=False, allow_nan=False).encode())
+        size = max(incoming_size, outgoing_size)
+        if size + reserve_bytes > MAX_REQUEST_BYTES:
+            raise LLMRequestRejected(
+                message=(
+                    f"Provider request needs {size} bytes plus {reserve_bytes} reserved; "
+                    f"limit {MAX_REQUEST_BYTES}; not sent"
+                ),
+                request_bytes=size,
+                limit_bytes=MAX_REQUEST_BYTES,
+            )
+        return capped
+
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         async with self.lock:
             if request.method != "POST" or request.url != self.endpoint or self.case_id is None:
-                raise ValueError("Unexpected evaluation endpoint or request; no redirects")
+                raise LLMRequestRejected(
+                    code="llm_request_not_admitted",
+                    message="Unexpected evaluation endpoint or request; no redirects",
+                )
             raw = await request.aread()
             if len(raw) > MAX_REQUEST_BYTES:
-                raise ValueError("Provider request exceeds the public payload bound")
-            payload = decode_json(raw)
+                raise LLMRequestRejected(
+                    message="Provider request exceeds the public payload bound",
+                    request_bytes=len(raw),
+                    limit_bytes=MAX_REQUEST_BYTES,
+                )
+            try:
+                payload = decode_json(raw)
+            except ValueError as exc:
+                raise LLMRequestRejected(
+                    code="llm_request_invalid", message="Invalid public request JSON; not sent"
+                ) from exc
             if not isinstance(payload, dict):
-                raise ValueError("Expected bounded public request JSON")
-            no_secrets(payload, self.secrets)
-            if self.provider == "llm":
-                payload["max_tokens"] = self.max_output_tokens
-            elif payload.get("search_depth") != "basic" or payload.get("max_results") != 3:
-                raise ValueError("Only three-result basic Tavily searches are authorized")
+                raise LLMRequestRejected(
+                    code="llm_request_invalid", message="Expected bounded public request JSON"
+                )
+            payload = self.validate_payload(payload)
             raw = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()
-            if len(raw) > MAX_REQUEST_BYTES:
-                raise ValueError("Capped provider request exceeds size limit")
             # Save only public JSON, not URLs, auth/cookie headers or dotenv values.
             request_path = self.output / f"request-{self.provider}-{self.case_id}.json"
             if request_path.exists():
-                raise ValueError("No implicit request replay")
+                raise LLMRequestRejected(
+                    code="llm_request_replay_forbidden", message="No implicit request replay"
+                )
             _write_json(request_path, payload)
-            index = self.ledger.reserve(self.provider, self.case_id, payload)
+            try:
+                index = self.ledger.reserve(self.provider, self.case_id, payload)
+            except ValueError as exc:
+                raise LLMRequestRejected(
+                    code="llm_request_not_admitted",
+                    message="Physical request admission rejected; not sent",
+                ) from exc
             headers = dict(request.headers)
             headers.pop("content-length", None)
             forwarded = httpx.Request(

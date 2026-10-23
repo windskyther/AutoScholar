@@ -293,7 +293,11 @@ async def run_repairs(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
         async with httpx.AsyncClient(
             transport=transport, follow_redirects=False, trust_env=False, timeout=60
         ) as client:
-            native = OpenAICompatibleProvider(settings, http_client=client)
+            native = OpenAICompatibleProvider(
+                settings,
+                http_client=client,
+                request_validator=transport.validate_payload,
+            )
             for task in REPAIR_TASKS:
                 load_repair_plan(args.plan, repo_root, version)
                 scenario, _, variant_name = task.partition("-")

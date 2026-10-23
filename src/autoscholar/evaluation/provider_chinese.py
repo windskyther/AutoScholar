@@ -186,7 +186,11 @@ async def run_chinese(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
             async with httpx.AsyncClient(
                 transport=transport, follow_redirects=False, trust_env=False, timeout=60
             ) as client:
-                result = await OpenAICompatibleProvider(settings, http_client=client).generate(
+                result = await OpenAICompatibleProvider(
+                    settings,
+                    http_client=client,
+                    request_validator=transport.validate_payload,
+                ).generate(
                     [
                         ChatMessage(role="system", content=SYSTEM),
                         ChatMessage(role="user", content=CHINESE_CASE.prompt),

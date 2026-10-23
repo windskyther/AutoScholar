@@ -1249,6 +1249,20 @@ All 14 actual receipts are HTTP 200 with valid native JSON and known usage. No f
 or remaining-allowance reset occurred. The three-task measurement and Phase 10/main gates
 remain false. See the [v4 result and precise next gap](phase10-review-recovery-v4-20261023.md).
 
+2026-10-23 free request-admission repair: explicit provider preflight shares the guard's
+exact SDK/forwarded UTF-8 size policy before budget/journal registration. Proven unsent late
+rejections unwind only their own reservation; dispatched timeouts and unknown outcomes stay
+pending. Snapshot coding previews create/edit operations and returns bounded feedback without
+changing files when the next complete-source request would exceed the unchanged cap.
+Full regression: **967 passed / 3 skipped**, including **19** new targeted checks; Ruff,
+mypy (244 files) and changed-file formatting pass. Read-only replay of the original 33749-byte
+input was rejected before accounting. The recorded 10231-character helper was refused before
+writing; real isolated Docker static/pytest, one MNIST training run, ten artifact checks and
+independent checkpoint verification passed using explicit mock model responses. There were
+**zero new vendor requests**, and 463 protected historical files stayed unchanged.
+This does not regrade v4 or prove new live-model recovery; old claims/allowances cannot be reused.
+See the [free repair report](phase10-request-preflight-free-20261023.md).
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider

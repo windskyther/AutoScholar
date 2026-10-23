@@ -1,5 +1,22 @@
 from autoscholar.core.errors import AppError
+from autoscholar.core.rejections import LocalRequestRejected
 from autoscholar.llm.models import TokenUsage
+
+
+class LLMRequestRejected(AppError, LocalRequestRejected):
+    """Proven not sent. Never use this for a missing response or vendor-side failure."""
+
+    def __init__(
+        self,
+        *,
+        code: str = "llm_request_too_large",
+        message: str,
+        request_bytes: int | None = None,
+        limit_bytes: int | None = None,
+    ) -> None:
+        super().__init__(status_code=413, code=code, message=message)
+        self.request_bytes = request_bytes
+        self.limit_bytes = limit_bytes
 
 
 class LLMNotConfiguredError(AppError):

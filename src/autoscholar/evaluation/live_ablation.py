@@ -583,7 +583,11 @@ async def run_live_ablations(args: argparse.Namespace, *, repo_root: Path) -> tu
         async with httpx.AsyncClient(
             transport=transport, follow_redirects=False, trust_env=False, timeout=60
         ) as client:
-            native = OpenAICompatibleProvider(settings, http_client=client)
+            native = OpenAICompatibleProvider(
+                settings,
+                http_client=client,
+                request_validator=transport.validate_payload,
+            )
             for scenario in SCENARIOS:
                 script = fixture.scripts[scenario].model_copy(
                     update={

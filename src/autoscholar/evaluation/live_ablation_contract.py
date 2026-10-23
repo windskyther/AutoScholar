@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from autoscholar.core.budget import BudgetLimits
+from autoscholar.core.rejections import LocalRequestRejected
 from autoscholar.evaluation.datasets import decode_json
 from autoscholar.evaluation.provider_transport import ApprovalLedger, GuardedTransport, Provider
 from autoscholar.evaluation.workflow_ablation import WORKFLOW_VARIANTS
@@ -18,6 +19,7 @@ from autoscholar.llm.models import (
     ToolChoice,
     ToolDefinition,
 )
+from autoscholar.llm.preflight import preflight_request
 from autoscholar.research.models import SearchResponse, SearchResult, SourceType
 
 SCENARIOS = ("normal", "recover", "deception")
@@ -100,6 +102,22 @@ class LiveWorkflowProvider:
         if self.failed or self.calls >= PER_TASK_REQUESTS:
             raise ValueError("Live task stopped; no retry/reset of its request allowance")
 
+    async def preflight(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+        reserve_bytes: int = 0,
+    ) -> None:
+        await preflight_request(
+            self.provider,
+            messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            reserve_bytes=reserve_bytes,
+        )
+
     async def generate(
         self,
         messages: list[ConversationMessage],
@@ -108,6 +126,8 @@ class LiveWorkflowProvider:
         tool_choice: ToolChoice = "none",
     ) -> LLMResult:
         self.check_available()
+        await preflight_request(self.provider, messages, tools=tools, tool_choice=tool_choice)
+        previous_case_id = self.transport.case_id
         self.calls += 1
         self.transport.case_id = f"{self.task}--{self.calls}"
         names = [tool.name for tool in tools or []]
@@ -115,6 +135,7 @@ class LiveWorkflowProvider:
             names[0] if len(names) == 1 else "coding" if "submit_code_ready" in names else "other"
         )
         self.stage_calls[stage] = self.stage_calls.get(stage, 0) + 1
+        memory_added = False
         if stage in ("submit_task_plan", "submit_plan_revision"):
             for message in messages:
                 if isinstance(message, ChatMessage) and message.role == "user":
@@ -124,6 +145,7 @@ class LiveWorkflowProvider:
                         continue
                     if isinstance(payload, dict) and payload.get("memory_context_untrusted"):
                         self.memory_payloads += 1
+                        memory_added = True
                         break
         try:
             result = await self.provider.generate(messages, tools=tools, tool_choice=tool_choice)
@@ -131,6 +153,14 @@ class LiveWorkflowProvider:
                 self.failed = True
             self.models.add(result.model)
             return result
+        except LocalRequestRejected:
+            self.calls -= 1
+            self.stage_calls[stage] -= 1
+            if not self.stage_calls[stage]:
+                del self.stage_calls[stage]
+            self.memory_payloads -= int(memory_added)
+            self.transport.case_id = previous_case_id
+            raise
         except BaseException:
             self.failed = True
             raise

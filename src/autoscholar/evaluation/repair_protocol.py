@@ -135,13 +135,12 @@ class RepairWorkflowProvider(LiveProvider):
         if self.verify_source is not None:
             self.verify_source()
 
-    async def generate(
-        self,
+    @staticmethod
+    def _inputs(
         messages: list[ConversationMessage],
         *,
         tools: list[ToolDefinition] | None = None,
-        tool_choice: ToolChoice = "none",
-    ) -> LLMResult:
+    ) -> tuple[list[ConversationMessage], list[ToolDefinition] | None]:
         name = tools[0].name if tools and len(tools) == 1 else "coding"
         rule = JSON_RULE + (
             QUOTE_RULE if name in {"submit_evidence", "submit_research_report"} else ""
@@ -156,6 +155,30 @@ class RepairWorkflowProvider(LiveProvider):
             parameters = copy.deepcopy(tools[0].parameters)
             parameters["properties"]["queries"].update(minItems=3, maxItems=3)
             tools = [replace(tools[0], parameters=parameters)]
+        return messages, tools
+
+    async def preflight(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+        reserve_bytes: int = 0,
+    ) -> None:
+        messages, tools = self._inputs(messages, tools=tools)
+        await super().preflight(
+            messages, tools=tools, tool_choice=tool_choice, reserve_bytes=reserve_bytes
+        )
+
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        name = tools[0].name if tools and len(tools) == 1 else "coding"
+        messages, tools = self._inputs(messages, tools=tools)
         try:
             result = await super().generate(messages, tools=tools, tool_choice=tool_choice)
             if name == "submit_research_queries" and (

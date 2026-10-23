@@ -465,7 +465,11 @@ async def run_providers(args: argparse.Namespace, *, repo_root: Path) -> tuple[P
                 transport=search_transport, follow_redirects=False, trust_env=False, timeout=30
             ) as search_client,
         ):
-            provider = OpenAICompatibleProvider(settings, http_client=llm_client)
+            provider = OpenAICompatibleProvider(
+                settings,
+                http_client=llm_client,
+                request_validator=llm_transport.validate_payload,
+            )
             search = TavilySearchProvider(api_key=tavily_key, client=search_client, retry_delays=())
             selected_cases = (
                 CASES[1:3]

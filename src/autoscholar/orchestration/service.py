@@ -26,6 +26,7 @@ from autoscholar.core.budget import (
     current_budget,
     current_parent,
 )
+from autoscholar.core.rejections import LocalRequestRejected
 from autoscholar.experiment.analysis import analyze_experiment
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.models import ExperimentSpecification, RawExperimentMetrics
@@ -435,6 +436,10 @@ class AutonomousService:
                 outcome.update(await self._dispatch(run, step, child_id))
         except (BudgetExceeded, asyncio.CancelledError):
             outcome["error_code"] = "autonomous_budget_or_cancelled"
+            await self._fail_child(child_id, outcome["error_code"])
+            raise
+        except LocalRequestRejected as exc:
+            outcome["error_code"] = str(getattr(exc, "code", "llm_request_rejected"))
             await self._fail_child(child_id, outcome["error_code"])
             raise
         except Exception as exc:

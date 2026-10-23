@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from autoscholar.core.journal import external_operation
+from autoscholar.core.journal import external_operation, record_local_llm_rejection
+from autoscholar.core.rejections import LocalRequestRejected
 
 if TYPE_CHECKING:
     from autoscholar.llm.base import LLMProvider
@@ -88,6 +89,24 @@ class BudgetedLLM:
     def configured(self) -> bool:
         return self.provider.configured
 
+    async def preflight(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+        reserve_bytes: int = 0,
+    ) -> None:
+        from autoscholar.llm.preflight import preflight_request
+
+        await preflight_request(
+            self.provider,
+            messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            reserve_bytes=reserve_bytes,
+        )
+
     async def generate(
         self,
         messages: list[ConversationMessage],
@@ -102,6 +121,11 @@ class BudgetedLLM:
         check_available = getattr(self.provider, "check_available", None)
         if callable(check_available):
             check_available()
+        try:
+            await self.preflight(messages, tools=tools, tool_choice=tool_choice)
+        except LocalRequestRejected:
+            await record_local_llm_rejection()
+            raise
         consume("model_calls")
         protocol_error: LLMResponseError | None = None
         result: LLMResult | None = None
@@ -111,6 +135,12 @@ class BudgetedLLM:
                     messages, tools=tools, tool_choice=tool_choice
                 )
                 usage = result.usage
+            except LocalRequestRejected:
+                # A late local guard (e.g. policy changed after preview) also proves no send.
+                budget = current_budget.get()
+                if budget is not None:
+                    budget.used["model_calls"] = max(0, budget.used.get("model_calls", 0) - 1)
+                raise
             except LLMResponseError as exc:
                 protocol_error = exc
                 usage = exc.usage

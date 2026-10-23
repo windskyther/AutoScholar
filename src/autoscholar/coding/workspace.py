@@ -99,6 +99,27 @@ class WorkspaceManager:
         area: str = "source",
         overwrite: bool = False,
     ) -> WorkspaceFile:
+        path, encoded = self._prepare_text_write(
+            task_id,
+            relative_path,
+            content,
+            area=area,
+            overwrite=overwrite,
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_no_symlinks(self._task_root(task_id), path)
+        self._write_atomic(path, encoded)
+        return self._file_record(self._task_root(task_id), path)
+
+    def _prepare_text_write(
+        self,
+        task_id: str,
+        relative_path: str,
+        content: str,
+        *,
+        area: str = "source",
+        overwrite: bool = False,
+    ) -> tuple[Path, bytes]:
         if not isinstance(content, str):
             raise WorkspaceError("workspace_content_invalid", "File content must be text")
         encoded = content.encode("utf-8")
@@ -109,10 +130,48 @@ class WorkspaceManager:
         if path.exists() and not overwrite:
             raise WorkspaceError("workspace_file_exists", "File already exists")
         self._check_quota(task_id, path, len(encoded), area=area)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._ensure_no_symlinks(self._task_root(task_id), path)
-        self._write_atomic(path, encoded)
-        return self._file_record(self._task_root(task_id), path)
+        return path, encoded
+
+    def preview_text(
+        self,
+        task_id: str,
+        relative_path: str,
+        content: str,
+        *,
+        overwrite: bool = False,
+    ) -> tuple[dict[str, str], WorkspaceFile]:
+        """Validate the exact write without changing files, directories or source quotas."""
+        path, encoded = self._prepare_text_write(
+            task_id,
+            relative_path,
+            content,
+            overwrite=overwrite,
+        )
+        relative = path.relative_to(self._task_root(task_id) / "source").as_posix()
+        sources = self.source_snapshot(task_id)
+        # Match read_text's universal-newline decoding, including UTF-8 and CRLF writes.
+        sources[relative] = content.replace("\r\n", "\n").replace("\r", "\n")
+        record = WorkspaceFile(
+            path="source/" + relative,
+            size_bytes=len(encoded),
+            sha256=hashlib.sha256(encoded).hexdigest(),
+            updated_at=datetime.now(UTC),
+        )
+        return dict(sorted(sources.items())), record
+
+    def preview_edit(
+        self,
+        task_id: str,
+        relative_path: str,
+        old_text: str,
+        new_text: str,
+    ) -> tuple[dict[str, str], WorkspaceFile]:
+        return self.preview_text(
+            task_id,
+            relative_path,
+            self._edited_text(task_id, relative_path, old_text, new_text),
+            overwrite=True,
+        )
 
     def read_bytes(self, task_id: str, relative_path: str, *, area: str) -> bytes:
         if area == "source":
@@ -153,7 +212,21 @@ class WorkspaceManager:
     def edit_text(
         self, task_id: str, relative_path: str, old_text: str, new_text: str
     ) -> WorkspaceFile:
-        if not old_text:
+        return self.write_text(
+            task_id,
+            relative_path,
+            self._edited_text(task_id, relative_path, old_text, new_text),
+            overwrite=True,
+        )
+
+    def _edited_text(
+        self,
+        task_id: str,
+        relative_path: str,
+        old_text: str,
+        new_text: str,
+    ) -> str:
+        if not isinstance(old_text, str) or not isinstance(new_text, str) or not old_text:
             raise WorkspaceError("workspace_edit_invalid", "old_text must not be empty")
         current = self.read_text(task_id, relative_path)
         if current.count(old_text) != 1:
@@ -161,12 +234,7 @@ class WorkspaceManager:
                 "workspace_edit_conflict",
                 "old_text must match exactly once; read the file and retry",
             )
-        return self.write_text(
-            task_id,
-            relative_path,
-            current.replace(old_text, new_text, 1),
-            overwrite=True,
-        )
+        return current.replace(old_text, new_text, 1)
 
     def delete_file(self, task_id: str, relative_path: str) -> None:
         path = self._resolve_file(task_id, relative_path, must_exist=True)
@@ -187,9 +255,7 @@ class WorkspaceManager:
                 raise
             for line_number, line in enumerate(content.splitlines(), start=1):
                 if query in line:
-                    matches.append(
-                        {"path": item.path, "line": line_number, "text": line[:500]}
-                    )
+                    matches.append({"path": item.path, "line": line_number, "text": line[:500]})
                     if len(matches) >= limit:
                         return matches
         return matches
