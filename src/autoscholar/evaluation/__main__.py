@@ -359,13 +359,15 @@ def main() -> int:
     repairs.add_argument("--plan", type=Path)
     repairs.add_argument("--approval-id")
     repairs.add_argument("--sandbox-container")
+    repairs.add_argument("--protocol-version", type=int, choices=(3, 4), default=3)
+    repairs.add_argument("--proposal", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "repairs":
             from autoscholar.evaluation.repair_validation import prepare_repairs, run_repairs
 
             if not args.allow_paid:
-                directory = prepare_repairs(REPO_ROOT)
+                directory = prepare_repairs(REPO_ROOT, args.protocol_version, args.proposal)
                 print(f"Free repair plan prepared; external API calls: 0: {directory}")
                 return 0
             directory, accepted = asyncio.run(run_repairs(args, repo_root=REPO_ROOT))

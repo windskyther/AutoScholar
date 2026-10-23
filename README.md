@@ -1342,6 +1342,14 @@ Windows 深层临时路径的整包失败保留记录，使用全新短路径完
 新增付费调用 **0**；免费测试不替代新版本真实模型补验，Phase 10 与 main 门槛仍未通过。
 实现、测试过程和本地复验方式见 [免费修复报告](benchmarks/phase10-review-recovery-free-20261022.md)。
 
+三组真实模型补验新增独立 v4 入口：保留 v3 声明和账本，绑定经单独批准的提案、
+干净源码、公开夹具和旧记录摘要；仍最多新增 **36 次 LLM / 0 次 Tavily**，
+每组最多 12 次，不改变判分或重跑旧任务。执行方式与限制见
+[v4 验收说明](benchmarks/README.md#separately-approved-reviewerrecovery-acceptance-v4)。
+免费入口/SDK/请求上限与审查恢复相关回归 **123 passed**；旧完整业务回归仍为
+此前的 **932 passed / 3 skipped**，本次未修改 Agent 业务代码。
+此段仅记录新入口准备，不表示新的真实验收已通过，也不批准合并 main。
+
 ## 开发路线
 
 | 阶段 | 重点 |

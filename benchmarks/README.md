@@ -1207,6 +1207,37 @@ The initial deep-temp-path run had seven pack failures because its report path r
 261 characters; those records remain. The same pack passed 37/37 with a fresh short path,
 followed by the complete passing short-path regression. No grader change was made.
 
+### Separately approved Reviewer/recovery acceptance v4
+
+The v3 claim and consumed ledger are never renamed, removed or reused. Protocol 4 has
+its own fixed `live-repair-v4-claim.json`, scope, ledger metadata and run directory, with
+the SAME three tasks, 36 LLM / 0 Tavily ceiling, 12 calls per task, 120000-token stopping
+threshold (the final response can cross it), 8192 output cap and original grading.
+Corrections consume that allowance; no automatic task replay, model change or main merge.
+
+Offline preparation requires the exact owner-reviewed proposal under `data/evaluation`:
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation repairs --protocol-version 4 --proposal data/evaluation/acceptance-v4-proposal-<UUID>/plan.json
+```
+
+The executable plan binds the approved proposal's raw SHA-256, fixture, runtime schemas
+and old evidence/approval hashes. Source must be committed and clean. Relative to the
+proposal's source, only the four evaluation entry/transport files may change; Agent business
+code and graders may not. These bindings are checked again before dispatch. Preparation
+never reads dotenv, starts Docker, creates a claim/grant or sends a request.
+
+Only after separate owner approval, with the dedicated cached-image controller ready:
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation repairs --protocol-version 4 --allow-paid --plan data/evaluation/repair-plan-<UUID>/plan.json --approval-id phase10-review-acceptance-v4-20261023 --sandbox-container autoscholar-eval-live-review-v4-20261023-sandbox-manager-1
+```
+
+Reports stay in ignored `data/evaluation/live-repairs-v4-<UUID>/`. A different approval ID
+cannot bypass the fixed v4 claim. The three-scenario measurement, scenario acceptance,
+full Phase 10 and owner-only main approval remain separate. This entry does not create
+new full-ablation evidence or regrade any historical failure/unknown.
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider

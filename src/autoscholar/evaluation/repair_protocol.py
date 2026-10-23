@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from autoscholar.evaluation.datasets import payload_digest
 from autoscholar.evaluation.live_ablation_contract import LIMITS, LiveAblationLedger
 from autoscholar.evaluation.live_ablation_contract import LiveWorkflowProvider as LiveProvider
 from autoscholar.evaluation.live_ablation_v2 import OUTPUT_TOKENS, QUOTE_RULE, SUFFIX
@@ -19,6 +20,7 @@ from autoscholar.llm.models import (
     ToolChoice,
     ToolDefinition,
 )
+from autoscholar.orchestration.models import ExperimentRetry, ReviewResult
 
 REPAIR_TASKS = ("normal-baseline", "recover-baseline", "recover-no_replanning")
 REPAIR_REQUESTS = 36
@@ -33,8 +35,15 @@ JSON_RULE = (
 )
 
 
-def repair_contract() -> dict[str, Any]:
-    return {
+def repair_claim(protocol_version: int) -> str:
+    if type(protocol_version) is not int or protocol_version not in (3, 4):
+        raise ValueError("Only frozen repair protocols 3 and 4 are supported")
+    return f"live-repair-v{protocol_version}-claim.json"
+
+
+def repair_contract(protocol_version: int = 3) -> dict[str, Any]:
+    repair_claim(protocol_version)
+    contract = {
         "protocol_version": 3,
         "scope": REPAIR_SCOPE,
         "tasks": list(REPAIR_TASKS),
@@ -70,17 +79,35 @@ def repair_contract() -> dict[str, Any]:
             "or a statistical component-benefit claim. Old results remain separate."
         ),
     }
+    if protocol_version == 4:
+        contract.update(
+            protocol_version=4,
+            scope="phase10_reviewer_retry_acceptance_v4",
+            previous_grants_reusable=False,
+            review_verification=(
+                "Persisted positive facts; at most one correction; no automatic PASS"
+            ),
+            recovery_verification=(
+                "Server-retained immutable DAG; ExperimentRetry only for eligible collection faults"
+            ),
+            runtime_schema_sha256={
+                "review": payload_digest(ReviewResult.model_json_schema()),
+                "experiment_retry": payload_digest(ExperimentRetry.model_json_schema()),
+            },
+        )
+    return contract
 
 
 class RepairLedger(LiveAblationLedger):
-    def __init__(self, path: Path, *, run_id: str) -> None:
+    def __init__(self, path: Path, *, run_id: str, protocol_version: int = 3) -> None:
+        contract = repair_contract(protocol_version)
         self.path = path
         self.limits = {"llm": REPAIR_REQUESTS, "tavily": 0}
         self.blocked_case_ids = ()
         self.data = {
             "schema_version": 1,
-            "protocol_version": 3,
-            "scope": REPAIR_SCOPE,
+            "protocol_version": protocol_version,
+            "scope": contract["scope"],
             "run_id": run_id,
             "limits": self.limits,
             "tasks": list(REPAIR_TASKS),

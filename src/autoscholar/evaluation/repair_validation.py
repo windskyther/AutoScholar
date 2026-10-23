@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -19,10 +20,10 @@ from autoscholar.evaluation.provider_prior import read_public
 from autoscholar.evaluation.provider_transport import GuardedTransport, approval_path
 from autoscholar.evaluation.provider_validation import load_explicit_settings, no_owned_children
 from autoscholar.evaluation.repair_protocol import (
-    REPAIR_CLAIM,
     REPAIR_TASKS,
     RepairLedger,
     RepairWorkflowProvider,
+    repair_claim,
     repair_contract,
 )
 from autoscholar.evaluation.runner import _git_state, _write_json
@@ -30,9 +31,88 @@ from autoscholar.evaluation.workflow_ablation import WorkflowVariant
 from autoscholar.evaluation.workflow_fixture import WorkflowFixture
 from autoscholar.llm.openai_compatible import OpenAICompatibleProvider
 
+_RUNNER_PATHS = {
+    "src/autoscholar/evaluation/repair_validation.py",
+    "src/autoscholar/evaluation/repair_protocol.py",
+    "src/autoscholar/evaluation/__main__.py",
+    "src/autoscholar/evaluation/provider_transport.py",
+}
 
-def prepare_repairs(repo_root: Path) -> Path:
+
+def runner_only_changes(repo_root: Path, revision: str) -> bool:
+    """Approval permits a new runner, not an unreviewed change to the Agent under test."""
+    if len(revision) != 40 or any(char not in "0123456789abcdef" for char in revision):
+        return False
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", revision, "HEAD"],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    if ancestor.returncode != 0:
+        return False
+    changed = subprocess.run(
+        ["git", "diff", "--name-only", revision, "HEAD", "--", "src"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    ).stdout.splitlines()
+    return set(changed) <= _RUNNER_PATHS
+
+
+def approved_proposal(path: Path, repo_root: Path) -> dict[str, Any]:
+    root = (repo_root / "data/evaluation").resolve()
+    proposal, digest = read_public(path.resolve(), root)
+    expected = repair_contract(4)
+    expected["scope"] += "_proposal"
+    if (
+        not isinstance(proposal, dict)
+        or proposal.get("schema_version") != 1
+        or proposal.get("contract") != expected
+        or proposal.get("paid_execution_approved") is not False
+        or proposal.get("paid_execution_available") is not False
+        or proposal.get("external_api_calls") != 0
+        or proposal.get("source_ready") is not True
+        or not isinstance(proposal.get("git_revision"), str)
+        or not runner_only_changes(repo_root, proposal["git_revision"])
+    ):
+        raise ValueError(
+            "Approved proposal scope/runtime changed; separate scope approval required"
+        )
+    protected = proposal.get("protected_previous_records_sha256")
+    if not isinstance(protected, dict) or not protected:
+        raise ValueError("Approved proposal must protect the old grant and claim")
+    for name, expected_digest in protected.items():
+        if not isinstance(name, str) or not isinstance(expected_digest, str):
+            raise ValueError("Invalid protected evidence binding")
+        _, actual_digest = read_public(root / name, root)
+        if actual_digest != expected_digest:
+            raise ValueError("Prior evidence/approval changed; no dispatch permitted")
+    _, current_fixture = load_fixture(
+        repo_root / "benchmarks/ablations/workflow_fixture_v2.json", WorkflowFixture
+    )
+    if proposal.get("fixture_sha256") != current_fixture:
+        raise ValueError("Approved fixture changed")
+    return {
+        "path": path.resolve().relative_to(root).as_posix(),
+        "sha256": digest,
+        "git_revision": proposal["git_revision"],
+    }
+
+
+def prepare_repairs(
+    repo_root: Path, protocol_version: int = 3, proposal: Path | None = None
+) -> Path:
     """No dotenv, Docker, provider initialization, claim creation or network request."""
+    contract = repair_contract(protocol_version)
+    binding = None
+    if protocol_version == 4:
+        if proposal is None:
+            raise ValueError("Protocol 4 requires the separately approved proposal")
+        binding = approved_proposal(proposal, repo_root)
     revision, dirty = _git_state(repo_root)
     _, digest = load_fixture(
         repo_root / "benchmarks/ablations/workflow_fixture_v2.json", WorkflowFixture
@@ -40,16 +120,18 @@ def prepare_repairs(repo_root: Path) -> Path:
     directory = repo_root / "data/evaluation" / ("repair-plan-" + uuid4().hex)
     directory.mkdir(parents=True, exist_ok=False)
     plan: dict[str, Any] = {
-        "contract": repair_contract(),
+        "contract": contract,
         "git_revision": revision,
         "source_ready": bool(revision and dirty is False),
         "fixture_sha256": digest,
         "external_api_calls": 0,
         "paid_execution_approved": False,
     }
+    if binding is not None:
+        plan["approved_proposal"] = binding
     _write_json(directory / "plan.json", plan)
     text = (
-        "# Phase 10 targeted repair verification v3\n\n"
+        f"# Phase 10 targeted repair verification v{protocol_version}\n\n"
         "Preparation only: zero external calls. Separate owner approval is required to run.\n\n"
         "| Task | Required observation |\n|---|---|\n"
         + "\n".join(f"| {task} | {plan['contract']['acceptance'][task]} |" for task in REPAIR_TASKS)
@@ -66,7 +148,7 @@ def prepare_repairs(repo_root: Path) -> Path:
     return directory
 
 
-def load_repair_plan(path: Path, repo_root: Path) -> dict[str, Any]:
+def load_repair_plan(path: Path, repo_root: Path, protocol_version: int = 3) -> dict[str, Any]:
     root = (repo_root / "data/evaluation").resolve()
     plan, _ = read_public(path.resolve(), root)
     revision, dirty = _git_state(repo_root)
@@ -75,7 +157,7 @@ def load_repair_plan(path: Path, repo_root: Path) -> dict[str, Any]:
     )
     if (
         not isinstance(plan, dict)
-        or plan.get("contract") != repair_contract()
+        or plan.get("contract") != repair_contract(protocol_version)
         or plan.get("source_ready") is not True
         or not revision
         or dirty is not False
@@ -85,6 +167,12 @@ def load_repair_plan(path: Path, repo_root: Path) -> dict[str, Any]:
         or plan.get("paid_execution_approved") is not False
     ):
         raise ValueError("Repair plan/source changed; prepare and review a new clean-source plan")
+    if protocol_version == 4:
+        binding = plan.get("approved_proposal")
+        if not isinstance(binding, dict) or not isinstance(binding.get("path"), str):
+            raise ValueError("Plan lacks an approved proposal binding")
+        if approved_proposal(root / binding["path"], repo_root) != binding:
+            raise ValueError("Approved proposal changed; no dispatch permitted")
     return plan
 
 
@@ -108,7 +196,12 @@ def physical_accounting(record: dict[str, Any], provider: RepairWorkflowProvider
 
 
 def repair_summary(
-    records: list[dict[str, Any]], ledger: RepairLedger, *, clean: bool, unchanged: bool
+    records: list[dict[str, Any]],
+    ledger: RepairLedger,
+    *,
+    clean: bool,
+    unchanged: bool,
+    protocol_version: int = 3,
 ) -> dict[str, Any]:
     summary = pilot_summary(records, ledger, clean=clean, unchanged=unchanged)
     contracts = summary["scenario_contracts"]
@@ -137,11 +230,11 @@ def repair_summary(
         and unchanged
     )
     summary.update(
-        protocol_version=3,
+        protocol_version=protocol_version,
         planned_tasks=len(REPAIR_TASKS),
         repair_measurement_complete=bool(complete),
         targeted_repairs_acceptance=bool(complete and all(contracts.values())),
-        scope=repair_contract()["limitations"],
+        scope=repair_contract(protocol_version)["limitations"],
     )
     return summary
 
@@ -151,10 +244,11 @@ async def run_repairs(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
         raise ValueError(
             "Paid repairs require separate approval, exact prepared plan and controller"
         )
-    plan = load_repair_plan(args.plan, repo_root)
+    version = getattr(args, "protocol_version", 3)
+    plan = load_repair_plan(args.plan, repo_root, version)
     root = (repo_root / "data/evaluation").resolve()
     grant = approval_path(root, args.approval_id)
-    claim = root / REPAIR_CLAIM
+    claim = root / repair_claim(version)
     if grant.exists() or claim.exists():
         raise ValueError("Repair verification already claimed; do not reset/replay with a new ID")
     settings, _ = load_explicit_settings(repo_root / ".env", require_tavily=False)
@@ -169,10 +263,10 @@ async def run_repairs(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
     resources = sandbox_resources(await sandbox.health(), dataset=True)
     if not await no_owned_children(sandbox):
         raise ValueError("Dedicated controller already owns children")
-    directory = root / ("live-repairs-v3-" + uuid4().hex)
+    directory = root / (f"live-repairs-v{version}-" + uuid4().hex)
     directory.mkdir(exist_ok=False)
     manifest = {
-        "protocol_version": 3,
+        "protocol_version": version,
         "git_revision": plan["git_revision"],
         "prepared_plan": plan,
         "plan_sha256": payload_digest(plan),
@@ -184,7 +278,7 @@ async def run_repairs(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
     _write_json(directory / "manifest.json", manifest)
     with claim.open("x", encoding="utf-8") as stream:
         json.dump({"run_id": directory.name, "plan_sha256": payload_digest(plan)}, stream)
-    ledger = RepairLedger(grant, run_id=directory.name)
+    ledger = RepairLedger(grant, run_id=directory.name, protocol_version=version)
     transport = GuardedTransport(
         provider="llm",
         endpoint=str(endpoint),
@@ -201,7 +295,7 @@ async def run_repairs(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
         ) as client:
             native = OpenAICompatibleProvider(settings, http_client=client)
             for task in REPAIR_TASKS:
-                load_repair_plan(args.plan, repo_root)
+                load_repair_plan(args.plan, repo_root, version)
                 scenario, _, variant_name = task.partition("-")
                 variant: WorkflowVariant = (
                     "no_replanning" if variant_name == "no_replanning" else "baseline"
@@ -212,7 +306,7 @@ async def run_repairs(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
                 target = directory / task
                 target.mkdir(exist_ok=False)
                 provider = RepairWorkflowProvider(native, transport, task)
-                provider.verify_source = lambda: load_repair_plan(args.plan, repo_root)
+                provider.verify_source = lambda: load_repair_plan(args.plan, repo_root, version)
                 record: dict[str, Any] = {
                     "task": task,
                     "status": "started",
@@ -229,7 +323,9 @@ async def run_repairs(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
                 }
                 records.append(record)
                 _write_json(directory / "cases.json", records)
-                print(f"Targeted repair v3 {task}; LLM {len(ledger.attempts)}/36", flush=True)
+                print(
+                    f"Targeted repair v{version} {task}; LLM {len(ledger.attempts)}/36", flush=True
+                )
                 try:
                     async with asyncio.timeout(660):
                         record.update(
@@ -241,7 +337,7 @@ async def run_repairs(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
                                 provider=provider,
                                 sandbox=sandbox,
                                 resources=resources,
-                                protocol_version=3,
+                                protocol_version=version,
                             )
                         )
                 finally:
@@ -271,10 +367,11 @@ async def run_repairs(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
             ledger,
             clean=clean,
             unchanged=_git_state(repo_root) == (plan["git_revision"], False),
+            protocol_version=version,
         )
         _write_json(directory / "acceptance.json", summary)
         report = (
-            "# Phase 10 targeted repair verification v3\n\n"
+            f"# Phase 10 targeted repair verification v{version}\n\n"
             f"Targeted repair acceptance: {summary['targeted_repairs_acceptance']}.\n\n"
             f"Physical LLM requests: {len(ledger.attempts)}/36; Tavily: 0.\n\n"
             + "\n".join(

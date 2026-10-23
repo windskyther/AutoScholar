@@ -281,15 +281,20 @@ def test_repair_gate_requires_the_intended_scenario_not_just_a_failed_status(
     assert summary["main_merge_authorized"] is False
 
 
+@pytest.mark.parametrize("version", [3, 4])
 async def test_complete_entrypoint_with_mock_wire_usage_and_scripted_training(
-    wire_root: Path, monkeypatch: pytest.MonkeyPatch
+    wire_root: Path, monkeypatch: pytest.MonkeyPatch, version: int
 ) -> None:
     """The paid flag is tested only with a mock credential loader and mock HTTP transport."""
     tmp_path = wire_root
     data = fixture()
-    prepared = {"contract": repair_contract(), "git_revision": "a" * 40}
+    prepared = {"contract": repair_contract(version), "git_revision": "a" * 40}
     root = tmp_path / "data/evaluation"
     root.mkdir(parents=True)
+    prior_claim = root / "live-repair-v3-claim.json"
+    if version == 4:
+        prior_claim.write_text('{"old_record":"must remain unchanged"}', encoding="utf-8")
+    old_claim = prior_claim.read_bytes() if prior_claim.exists() else None
     scripted = RenamedFixtureProvider(data, data.scripts["normal"], project_source=PUBLIC_KNOWLEDGE)
     physical_requests = 0
 
@@ -365,6 +370,7 @@ async def test_complete_entrypoint_with_mock_wire_usage_and_scripted_training(
         plan=tmp_path / "explicit-fake-plan.json",
         approval_id="fake-wire-only",
         sandbox_container="unused-fake-controller",
+        protocol_version=version,
     )
     directory, accepted = await repair.run_repairs(args, repo_root=tmp_path)
     assert accepted
@@ -372,6 +378,7 @@ async def test_complete_entrypoint_with_mock_wire_usage_and_scripted_training(
     assert result["physical_requests"] == {"llm": physical_requests, "tavily": 0}
     assert result["vendor_tokens"] == physical_requests * 3
     assert result["targeted_repairs_acceptance"]
+    assert result["protocol_version"] == version
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["explicit_paid_execution"] and manifest["prepared_plan"] == prepared
     assert result["phase10_overall_acceptance"] is False
@@ -379,4 +386,6 @@ async def test_complete_entrypoint_with_mock_wire_usage_and_scripted_training(
     args.approval_id = "another-fake-id"
     with pytest.raises(ValueError, match="already claimed"):
         await repair.run_repairs(args, repo_root=tmp_path)
-    assert len(list(root.glob("live-repairs-v3-*"))) == 1
+    assert len(list(root.glob(f"live-repairs-v{version}-*"))) == 1
+    if old_claim is not None:
+        assert prior_claim.read_bytes() == old_claim
