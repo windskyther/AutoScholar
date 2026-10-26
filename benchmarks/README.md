@@ -1312,7 +1312,11 @@ closure now have passing evidence, including separately approved tool and Chines
 confirmations. Original frozen v1 failures remain visible and are not retroactively passed.
 Real normal baseline has passed in the closed-corpus pilot, but fault recovery, full paired
 real-LLM ablations and overall acceptance remain incomplete; any additional
-paid request or main merge needs separate owner approval. Broader corpora,
+paid request needs separate owner approval. Under the owner's 2026-10-26 policy, independently
+verified modules may be integrated into main before the entire Phase is accepted. Runtime
+repairs from `edf2f1d` were isolated and tested on main (470 passed, 3 skipped); the evaluation
+tooling and unfinished acceptance work remain on dev. See [the partial integration record](../docs/releases/2026-10-26-runtime.md).
+Broader corpora,
 PDF ingestion/generation quality and independent paid-provider ability remain outside this
 result. The generic injected RAG adapter accepts an explicitly provisioned
 retriever; it does not create one from environment settings and does not infer its API cost.
