@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from typing import Any, cast
 
 import httpx
@@ -13,7 +14,12 @@ from openai import (
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
 from autoscholar.core.config import Settings
-from autoscholar.llm.errors import LLMResponseError, LLMUnavailableError, LLMUpstreamError
+from autoscholar.core.rejections import LocalRequestRejected
+from autoscholar.llm.errors import (
+    LLMResponseError,
+    LLMUnavailableError,
+    LLMUpstreamError,
+)
 from autoscholar.llm.models import (
     ChatMessage,
     ConversationMessage,
@@ -24,16 +30,24 @@ from autoscholar.llm.models import (
     ToolDefinition,
     ToolResultMessage,
 )
+from autoscholar.llm.tool_arguments import ToolArgumentsError, decode_tool_arguments
 
 
 class OpenAICompatibleProvider:
     """OpenAI-compatible provider backed by the async official SDK."""
 
-    def __init__(self, settings: Settings, *, http_client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+        request_validator: Callable[[dict[str, Any], int], object] | None = None,
+    ) -> None:
         if not settings.llm_api_key or not settings.llm_model:
             raise ValueError("LLM API key and model are required")
 
         self._model = settings.llm_model
+        self._request_validator = request_validator
         self._client = AsyncOpenAI(
             api_key=settings.llm_api_key.get_secret_value(),
             base_url=settings.llm_base_url,
@@ -46,13 +60,13 @@ class OpenAICompatibleProvider:
     def configured(self) -> bool:
         return True
 
-    async def generate(
+    def _request_payload(
         self,
         messages: list[ConversationMessage],
         *,
         tools: list[ToolDefinition] | None = None,
         tool_choice: ToolChoice = "none",
-    ) -> LLMResult:
+    ) -> dict[str, Any]:
         request_messages = [self._serialize_message(message) for message in messages]
         request_tools = [self._serialize_tool(tool) for tool in tools] if tools else None
         request_tool_choice: Any = tool_choice
@@ -65,6 +79,29 @@ class OpenAICompatibleProvider:
                 tool_choice=request_tool_choice,
                 parallel_tool_calls=False,
             )
+        return request
+
+    async def preflight(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+        reserve_bytes: int = 0,
+    ) -> None:
+        request = self._request_payload(messages, tools=tools, tool_choice=tool_choice)
+        if self._request_validator is not None:
+            self._request_validator(request, reserve_bytes)
+
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        await self.preflight(messages, tools=tools, tool_choice=tool_choice)
+        request = self._request_payload(messages, tools=tools, tool_choice=tool_choice)
         try:
             response = await self._client.chat.completions.create(**request)
         except AuthenticationError as exc:
@@ -83,6 +120,10 @@ class OpenAICompatibleProvider:
                 message="The language model provider timed out",
             ) from exc
         except APIConnectionError as exc:
+            # The SDK wraps transport admission errors as connection errors. Only this
+            # explicit pre-dispatch proof may be unwrapped; ordinary network errors stay unknown.
+            if isinstance(exc.__cause__, LocalRequestRejected):
+                raise exc.__cause__ from None
             raise LLMUnavailableError(
                 code="llm_unavailable",
                 message="The language model provider is unavailable",
@@ -98,6 +139,7 @@ class OpenAICompatibleProvider:
                 total_tokens=response.usage.total_tokens,
             )
         message = response.choices[0].message if response.choices else None
+        finish_reason = response.choices[0].finish_reason if response.choices else None
         content = message.content if message is not None else None
         raw_message: Any = message
         reasoning_content = (
@@ -110,19 +152,17 @@ class OpenAICompatibleProvider:
             for typed_call in message.tool_calls:
                 raw_call: Any = typed_call
                 try:
-                    arguments = json.loads(raw_call.function.arguments)
-                except (json.JSONDecodeError, TypeError) as exc:
+                    arguments = decode_tool_arguments(raw_call.function.arguments)
+                except ToolArgumentsError as exc:
                     raise LLMResponseError(
                         code="llm_invalid_tool_call",
                         message="The language model returned invalid tool arguments",
                         usage=usage,
+                        retryable=finish_reason != "length",
+                        model=response.model or self._model,
+                        finish_reason=finish_reason,
+                        validation_reason=exc.reason,
                     ) from exc
-                if not isinstance(arguments, dict):
-                    raise LLMResponseError(
-                        code="llm_invalid_tool_call",
-                        message="The language model returned invalid tool arguments",
-                        usage=usage,
-                    )
                 tool_calls.append(
                     ToolCall(
                         id=raw_call.id,
@@ -136,6 +176,9 @@ class OpenAICompatibleProvider:
                 code="llm_empty_response",
                 message="The language model provider returned no text or tool calls",
                 usage=usage,
+                retryable=finish_reason != "length",
+                model=response.model or self._model,
+                finish_reason=finish_reason,
             )
 
         return LLMResult(

@@ -13,7 +13,7 @@ from autoscholar.coding.sandbox import (
     SandboxRunResult,
 )
 from autoscholar.coding.tools import SandboxToolset, WorkspaceToolset
-from autoscholar.coding.workspace import WorkspaceManager
+from autoscholar.coding.workspace import WorkspaceError, WorkspaceManager
 from autoscholar.core.budget import consume, current_budget
 from autoscholar.llm import (
     AssistantToolCallMessage,
@@ -24,6 +24,8 @@ from autoscholar.llm import (
     ToolDefinition,
     ToolResultMessage,
 )
+from autoscholar.llm.errors import LLMRequestRejected
+from autoscholar.llm.preflight import preflight_request
 from autoscholar.tool_platform.filesystem import mcp_file_tools
 from autoscholar.tool_platform.gateway import ToolGateway
 from autoscholar.tool_platform.git_tools import git_tools
@@ -227,15 +229,13 @@ class CodingAgent:
         graph.add_edge("finalize", END)
         return graph.compile()
 
-    async def _author(self, state: CodingState) -> dict[str, Any]:
-        if state["snapshot_mode"] and state["tool_calls"] >= 8:
-            raise CodingRunError(
-                "coding_tool_budget_exceeded", "Seeded source editing did not converge in 8 calls"
-            )
-        if state["tool_calls"] >= self._limits.max_file_tool_calls:
-            raise CodingRunError(
-                "coding_tool_budget_exceeded", "The coding file-operation budget was exhausted"
-            )
+    def _request_messages(
+        self,
+        state: CodingState,
+        *,
+        sources: dict[str, str] | None = None,
+        operations: list[dict[str, str]] | None = None,
+    ) -> list[ConversationMessage]:
         diagnostic = state["diagnostic"]
         repair_instruction = ""
         if diagnostic is not None:
@@ -281,8 +281,12 @@ class CodingAgent:
                     content=json.dumps(
                         {
                             "objective": state["objective"],
-                            "source_files": self._workspaces.source_snapshot(state["task_id"]),
-                            "recent_operations": [
+                            "source_files": sources
+                            if sources is not None
+                            else self._workspaces.source_snapshot(state["task_id"]),
+                            "recent_operations": operations
+                            if operations is not None
+                            else [
                                 {"tool": t.tool_name, "status": t.status, "output": t.output[:1000]}
                                 for t in state["traces"][-3:]
                             ],
@@ -300,8 +304,19 @@ class CodingAgent:
                     ),
                 )
             ]
+        return [prompt, *messages]
+
+    async def _author(self, state: CodingState) -> dict[str, Any]:
+        if state["snapshot_mode"] and state["tool_calls"] >= 8:
+            raise CodingRunError(
+                "coding_tool_budget_exceeded", "Seeded source editing did not converge in 8 calls"
+            )
+        if state["tool_calls"] >= self._limits.max_file_tool_calls:
+            raise CodingRunError(
+                "coding_tool_budget_exceeded", "The coding file-operation budget was exhausted"
+            )
         result = await self._provider.generate(
-            [prompt, *messages],
+            self._request_messages(state),
             tools=self._tool_definitions[state["task_id"]],
             tool_choice="auto",
         )
@@ -347,6 +362,41 @@ class CodingAgent:
             ],
         }
 
+    async def _preview_write(self, state: CodingState, call: ToolCall) -> None:
+        args = call.arguments
+        if call.name == "create_file":
+            sources, record = self._workspaces.preview_text(
+                state["task_id"],
+                args["path"],
+                args["content"],
+            )
+        else:
+            sources, record = self._workspaces.preview_edit(
+                state["task_id"],
+                args["path"],
+                args["old_text"],
+                args["new_text"],
+            )
+        operations = [
+            {"tool": t.tool_name, "status": t.status, "output": t.output[:1000]}
+            for t in state["traces"][-2:]
+        ]
+        operations.append(
+            {
+                "tool": call.name,
+                "status": "succeeded",
+                "output": json.dumps(WorkspaceToolset._record(record), ensure_ascii=False)[:1000],
+            }
+        )
+        # Leave room for bounded failure feedback/diagnostics. No source is omitted.
+        await preflight_request(
+            self._provider,
+            self._request_messages(state, sources=sources, operations=operations),
+            tools=self._tool_definitions[state["task_id"]],
+            tool_choice="auto",
+            reserve_bytes=1024,
+        )
+
     async def _execute_tool(self, state: CodingState) -> dict[str, Any]:
         calls = state["pending_tool_calls"]
         if not calls:
@@ -370,11 +420,29 @@ class CodingAgent:
             error_code = "unknown_tool"
             duration_ms = 0.0
         else:
-            result = await tool.execute(call.arguments)
-            succeeded = result.succeeded
-            output = result.output
-            error_code = result.error_code
-            duration_ms = result.duration_ms
+            try:
+                if state["snapshot_mode"] and call.name in {"create_file", "edit_file"}:
+                    await self._preview_write(state, call)
+                result = await tool.execute(call.arguments)
+                succeeded = result.succeeded
+                output = result.output
+                error_code = result.error_code
+                duration_ms = result.duration_ms
+            except (LLMRequestRejected, WorkspaceError) as exc:
+                succeeded, duration_ms = False, 0.0
+                error_code = exc.code
+                output = exc.message
+                if isinstance(exc, LLMRequestRejected):
+                    error_code = (
+                        "coding_snapshot_too_large"
+                        if exc.code == "llm_request_too_large"
+                        else exc.code
+                    )
+                    output += (
+                        "; file unchanged. Make a smaller required change or submit_code_ready "
+                        "when the existing templates satisfy the requirements. "
+                        "No source was truncated."
+                    )
         trace = await self._record(
             state,
             call_id=call.id,

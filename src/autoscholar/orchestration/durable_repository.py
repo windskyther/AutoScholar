@@ -400,6 +400,17 @@ class DurableRepository:
             pending = dict(row.pending_calls)
             if kind == "budget":
                 pass
+            elif kind == "llm_local_rejected":
+                if starting:
+                    raise LeaseLost("Local rejection cannot start an external operation")
+                if call_id:
+                    if pending.pop(call_id, None) != "llm":
+                        raise LeaseLost("Local rejection journal mismatch")
+                    # Undo only this proven-unsent reservation. All token totals stay intact.
+                    row.usage = {
+                        **row.usage,
+                        "model_calls": max(0, row.usage.get("model_calls", 0) - 1),
+                    }
             elif starting:
                 if pending:
                     raise conflict("operation_uncertain", "Previous external result is uncertain")
@@ -417,9 +428,14 @@ class DurableRepository:
                 task_id,
                 "budget_saved"
                 if kind == "budget"
-                else ("call_started" if starting else "call_finished"),
+                else (
+                    "local_request_rejected"
+                    if kind == "llm_local_rejected"
+                    else ("call_started" if starting else "call_finished")
+                ),
                 call_id=call_id,
                 kind_name=kind,
+                **({"dispatched": False} if kind == "llm_local_rejected" else {}),
             )
             await session.commit()
 

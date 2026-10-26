@@ -188,7 +188,20 @@ async def test_provider_serializes_tool_results() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("arguments", ["{invalid", "[]"])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        "{invalid",
+        "[]",
+        "{} trailing",
+        "{}{}",
+        '{"status":"PASS","status":"REPLAN"}',
+        '{"nested":{"x":1,"x":2}}',
+        '{"x":NaN}',
+        '{"x":Infinity}',
+        '{"x":1e999}',
+    ],
+)
 @pytest.mark.parametrize("has_usage", [True, False])
 async def test_invalid_response_is_metered_or_stops_without_usage(
     arguments: str, has_usage: bool

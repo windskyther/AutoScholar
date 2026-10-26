@@ -50,7 +50,6 @@ def script(*, replan: bool = False) -> list[LLMResult]:
                 call(
                     "submit_plan_revision",
                     {
-                        "plan": plan().model_dump(),
                         "rerun_steps": ["train"],
                         "reason": "Retry invalid artifact; preserve validated coding output",
                     },
@@ -287,6 +286,10 @@ async def test_autonomous_and_child_routes_require_token(tmp_path: Path) -> None
 
 async def test_successful_attempt_artifacts_survive_later_replan(tmp_path: Path) -> None:
     responses = script(replan=True)
+    responses[3] = call(
+        "submit_plan_revision",
+        {"plan": plan().model_dump(), "rerun_steps": ["train"], "reason": "Repeat measurement"},
+    )
     responses[2] = call(
         "submit_review",
         {
@@ -333,7 +336,14 @@ class SlowSandbox(FakeExperimentSandbox):
 
 async def test_wall_timeout_finalizes_child_step_and_experiment(tmp_path: Path) -> None:
     provider = ScriptedProvider(script())
-    service, engine = await workflow(tmp_path, provider, SlowSandbox())
+    # Cancellation can invalidate a SQLite connection. A replacement connection must
+    # see the same tables, as with the persistent database used by real workflows.
+    service, engine = await workflow(
+        tmp_path,
+        provider,
+        SlowSandbox(),
+        database_url=f"sqlite+aiosqlite:///{(tmp_path / 'timeout.sqlite').as_posix()}",
+    )
     try:
         result = await service.run("Compare models", budget=BudgetLimits(wall_seconds=2))
         assert result.task.status == "budget_exceeded"
@@ -378,6 +388,9 @@ async def test_code_replan_reruns_downstream_and_preserves_source_snapshot(tmp_p
                         "code": "code_recheck",
                         "step_id": "code",
                         "message": "Revalidate sources",
+                        "requirement_id": "coding.source_contract",
+                        "source_path": "train.py",
+                        "source_quote": "class MLP(nn.Module):",
                     }
                 ],
             },
@@ -428,6 +441,7 @@ async def test_replanner_cannot_drop_unresolved_original_work(tmp_path: Path) ->
             "reason": "Attempt to hide the unresolved failed step",
         },
     )
+    responses[4] = responses[3]
     provider = ScriptedProvider(responses)
     service, engine = await workflow(tmp_path, provider, InvalidOnceSandbox())
     try:
@@ -435,7 +449,7 @@ async def test_replanner_cannot_drop_unresolved_original_work(tmp_path: Path) ->
         assert result.task.status == "failed"
         assert result.task.error_code == "autonomous_protocol_invalid"
         assert len(await service.workflows.history(result.task.id, "plans")) == 1
-        assert len(provider.calls) == 4
+        assert len(provider.calls) == 5
     finally:
         await engine.dispose()
 
