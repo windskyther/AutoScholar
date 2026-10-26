@@ -73,6 +73,18 @@ class ReviewIssue(StrictModel):
     )
     source_path: str | None = Field(default=None, max_length=500)
     source_quote: str | None = Field(default=None, min_length=1, max_length=2000)
+    requirement_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="An authoritative stage requirement ID, never a Planner-invented output",
+    )
+    requirement_quote: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2000,
+        description="Exact objective text for a user requirement not covered by a stage ID",
+    )
 
 
 class ReviewResult(StrictModel):

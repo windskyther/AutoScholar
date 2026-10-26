@@ -157,6 +157,9 @@ async def test_full_revision_semantics_are_corrected_before_any_state_mutation(
                     "code": "requirement_missing",
                     "step_id": "code",
                     "message": "Revalidate the requirement",
+                    "requirement_id": "coding.source_contract",
+                    "source_path": "train.py",
+                    "source_quote": "class MLP(nn.Module):",
                 }
             ],
         },

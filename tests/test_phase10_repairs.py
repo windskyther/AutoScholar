@@ -96,7 +96,8 @@ async def test_experiment_retry_rejects_changed_validated_source(tmp_path: Path)
         assert result.task.error_code == "autonomous_protocol_invalid"
         assert "source changed" in (result.task.error_message or "")
         assert result.task.metrics["training_runs"] == 1
-        assert len(provider.calls) == 3
+        # Reject corrupted retained evidence before even asking the Reviewer.
+        assert len(provider.calls) == 2
     finally:
         await engine.dispose()
 

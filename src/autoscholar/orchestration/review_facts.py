@@ -8,6 +8,7 @@ from autoscholar.coding.workspace import WorkspaceManager
 from autoscholar.experiment.analysis import analyze_experiment
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.models import ExperimentSpecification, RawExperimentMetrics
+from autoscholar.orchestration.contracts import REQUIREMENTS
 from autoscholar.orchestration.models import ReviewIssue
 
 # Compatibility for already recorded responses. New responses use the typed check field.
@@ -37,6 +38,48 @@ def unsupported_source_issue(issue: ReviewIssue, facts: dict[str, Any]) -> bool:
     )
 
 
+def requirement_issue_error(
+    issue: ReviewIssue, facts: dict[str, Any], objective: str
+) -> str | None:
+    """Validate owner and evidence independently of the model's descriptive code/label."""
+    kind = facts.get("step_type")
+    if issue.requirement_id is not None:
+        requirement = REQUIREMENTS.get(issue.requirement_id)
+        if requirement is None or requirement[0] != kind:
+            return "Requirement ID must belong to this step's authoritative stage contract"
+        if requirement[1] and facts.get("checks", {}).get(requirement[1]) is True:
+            return "Review requirement contradicts verified facts; the referenced check passed"
+    if kind != "coding" or facts.get("checks", {}).get("coding_validation") is not True:
+        return None
+    if issue.check in {"artifacts", "raw_metrics", "verbatim_citation"}:
+        return "Collected artifacts/metrics and citations are not coding-stage deliverables"
+    # Reclassifying a source claim as 'requirement' must not bypass source evidence.
+    excerpt = facts.get("source_excerpts", {}).get(issue.source_path)
+    if not (
+        isinstance(excerpt, str)
+        and issue.source_quote
+        and issue.source_quote.strip()
+        and issue.source_quote in excerpt
+    ):
+        return (
+            "A coding requirement/source defect requires source_path and an exact nonblank "
+            "source_quote from verified_checks.source_excerpts"
+        )
+    quote = issue.requirement_quote
+    objective_bound = bool(
+        quote
+        and quote.strip()
+        and len(quote.strip()) >= min(12, len(objective.strip()))
+        and quote in objective
+    )
+    if issue.requirement_id is None and not objective_bound:
+        return (
+            "A coding issue must cite a stage requirement_id or an exact requirement_quote "
+            "from the objective; Planner expected_output cannot introduce extra obligations"
+        )
+    return None
+
+
 async def step_facts(
     *,
     step_type: str,
@@ -47,7 +90,11 @@ async def step_facts(
     specification: ExperimentSpecification,
 ) -> dict[str, Any]:
     """Facts come from durable records and verified bytes, not model claims in result."""
-    facts: dict[str, Any] = {"checks": {}, "scope": "local checks; no checkpoint inference"}
+    facts: dict[str, Any] = {
+        "step_type": step_type,
+        "checks": {},
+        "scope": "local checks; no checkpoint inference",
+    }
     child_id = result["child_task_id"]
     child = await tasks.get_task(child_id)
     if child is None:
@@ -91,6 +138,13 @@ async def step_facts(
             )
         facts["validation_traces"] = traces
         latest = {trace["tool"]: trace for trace in traces}
+        for tool, check in (("static_check", "static_check"), ("run_pytest", "pytest")):
+            validation_trace = latest.get(tool, {})
+            facts["checks"][check] = (
+                validation_trace.get("status") == "succeeded"
+                and validation_trace.get("result_status") == "succeeded"
+                and validation_trace.get("exit_code") == 0
+            )
         facts["checks"]["coding_validation"] = (
             source_bound
             and child.status == "succeeded"

@@ -37,6 +37,7 @@ from tests.test_live_ablation_v2 import RenamedFixtureProvider, fixture
 class UnnecessaryCodingRetryProvider(RenamedFixtureProvider):
     invalid_revision_sent = False
     recorded_review: dict[str, Any] | None = None
+    recorded_plan: TaskPlan | None = None
     recorded_ids: dict[str, str] | None = None
     review_replayed = False
     review_corrections = 0
@@ -56,6 +57,13 @@ class UnnecessaryCodingRetryProvider(RenamedFixtureProvider):
             fixture_messages = messages[:2]
         result = await super().generate(fixture_messages, tools=tools, tool_choice=tool_choice)
         call = result.tool_calls[0]
+        if call.name == "submit_task_plan" and self.recorded_plan is not None:
+            assert self.recorded_ids is not None
+            arguments = self.recorded_plan.model_dump()
+            for step in arguments["steps"]:
+                step["id"] = self.recorded_ids[step["id"]]
+                step["dependencies"] = [self.recorded_ids[key] for key in step["dependencies"]]
+            return replace(result, tool_calls=(replace(call, arguments=arguments),))
         if call.name == "submit_review" and self.recorded_review and not self.review_replayed:
             self.review_replayed = True
             assert self.recorded_ids is not None
@@ -72,9 +80,36 @@ class UnnecessaryCodingRetryProvider(RenamedFixtureProvider):
                 for text in (
                     "contradicts verified facts",
                     "source defect requires source_path",
+                    "not coding-stage deliverables",
                 )
             )
             self.review_corrections += 1
+            # Script an explicit failure grounded in current facts, never a forced PASS.
+            payload = json.loads(messages[1].content)
+            candidates = payload["collection_retry_candidates"]
+            if candidates:
+                return replace(
+                    result,
+                    tool_calls=(
+                        replace(
+                            call,
+                            arguments={
+                                "status": "REPLAN",
+                                "issues": [
+                                    {
+                                        "step_id": key,
+                                        "code": "collected_metrics_need_retry",
+                                        "check": "raw_metrics",
+                                        "message": "Collection failed after successful training",
+                                        "requirement_id": "experiment.raw_metrics",
+                                    }
+                                    for key in candidates
+                                ],
+                                "suggested_steps": candidates,
+                            },
+                        ),
+                    ),
+                )
         if call.name == "submit_plan_revision" and not self.invalid_revision_sent:
             self.invalid_revision_sent = True
             return replace(
@@ -106,7 +141,11 @@ async def main(controller: str, replay_run: Path | None = None, protocol_version
         root = (Path(__file__).resolve().parents[2] / "data/evaluation").resolve()
         if not replay_run.is_relative_to(root):
             raise ValueError("Replay evidence must remain within ignored evaluation data")
-        audit = json.loads((replay_run / "audit-close-20261022.json").read_text(encoding="utf-8"))
+        audits = sorted(replay_run.glob("audit-close-*.json"))
+        if len(audits) != 1:
+            raise ValueError("Replay requires exactly one immutable closing audit")
+        audit = json.loads(audits[0].read_text(encoding="utf-8"))
+        replay_hashes[audits[0]] = hashlib.sha256(audits[0].read_bytes()).hexdigest()
         for name, digest in audit["primary_sha256"].items():
             path = (root / name).resolve()
             assert (
@@ -148,12 +187,18 @@ async def main(controller: str, replay_run: Path | None = None, protocol_version
                 roles = plan_roles(initial)
                 assert roles is not None
                 native.recorded_ids = {key: "x-" + role for role, key in roles.items()}
-                receipt = json.loads(
-                    (replay_run / f"response-llm-{task}--7.json").read_text(encoding="utf-8")
+                native.recorded_plan = initial
+                receipts = sorted(
+                    replay_run.glob(f"response-llm-{task}--*.json"),
+                    key=lambda path: int(path.stem.rsplit("--", 1)[1]),
                 )
-                old_call = receipt["choices"][0]["message"]["tool_calls"][0]
-                assert old_call["function"]["name"] == "submit_review"
-                native.recorded_review = json.loads(old_call["function"]["arguments"])
+                for receipt_path in receipts:
+                    assert receipt_path in replay_hashes
+                    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                    for old_call in receipt["choices"][0]["message"].get("tool_calls", []):
+                        if old_call["function"]["name"] == "submit_review":
+                            native.recorded_review = json.loads(old_call["function"]["arguments"])
+                assert native.recorded_review is not None
             provider = RepairWorkflowProvider(native, transport, task)
             row = await execute_task(
                 directory=target,
@@ -178,9 +223,20 @@ async def main(controller: str, replay_run: Path | None = None, protocol_version
             assert row["step_counts"]["research"] == row["step_counts"]["code"] == 1
             if replay_run is not None:
                 assert native.review_replayed
-                # The saved negative-control review already reports the real failure;
-                # it must stop without replanning, not manufacture a correction.
-                assert native.review_corrections == (0 if variant == "no_replanning" else 1)
+                assert native.recorded_ids is not None and native.recorded_review is not None
+                # Old and newer runs have different diagnoses. A real saved PASS needs
+                # no correction; unsupported coding claims require one bounded correction.
+                has_coding_issue = any(
+                    native.recorded_ids[issue["step_id"]] == "x-code"
+                    for issue in native.recorded_review["issues"]
+                )
+                assert native.review_corrections == int(
+                    has_coding_issue
+                    or any(
+                        issue.get("check") == "verbatim_citation"
+                        for issue in native.recorded_review["issues"]
+                    )
+                )
             if task == "recover-baseline":
                 assert native.invalid_revision_sent
                 assert provider.stage_calls["submit_plan_revision"] == 2

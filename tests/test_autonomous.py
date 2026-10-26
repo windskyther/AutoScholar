@@ -388,6 +388,9 @@ async def test_code_replan_reruns_downstream_and_preserves_source_snapshot(tmp_p
                         "code": "code_recheck",
                         "step_id": "code",
                         "message": "Revalidate sources",
+                        "requirement_id": "coding.source_contract",
+                        "source_path": "train.py",
+                        "source_quote": "class MLP(nn.Module):",
                     }
                 ],
             },

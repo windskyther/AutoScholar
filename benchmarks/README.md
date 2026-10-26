@@ -1295,6 +1295,16 @@ acceptance is **false**. No remaining-budget replay occurred. Read-only diagnosi
 all results and 464 historical hashes; owned temporary resources were cleaned. See the
 [v5 live report and precise recovery gaps](phase10-request-preflight-v5-20261023.md).
 
+2026-10-26 free recovery repairs: authoritative stage duties now override Planner output notes;
+claims against validated code require actual source and requirement evidence. Unchanged
+experiment retry eligibility uses persisted training, source and specification facts rather than
+model-selected issue names. Unaffordable coding reruns stop before planning/child creation,
+and two collection failures for the same source/specification exhaust unchanged recovery even
+with a larger replan budget. Three saved-v5-response/scripted-model/real-Docker scenarios met
+their expected outcomes, with **0 external API requests**. Historical failed grades and grants
+remain unchanged. Final backend regression: **1009 passed, 3 skipped**, plus passing Ruff/mypy.
+See the [repair and free acceptance report](phase10-recovery-authority-20261026.md).
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
