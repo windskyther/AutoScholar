@@ -1326,6 +1326,26 @@ is complete, targeted acceptance remains **false**. All 575 historical hashes ar
 owned temporary resources were cleaned. Next work is free Coding convergence analysis before
 any separately approved new live scope. See [the v6 live record](../docs/releases/2026-10-27-v6-acceptance.md).
 
+### Free coding convergence repair (2026-10-27)
+
+Seeded Coding exposes cumulative editing and shared call budgets, reserves workflow review
+calls, and hands successful writes to mandatory static/pytest validation at the existing edit
+or call boundary. Snapshot batches are rejected atomically with one bounded correction;
+failed, nonzero, truncated or changed-source validation cannot pass. Real unmet requirements
+still reach Reviewer. No allowance, source-size cap or historical score is relaxed.
+
+Full dev regression: **1043 passed / 3 skipped**. Independently composed main tree:
+**483 passed / 3 skipped**. Ruff/mypy pass. Four actual Docker checks verify the invalid
+saved v6 edit prefix is rejected with F841 and no training, while valid-source editing reaches
+normal completion, one unchanged experiment retry, and the expected No Replanning stop.
+The three valid-source scripts use 10/12/10 callbacks within the existing per-task ceiling;
+they send **0 vendor requests**. They are scripted control evidence, not new live-model
+acceptance. All 111 v6 primary hashes, 575 prior bindings and the consumed 29-call grant remain
+unchanged. Evidence: `data/validation/convergence-preflight-b9fefd96/` and
+`data/validation/coding-convergence-final-audit-20261027.json`. Verified runtime changes are
+published independently on main; the harness remains on dev. See the
+[repair report](../docs/releases/2026-10-27-coding-convergence.md).
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
