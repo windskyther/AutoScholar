@@ -21,7 +21,6 @@ from autoscholar.evaluation.provider_prior import read_public
 from autoscholar.evaluation.provider_transport import GuardedTransport, approval_path
 from autoscholar.evaluation.provider_validation import load_explicit_settings, no_owned_children
 from autoscholar.evaluation.repair_protocol import (
-    REPAIR_TASKS,
     RepairLedger,
     RepairWorkflowProvider,
     repair_claim,
@@ -148,8 +147,11 @@ def prepare_repairs(
         f"# Phase 10 targeted repair verification v{protocol_version}\n\n"
         "Preparation only: zero external calls. Separate owner approval is required to run.\n\n"
         "| Task | Required observation |\n|---|---|\n"
-        + "\n".join(f"| {task} | {plan['contract']['acceptance'][task]} |" for task in REPAIR_TASKS)
-        + "\n\nAt most 36 physical LLM requests, 12 per task, 0 Tavily; corrections count. "
+        + "\n".join(
+            f"| {task} | {plan['contract']['acceptance'][task]} |" for task in contract["tasks"]
+        )
+        + f"\n\nAt most {contract['physical_limits']['llm']} physical LLM requests, "
+        "12 per task, 0 Tavily; corrections count. "
         "120000-token stopping threshold per task; the final returned response can exceed it. "
         "Output cap 8192 per response. No automatic task replays. "
         "Only public MNIST objectives, seeded code, public evidence and results are sent. "
@@ -218,6 +220,7 @@ def repair_summary(
     protocol_version: int = 3,
 ) -> dict[str, Any]:
     summary = pilot_summary(records, ledger, clean=clean, unchanged=unchanged)
+    contract = repair_contract(protocol_version)
     contracts = summary["scenario_contracts"]
     for row in records:
         counts, usage = row.get("step_counts", {}), row.get("usage", {})
@@ -231,7 +234,7 @@ def repair_summary(
             and row.get("fault_mutations") == (0 if row["task"] == "normal-baseline" else 1)
         )
     complete = (
-        [row["task"] for row in records] == list(REPAIR_TASKS)
+        [row["task"] for row in records] == contract["tasks"]
         and bool(ledger.attempts)
         and all(
             row.get("status") == "measured"
@@ -245,10 +248,10 @@ def repair_summary(
     )
     summary.update(
         protocol_version=protocol_version,
-        planned_tasks=len(REPAIR_TASKS),
+        planned_tasks=len(contract["tasks"]),
         repair_measurement_complete=bool(complete),
         targeted_repairs_acceptance=bool(complete and all(contracts.values())),
-        scope=repair_contract(protocol_version)["limitations"],
+        scope=contract["limitations"],
     )
     return summary
 
@@ -312,7 +315,7 @@ async def run_repairs(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
                 http_client=client,
                 request_validator=transport.validate_payload,
             )
-            for task in REPAIR_TASKS:
+            for task in plan["contract"]["tasks"]:
                 load_repair_plan(args.plan, repo_root, version)
                 scenario, _, variant_name = task.partition("-")
                 variant: WorkflowVariant = (
@@ -342,7 +345,9 @@ async def run_repairs(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
                 records.append(record)
                 _write_json(directory / "cases.json", records)
                 print(
-                    f"Targeted repair v{version} {task}; LLM {len(ledger.attempts)}/36", flush=True
+                    f"Targeted repair v{version} {task}; "
+                    f"LLM {len(ledger.attempts)}/{ledger.limits['llm']}",
+                    flush=True,
                 )
                 try:
                     async with asyncio.timeout(660):
@@ -391,7 +396,7 @@ async def run_repairs(args: argparse.Namespace, *, repo_root: Path) -> tuple[Pat
         report = (
             f"# Phase 10 targeted repair verification v{version}\n\n"
             f"Targeted repair acceptance: {summary['targeted_repairs_acceptance']}.\n\n"
-            f"Physical LLM requests: {len(ledger.attempts)}/36; Tavily: 0.\n\n"
+            f"Physical LLM requests: {len(ledger.attempts)}/{ledger.limits['llm']}; Tavily: 0.\n\n"
             + "\n".join(
                 f"- {row['task']}: {summary['scenario_contracts'][row['task']]}" for row in records
             )

@@ -1,4 +1,4 @@
-"""A separately approved three-task check of Phase 10 repairs, never a grant reset."""
+"""Separately approved, version-bound repair checks; never reset consumed grants."""
 
 import copy
 import json
@@ -37,14 +37,14 @@ JSON_RULE = (
 
 
 def repair_claim(protocol_version: int) -> str:
-    if type(protocol_version) is not int or protocol_version not in (3, 4, 5, 6):
-        raise ValueError("Only frozen repair protocols 3, 4, 5 and 6 are supported")
+    if type(protocol_version) is not int or protocol_version not in (3, 4, 5, 6, 7):
+        raise ValueError("Only frozen repair protocols 3 through 7 are supported")
     return f"live-repair-v{protocol_version}-claim.json"
 
 
 def repair_contract(protocol_version: int = 3) -> dict[str, Any]:
     repair_claim(protocol_version)
-    contract = {
+    contract: dict[str, Any] = {
         "protocol_version": 3,
         "scope": REPAIR_SCOPE,
         "tasks": list(REPAIR_TASKS),
@@ -111,7 +111,7 @@ def repair_contract(protocol_version: int = 3) -> dict[str, Any]:
                 "source_truncation": False,
             },
         )
-    if protocol_version == 6:
+    if protocol_version >= 6:
         contract.update(
             protocol_version=6,
             scope="phase10_recovery_authority_acceptance_v6",
@@ -130,6 +130,35 @@ def repair_contract(protocol_version: int = 3) -> dict[str, Any]:
                 "unaffordable_code_repairs_stop_before_replanning_or_child_creation": True,
             },
         )
+    if protocol_version == 7:
+        contract.update(
+            protocol_version=7,
+            scope="phase10_coding_control_acceptance_v7",
+            tasks=["recover-no_replanning"],
+            physical_limits={"llm": 12, "tavily": 0, "per_task_llm": 12},
+            acceptance={
+                key: value
+                for key, value in contract["acceptance"].items()
+                if key in {"recover-no_replanning", "all"}
+            },
+            coding_convergence={
+                "max_snapshot_edit_calls": 8,
+                "one_native_tool_call_per_snapshot_turn": True,
+                "invalid_batches_rejected_before_writes": True,
+                "bounded_protocol_corrections": 1,
+                "progress_exposes_edit_and_shared_call_budgets": True,
+                "reserve_review_and_optional_replan_calls_within_existing_budget": True,
+                "successful_write_hands_off_at_edit_or_reserved_call_boundary": True,
+                "mandatory_static_and_pytest_must_exit_zero_without_truncation": True,
+                "source_must_remain_unchanged_during_validation": True,
+                "no_synthetic_model_ready_or_automatic_review_pass": True,
+            },
+            limitations=(
+                "One new No Replanning control only, on the repaired coding runtime. "
+                "Prior normal/recovery evidence remains version-specific; v6 is not regraded. "
+                "Not a fresh three-task acceptance, complete ablation or full Phase 10 acceptance."
+            ),
+        )
     return contract
 
 
@@ -137,7 +166,7 @@ class RepairLedger(LiveAblationLedger):
     def __init__(self, path: Path, *, run_id: str, protocol_version: int = 3) -> None:
         contract = repair_contract(protocol_version)
         self.path = path
-        self.limits = {"llm": REPAIR_REQUESTS, "tavily": 0}
+        self.limits = {"llm": contract["physical_limits"]["llm"], "tavily": 0}
         self.blocked_case_ids = ()
         self.data = {
             "schema_version": 1,
@@ -145,7 +174,7 @@ class RepairLedger(LiveAblationLedger):
             "scope": contract["scope"],
             "run_id": run_id,
             "limits": self.limits,
-            "tasks": list(REPAIR_TASKS),
+            "tasks": list(contract["tasks"]),
             "per_task_llm_limit": 12,
             "automatic_retries": False,
             "native_json_corrections_per_task": 1,
@@ -156,8 +185,8 @@ class RepairLedger(LiveAblationLedger):
             json.dump(self.data, stream, allow_nan=False)
 
     def reserve(self, provider: Provider, case_id: str, payload: dict[str, Any]) -> int:
-        if case_id.rpartition("--")[0] not in REPAIR_TASKS:
-            raise ValueError("Only the three approved repair-verification tasks may dispatch")
+        if case_id.rpartition("--")[0] not in self.data["tasks"]:
+            raise ValueError("Only the version-bound approved repair tasks may dispatch")
         return super().reserve(provider, case_id, payload)
 
 

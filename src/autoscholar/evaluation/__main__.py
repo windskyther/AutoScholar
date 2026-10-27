@@ -353,13 +353,13 @@ def main() -> int:
     live_ablations.add_argument("--prior-run", type=Path)
     live_ablations.add_argument("--continue-v2", type=Path)
     repairs = commands.add_parser(
-        "repairs", help="Prepare three-task repair plan offline; paid execution requires approval"
+        "repairs", help="Prepare a versioned repair plan offline; paid execution requires approval"
     )
     repairs.add_argument("--allow-paid", action="store_true")
     repairs.add_argument("--plan", type=Path)
     repairs.add_argument("--approval-id")
     repairs.add_argument("--sandbox-container")
-    repairs.add_argument("--protocol-version", type=int, choices=(3, 4, 5, 6), default=3)
+    repairs.add_argument("--protocol-version", type=int, choices=(3, 4, 5, 6, 7), default=3)
     repairs.add_argument("--proposal", type=Path)
     args = parser.parse_args()
     try:

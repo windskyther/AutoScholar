@@ -1346,6 +1346,20 @@ unchanged. Evidence: `data/validation/convergence-preflight-b9fefd96/` and
 published independently on main; the harness remains on dev. See the
 [repair report](../docs/releases/2026-10-27-coding-convergence.md).
 
+### Single-control acceptance v7 preparation
+
+Version 7 schedules only `recover-no_replanning`, with a fresh **12 LLM / 0 Tavily** ceiling.
+The v3-v6 contracts and consumed grants remain separate. Normal/recovery v6 successes retain
+their original source; they are not regraded or represented as a new current-source triad.
+The runner binds the tested coding-convergence policy and rejects dispatch of other cases.
+
+Related regression: **118 passed**, including the full mock-wire v7 entrypoint, budget and
+history gates; Ruff/mypy pass. One scripted-model/actual-Docker control reaches mandatory
+checks, one real training and one injected fault, then stops as expected. Ten callbacks fit
+the twelve-call budget; actual vendor requests are **0**. Owned temporary resources were
+cleaned. The exact clean-source plan still requires separate paid confirmation. See the
+[v7 preparation report](phase10-coding-control-v7-preparation-20261027.md).
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider

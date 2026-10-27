@@ -97,7 +97,7 @@ async def handoff_reason(target: Path, valid: bool = True) -> str:
         await engine.dispose()
 
 
-async def main(controller: str, replay_run: Path) -> None:
+async def main(controller: str, replay_run: Path, protocol_version: int = 6) -> None:
     root = Path(__file__).resolve().parents[2]
     evidence_root = (root / "data/evaluation").resolve()
     replay_run = replay_run.resolve()
@@ -136,6 +136,8 @@ async def main(controller: str, replay_run: Path) -> None:
         cases = [("saved-edit-prefix", "normal-baseline", True)] + [
             (task, task, False) for task in REPAIR_TASKS
         ]
+        if protocol_version == 7:
+            cases = [("recover-no_replanning", "recover-no_replanning", False)]
         for label, task, saved_replay in cases:
             scenario, _, variant = task.partition("-")
             data = fixture()
@@ -145,7 +147,9 @@ async def main(controller: str, replay_run: Path) -> None:
             target = output / label
             target.mkdir()
             ledger = RepairLedger(
-                target / "fake-ledger.json", run_id="free-convergence", protocol_version=6
+                target / "fake-ledger.json",
+                run_id="free-convergence",
+                protocol_version=protocol_version,
             )
             transport = GuardedTransport(
                 provider="llm",
@@ -168,7 +172,7 @@ async def main(controller: str, replay_run: Path) -> None:
                 provider=provider,
                 sandbox=sandbox,
                 resources=resources,
-                protocol_version=6,
+                protocol_version=protocol_version,
             )
             row.update(
                 task=label,
@@ -226,5 +230,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sandbox-container", required=True)
     parser.add_argument("--replay-run", type=Path, required=True)
+    parser.add_argument("--protocol-version", type=int, choices=(6, 7), default=6)
     args = parser.parse_args()
-    asyncio.run(main(args.sandbox_container, args.replay_run))
+    asyncio.run(main(args.sandbox_container, args.replay_run, args.protocol_version))

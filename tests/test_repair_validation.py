@@ -281,14 +281,14 @@ def test_repair_gate_requires_the_intended_scenario_not_just_a_failed_status(
     assert summary["main_merge_authorized"] is False
 
 
-@pytest.mark.parametrize("version", [3, 4, 5, 6])
+@pytest.mark.parametrize("version", [3, 4, 5, 6, 7])
 async def test_complete_entrypoint_with_mock_wire_usage_and_scripted_training(
     wire_root: Path, monkeypatch: pytest.MonkeyPatch, version: int
 ) -> None:
     """The paid flag is tested only with a mock credential loader and mock HTTP transport."""
     tmp_path = wire_root
     data = fixture()
-    prepared = {"contract": repair_contract(version), "git_revision": "a" * 40}
+    prepared: dict[str, Any] = {"contract": repair_contract(version), "git_revision": "a" * 40}
     root = tmp_path / "data/evaluation"
     root.mkdir(parents=True)
     prior_claim = root / "live-repair-v3-claim.json"
@@ -379,6 +379,12 @@ async def test_complete_entrypoint_with_mock_wire_usage_and_scripted_training(
     assert result["vendor_tokens"] == physical_requests * 3
     assert result["targeted_repairs_acceptance"]
     assert result["protocol_version"] == version
+    assert result["planned_tasks"] == len(prepared["contract"]["tasks"])
+    cases = json.loads((directory / "cases.json").read_text(encoding="utf-8"))
+    assert [row["task"] for row in cases] == prepared["contract"]["tasks"]
+    if version == 7:
+        assert physical_requests <= 12
+        assert len(cases) == 1 and cases[0]["task"] == "recover-no_replanning"
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["explicit_paid_execution"] and manifest["prepared_plan"] == prepared
     assert result["phase10_overall_acceptance"] is False

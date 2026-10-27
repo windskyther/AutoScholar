@@ -55,9 +55,9 @@ def proposal(root: Path, monkeypatch: pytest.MonkeyPatch, version: int = 4) -> P
             value["protected_previous_records_sha256"][path.relative_to(base).as_posix()] = (
                 hashlib.sha256(path.read_bytes()).hexdigest()
             )
-    if version == 6:
-        claim = base / "live-repair-v5-claim.json"
-        write(claim, {"scope": "old-v5", "attempts": 29})
+    for old_version in range(5, version):
+        claim = base / f"live-repair-v{old_version}-claim.json"
+        write(claim, {"scope": f"old-v{old_version}", "attempts": 29})
         value["protected_previous_records_sha256"][claim.name] = hashlib.sha256(
             claim.read_bytes()
         ).hexdigest()
@@ -125,7 +125,7 @@ def test_requires_proposal_before_any_output(tmp_path: Path, version: int) -> No
     assert not list(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize("version", [0, 1, 2, 7, True, 4.0])
+@pytest.mark.parametrize("version", [0, 1, 2, 8, True, 4.0])
 def test_arbitrary_versions_cannot_reset_a_claim(version: int) -> None:
     with pytest.raises(ValueError):
         repair_claim(version)
