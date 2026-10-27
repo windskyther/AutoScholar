@@ -45,7 +45,7 @@ def proposal(root: Path, monkeypatch: pytest.MonkeyPatch, version: int = 4) -> P
             previous.name: hashlib.sha256(previous.read_bytes()).hexdigest(),
         },
     }
-    if version == 5:
+    if version >= 5:
         claim = base / "live-repair-v4-claim.json"
         write(claim, {"scope": "old-v4", "attempts": 14})
         artifact = base / "prior/workflow.sqlite"
@@ -55,12 +55,18 @@ def proposal(root: Path, monkeypatch: pytest.MonkeyPatch, version: int = 4) -> P
             value["protected_previous_records_sha256"][path.relative_to(base).as_posix()] = (
                 hashlib.sha256(path.read_bytes()).hexdigest()
             )
+    if version == 6:
+        claim = base / "live-repair-v5-claim.json"
+        write(claim, {"scope": "old-v5", "attempts": 29})
+        value["protected_previous_records_sha256"][claim.name] = hashlib.sha256(
+            claim.read_bytes()
+        ).hexdigest()
     target = base / "proposal/plan.json"
     write(target, value)
     return target
 
 
-@pytest.mark.parametrize("version", [4, 5])
+@pytest.mark.parametrize("version", [4, 5, 6])
 def test_offline_plan_binds_proposal_and_retains_old_claim(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -83,7 +89,7 @@ def test_offline_plan_binds_proposal_and_retains_old_claim(
 @pytest.mark.parametrize(
     "changed", ["proposal", "old_claim", "runtime", "fixture", "dirty", "head"]
 )
-@pytest.mark.parametrize("version", [4, 5])
+@pytest.mark.parametrize("version", [4, 5, 6])
 def test_plan_blocks_every_changed_binding_before_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -112,14 +118,14 @@ def test_plan_blocks_every_changed_binding_before_dispatch(
         repair.load_repair_plan(directory / "plan.json", tmp_path, version)
 
 
-@pytest.mark.parametrize("version", [4, 5])
+@pytest.mark.parametrize("version", [4, 5, 6])
 def test_requires_proposal_before_any_output(tmp_path: Path, version: int) -> None:
     with pytest.raises(ValueError, match="approved proposal"):
         repair.prepare_repairs(tmp_path, version)
     assert not list(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize("version", [0, 1, 2, 6, True, 4.0])
+@pytest.mark.parametrize("version", [0, 1, 2, 7, True, 4.0])
 def test_arbitrary_versions_cannot_reset_a_claim(version: int) -> None:
     with pytest.raises(ValueError):
         repair_claim(version)
@@ -161,7 +167,7 @@ def test_v5_does_not_change_old_contracts_or_widen_limits() -> None:
     assert current["request_admission"]["source_truncation"] is False
 
 
-@pytest.mark.parametrize("version", [4, 5])
+@pytest.mark.parametrize("version", [4, 5, 6])
 def test_keeps_the_same_physical_ceiling_and_output_cap(tmp_path: Path, version: int) -> None:
     ledger = RepairLedger(tmp_path / "grant.json", run_id="mock-only", protocol_version=version)
     assert ledger.limits == {"llm": 36, "tavily": 0}

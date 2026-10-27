@@ -86,15 +86,14 @@ def approved_proposal(path: Path, repo_root: Path, protocol_version: int = 4) ->
     protected = proposal.get("protected_previous_records_sha256")
     if not isinstance(protected, dict) or not protected:
         raise ValueError("Approved proposal must protect the old grant and claim")
-    if (
-        protocol_version == 5
-        and not {"live-repair-v3-claim.json", "live-repair-v4-claim.json"} <= protected.keys()
-    ):
-        raise ValueError("Protocol 5 must retain both consumed prior repair claims")
+    if protocol_version >= 5:
+        required = {repair_claim(version) for version in range(3, protocol_version)}
+        if not required <= protected.keys():
+            raise ValueError("Protocol must retain all consumed prior repair claims")
     for name, expected_digest in protected.items():
         if not isinstance(name, str) or not isinstance(expected_digest, str):
             raise ValueError("Invalid protected evidence binding")
-        if protocol_version == 5:
+        if protocol_version >= 5:
             # Frozen artifacts include SQLite/source/checkpoints, not only JSON receipts.
             target = (root / name).resolve()
             if not target.is_relative_to(root):

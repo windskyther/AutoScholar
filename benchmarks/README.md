@@ -1305,6 +1305,17 @@ their expected outcomes, with **0 external API requests**. Historical failed gra
 remain unchanged. Final backend regression: **1009 passed, 3 skipped**, plus passing Ruff/mypy.
 See the [repair and free acceptance report](phase10-recovery-authority-20261026.md).
 
+### Recovery-authority acceptance v6 preparation
+
+Protocol 6 binds the repaired server-owned stage duties, source/requirement evidence for
+coding diagnoses, persisted machine recovery eligibility and the exhausted unchanged-retry
+limit. It uses a fresh v6 claim and grant, protects all three consumed v3/v4/v5 claims and
+their raw history, and preserves the old entrypoint contracts and acceptance thresholds.
+The targeted triad still permits at most 36 new LLM requests (12/task), 0 Tavily, an
+8192-token response cap and the 32768-byte request cap. Preparation sends no vendor requests;
+the exact committed-source plan requires separate paid confirmation. Full paired ablations
+remain separate. See [the v6 preparation report](phase10-recovery-authority-v6-preparation-20261027.md).
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider

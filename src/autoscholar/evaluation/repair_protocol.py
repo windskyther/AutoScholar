@@ -20,6 +20,7 @@ from autoscholar.llm.models import (
     ToolChoice,
     ToolDefinition,
 )
+from autoscholar.orchestration.contracts import stage_contracts
 from autoscholar.orchestration.models import ExperimentRetry, ReviewResult
 
 REPAIR_TASKS = ("normal-baseline", "recover-baseline", "recover-no_replanning")
@@ -36,8 +37,8 @@ JSON_RULE = (
 
 
 def repair_claim(protocol_version: int) -> str:
-    if type(protocol_version) is not int or protocol_version not in (3, 4, 5):
-        raise ValueError("Only frozen repair protocols 3, 4 and 5 are supported")
+    if type(protocol_version) is not int or protocol_version not in (3, 4, 5, 6):
+        raise ValueError("Only frozen repair protocols 3, 4, 5 and 6 are supported")
     return f"live-repair-v{protocol_version}-claim.json"
 
 
@@ -95,7 +96,7 @@ def repair_contract(protocol_version: int = 3) -> dict[str, Any]:
                 "experiment_retry": payload_digest(ExperimentRetry.model_json_schema()),
             },
         )
-    if protocol_version == 5:
+    if protocol_version >= 5:
         contract.update(
             protocol_version=5,
             scope="phase10_request_preflight_acceptance_v5",
@@ -108,6 +109,25 @@ def repair_contract(protocol_version: int = 3) -> dict[str, Any]:
                 "unknown_remote_outcomes_remain_pending": True,
                 "oversized_snapshot_write_preserves_original_source": True,
                 "source_truncation": False,
+            },
+        )
+    if protocol_version == 6:
+        contract.update(
+            protocol_version=6,
+            scope="phase10_recovery_authority_acceptance_v6",
+            stage_contracts_sha256=payload_digest(stage_contracts()),
+            coding_review_evidence={
+                "all_issue_categories_require_source_and_requirement_evidence": True,
+                "planner_output_cannot_expand_stage_duties": True,
+                "source_quote_alone_does_not_prove_semantic_defect": True,
+                "unsupported_diagnoses_do_not_automatically_pass": True,
+            },
+            machine_recovery={
+                "eligibility_uses_persisted_failure_training_source_and_specification": True,
+                "model_issue_codes_do_not_determine_eligibility": True,
+                "max_unchanged_collection_retries": 1,
+                "repeated_collection_failure_cannot_bypass_limit_via_full_revision": True,
+                "unaffordable_code_repairs_stop_before_replanning_or_child_creation": True,
             },
         )
     return contract

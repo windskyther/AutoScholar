@@ -267,7 +267,7 @@ async def main(controller: str, replay_run: Path | None = None, protocol_version
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sandbox-container", required=True)
-    parser.add_argument("--protocol-version", type=int, choices=(3, 4, 5), default=3)
+    parser.add_argument("--protocol-version", type=int, choices=(3, 4, 5, 6), default=3)
     parser.add_argument(
         "--replay-run", type=Path, help="Read-only saved Reviewer responses; no APIs"
     )

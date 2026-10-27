@@ -281,7 +281,7 @@ def test_repair_gate_requires_the_intended_scenario_not_just_a_failed_status(
     assert summary["main_merge_authorized"] is False
 
 
-@pytest.mark.parametrize("version", [3, 4, 5])
+@pytest.mark.parametrize("version", [3, 4, 5, 6])
 async def test_complete_entrypoint_with_mock_wire_usage_and_scripted_training(
     wire_root: Path, monkeypatch: pytest.MonkeyPatch, version: int
 ) -> None:

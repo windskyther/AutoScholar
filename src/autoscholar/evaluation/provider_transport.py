@@ -156,6 +156,7 @@ class GuardedTransport(httpx.AsyncBaseTransport):
             (3, "phase10_targeted_repairs_v3"),
             (4, "phase10_reviewer_retry_acceptance_v4"),
             (5, "phase10_request_preflight_acceptance_v5"),
+            (6, "phase10_recovery_authority_acceptance_v6"),
         } and ledger.limits == {"llm": 36, "tavily": 0}
         if max_output_tokens != MAX_OUTPUT_TOKENS and not (
             max_output_tokens == 8192 and (versioned_pilot or repair_pilot)
