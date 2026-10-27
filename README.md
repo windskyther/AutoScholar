@@ -1007,6 +1007,11 @@ Coding 源码交接，以及阶段职责、Reviewer 依据和有界实验恢复�
 范围与验证记录见[部分同步说明](docs/releases/2026-10-26-runtime.md)。
 独立 main 组合的完整后端 **470 passed、3 skipped**，Ruff 与 mypy（183 个文件）通过。
 
+2026-10-27，dev `c98b8c5` 的 v6 真实联测中，正常组和故障恢复组通过；
+关闭重规划的负对照在 Coding 编辑未收敛时停止，尚未达到故障注入点。
+实际使用 29 次 LLM、0 次 Tavily、156516 Token；三组定向验收及 Phase 10 总验收仍未通过。
+此处同步已核实的结果记录，详见 [v6 实测报告](docs/releases/2026-10-27-v6-acceptance.md)。
+
 ## Phase 10：AutoScholar-Eval（构建中）
 
 Phase 10 建立统一的 RAG、Research、Tool、Coding、Experiment 与端到端评测，及 Planner、Reranker、Reviewer、Memory、Replanning 消融。工程夹具、本地真实组件与真实供应商能力结果必须分开；付费联测仅在单独授权并显式开启时执行，不把固定模型响应的成功率当成真实模型能力。
