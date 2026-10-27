@@ -584,6 +584,17 @@ class AutonomousService:
                 ),
                 plan=[step.description],
                 snapshot_mode=True,
+                # Preserve a review plus one possible replan/final review. This is a
+                # reserve within the existing budget, never additional paid allowance.
+                model_call_reserve=(
+                    3
+                    if (
+                        run.budget.used.get("replans", 0) < run.budget.limits.replans
+                        and run.budget.limits.model_calls - run.budget.used.get("model_calls", 0)
+                        >= 4
+                    )
+                    else 1
+                ),
             )
             source = self.workspace.source_snapshot(child_id)
             if not {"train.py", "test_models.py"} <= source.keys():

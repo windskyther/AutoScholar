@@ -1012,6 +1012,11 @@ Coding 源码交接，以及阶段职责、Reviewer 依据和有界实验恢复�
 实际使用 29 次 LLM、0 次 Tavily、156516 Token；三组定向验收及 Phase 10 总验收仍未通过。
 此处同步已核实的结果记录，详见 [v6 实测报告](docs/releases/2026-10-27-v6-acceptance.md)。
 
+Coding 收敛控制已补充：显示剩余额度，在编辑或调用预留边界交给强制检查，
+保留后续审查额度，并拒绝快照批量写入。独立 main 回归 **483 passed、3 skipped**，
+四项免费 Docker 验证符合预期，新增供应商请求为 0。v6 原失败结果保持原值，
+详见 [Coding 收敛修复](docs/releases/2026-10-27-coding-convergence.md)。
+
 ## Phase 10：AutoScholar-Eval（构建中）
 
 Phase 10 建立统一的 RAG、Research、Tool、Coding、Experiment 与端到端评测，及 Planner、Reranker、Reviewer、Memory、Replanning 消融。工程夹具、本地真实组件与真实供应商能力结果必须分开；付费联测仅在单独授权并显式开启时执行，不把固定模型响应的成功率当成真实模型能力。

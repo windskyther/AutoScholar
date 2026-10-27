@@ -680,13 +680,27 @@ async def test_seeded_coding_edit_limit_never_auto_approves_unfinished_source(
         [
             call("submit_task_plan", plan().model_dump()),
             *[
-                call("create_file", {"path": f"note{i}.txt", "content": "pending"})
+                call("create_file", {"path": f"note{i}.py", "content": "def broken(:\n"})
                 for i in range(8)
             ],
             call("submit_review", {"status": "PASS"}),
         ]
     )
-    sandbox = FakeExperimentSandbox()
+
+    class InvalidSourceSandbox(FakeExperimentSandbox):
+        async def run(self, request: SandboxRunRequest) -> SandboxRunResult:
+            result = await super().run(request)
+            if request.action == "static_check":
+                return result.model_copy(
+                    update={
+                        "status": "failed",
+                        "exit_code": 1,
+                        "stderr": "SyntaxError: invalid syntax in unfinished source",
+                    }
+                )
+            return result
+
+    sandbox = InvalidSourceSandbox()
     service, engine = await workflow(tmp_path, provider, sandbox)
     try:
         result = await service.run("Compare models", budget=BudgetLimits(replans=0))
@@ -695,7 +709,7 @@ async def test_seeded_coding_edit_limit_never_auto_approves_unfinished_source(
         code = next(item for item in steps if item["step_id"] == "code")
         assert code["status"] == "failed"
         assert code["result"]["error_code"] == "coding_tool_budget_exceeded"
-        assert not sandbox.requests
+        assert [r.action for r in sandbox.requests] == ["static_check"]
         assert len(provider.calls) == 10
     finally:
         await engine.dispose()
@@ -718,6 +732,19 @@ async def test_seeded_coding_batch_cannot_bypass_edit_limit(tmp_path: Path) -> N
                     for i in range(9)
                 ),
             ),
+            LLMResult(
+                text="",
+                model="batched-again",
+                usage=response().usage,
+                tool_calls=tuple(
+                    ToolCall(
+                        id=f"retry{i}",
+                        name="create_file",
+                        arguments={"path": f"note{i}.txt", "content": "pending"},
+                    )
+                    for i in range(9)
+                ),
+            ),
             call("submit_review", {"status": "PASS"}),
         ]
     )
@@ -726,11 +753,10 @@ async def test_seeded_coding_batch_cannot_bypass_edit_limit(tmp_path: Path) -> N
         result = await service.run("Compare models", budget=BudgetLimits(replans=0))
         steps = await service.workflows.history(result.task.id, "steps")
         code = next(item for item in steps if item["step_id"] == "code")
-        assert code["result"]["error_code"] == "coding_tool_budget_exceeded"
+        assert code["result"]["error_code"] == "coding_protocol_error"
         snapshot = service.workspace.source_snapshot(code["child_task_id"])
-        assert "note7.txt" in snapshot
-        assert "note8.txt" not in snapshot
-        assert len(provider.calls) == 3
+        assert not any(path.startswith("note") for path in snapshot)
+        assert len(provider.calls) == 4
     finally:
         await engine.dispose()
 
