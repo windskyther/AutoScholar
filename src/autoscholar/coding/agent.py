@@ -14,7 +14,7 @@ from autoscholar.coding.sandbox import (
 )
 from autoscholar.coding.tools import SandboxToolset, WorkspaceToolset
 from autoscholar.coding.workspace import WorkspaceError, WorkspaceManager
-from autoscholar.core.budget import consume, current_budget
+from autoscholar.core.budget import BudgetExceeded, consume, current_budget
 from autoscholar.llm import (
     AssistantToolCallMessage,
     ChatMessage,
@@ -96,6 +96,9 @@ class CodingState(TypedDict):
     diagnostic: ErrorDiagnostic | None
     validation_succeeded: bool
     snapshot_mode: bool
+    model_call_reserve: int
+    handoff_reason: str | None
+    protocol_feedback: str | None
     answer: str
 
 
@@ -132,7 +135,10 @@ class CodingAgent:
         plan: list[str],
         prior_traces: list[ToolTraceRecord] | None = None,
         snapshot_mode: bool = False,
+        model_call_reserve: int = 0,
     ) -> CodingResult:
+        if type(model_call_reserve) is not int or model_call_reserve < 0:
+            raise ValueError("The model-call reserve must be a nonnegative integer")
         health = await self._sandbox.health()
         if health.status != "ok":
             raise CodingRunError(
@@ -185,6 +191,9 @@ class CodingAgent:
             "diagnostic": None,
             "validation_succeeded": False,
             "snapshot_mode": snapshot_mode,
+            "model_call_reserve": model_call_reserve,
+            "handoff_reason": None,
+            "protocol_feedback": None,
             "answer": "",
         }
         try:
@@ -290,6 +299,8 @@ class CodingAgent:
                                 {"tool": t.tool_name, "status": t.status, "output": t.output[:1000]}
                                 for t in state["traces"][-3:]
                             ],
+                            "coding_progress": self._progress(state),
+                            "protocol_feedback": state["protocol_feedback"],
                             "instruction": (
                                 "The complete current source is supplied above for inspection. "
                                 "No read/list tools are needed. If requirements are satisfied, "
@@ -297,7 +308,10 @@ class CodingAgent:
                                 "edit. edit_file replaces existing files; create_file is only "
                                 "for new paths. Each turn receives the refreshed source. "
                                 "At most 8 editing calls are allowed; "
-                                "do not refactor speculatively."
+                                "do not refactor speculatively. The server stops editing at "
+                                "the edit or reserved workflow-call boundary and runs mandatory "
+                                "static checks and pytest. This is validation, not acceptance "
+                                "of unmet requirements; experiment and review still follow."
                             ),
                         },
                         ensure_ascii=False,
@@ -306,11 +320,60 @@ class CodingAgent:
             ]
         return [prompt, *messages]
 
-    async def _author(self, state: CodingState) -> dict[str, Any]:
-        if state["snapshot_mode"] and state["tool_calls"] >= 8:
+    def _progress(self, state: CodingState) -> dict[str, Any]:
+        budget = current_budget.get()
+        remaining = (
+            max(0, budget.limits.model_calls - budget.used.get("model_calls", 0))
+            if budget is not None
+            else None
+        )
+        limit = min(8, self._limits.max_file_tool_calls)
+        return {
+            "edits_used": state["tool_calls"],
+            "edits_remaining": max(0, limit - state["tool_calls"]),
+            "shared_model_calls_remaining": remaining,
+            "model_calls_reserved_for_workflow": state["model_call_reserve"],
+            "author_calls_remaining": (
+                max(0, remaining - state["model_call_reserve"]) if remaining is not None else None
+            ),
+        }
+
+    def _completion_trigger(self, state: CodingState) -> str | None:
+        if not state["snapshot_mode"]:
+            return None
+        if state["tool_calls"] >= min(8, self._limits.max_file_tool_calls):
+            return "edit_limit"
+        progress = self._progress(state)
+        if progress["author_calls_remaining"] == 0:
+            return "model_call_reserve"
+        return None
+
+    def _handoff_reason(self, state: CodingState) -> str | None:
+        reason = self._completion_trigger(state)
+        if reason is None:
+            return None
+        if not state["model_calls"]:
+            if reason == "edit_limit":
+                raise CodingRunError(
+                    "coding_tool_budget_exceeded", "No coding edit budget available"
+                )
+            raise BudgetExceeded("model_calls_reserved_for_workflow")
+        if (
+            state["protocol_feedback"] is not None
+            or not state["traces"]
+            or state["traces"][-1].tool_name not in {"create_file", "edit_file"}
+            or state["traces"][-1].status != "succeeded"
+        ):
             raise CodingRunError(
-                "coding_tool_budget_exceeded", "Seeded source editing did not converge in 8 calls"
+                "coding_tool_budget_exceeded",
+                "Coding cannot hand off an unresolved tool/protocol/validation failure",
             )
+        return reason
+
+    async def _author(self, state: CodingState) -> dict[str, Any]:
+        handoff = self._handoff_reason(state)
+        if handoff is not None:
+            return {"pending_tool_calls": [], "handoff_reason": handoff}
         if state["tool_calls"] >= self._limits.max_file_tool_calls:
             raise CodingRunError(
                 "coding_tool_budget_exceeded", "The coding file-operation budget was exhausted"
@@ -321,15 +384,22 @@ class CodingAgent:
             tool_choice="auto",
         )
         updates = self._usage(state, result)
-        if not result.tool_calls:
+        if not result.tool_calls or (state["snapshot_mode"] and len(result.tool_calls) != 1):
             if state["prompt_retries"] >= 1:
                 raise CodingRunError(
-                    "native_tool_calling_required",
-                    "The model did not return the required coding tool call",
+                    "coding_protocol_error"
+                    if result.tool_calls
+                    else "native_tool_calling_required",
+                    "Coding requires exactly one native tool call; no batch was executed",
                 )
             return {
                 **updates,
                 "prompt_retries": state["prompt_retries"] + 1,
+                "protocol_feedback": (
+                    "Return exactly one native tool call. The previous response was not "
+                    "executed; do not submit a batch. Inspect remaining author_calls_remaining "
+                    "and submit_code_ready when the source is ready for mandatory validation."
+                ),
                 "messages": [
                     *state["messages"],
                     ChatMessage(role="assistant", content=result.text),
@@ -352,6 +422,8 @@ class CodingAgent:
             **updates,
             "pending_tool_calls": calls,
             "prompt_retries": 0,
+            "protocol_feedback": None,
+            "handoff_reason": "model_ready" if calls[0].name == "submit_code_ready" else None,
             "messages": [
                 *state["messages"],
                 AssistantToolCallMessage(
@@ -389,9 +461,11 @@ class CodingAgent:
             }
         )
         # Leave room for bounded failure feedback/diagnostics. No source is omitted.
+        preview_state = state.copy()
+        preview_state["tool_calls"] += 1
         await preflight_request(
             self._provider,
-            self._request_messages(state, sources=sources, operations=operations),
+            self._request_messages(preview_state, sources=sources, operations=operations),
             tools=self._tool_definitions[state["task_id"]],
             tool_choice="auto",
             reserve_bytes=1024,
@@ -485,7 +559,7 @@ class CodingAgent:
         traces = [*state["traces"], static_trace]
         sandbox_runs = state["sandbox_runs"] + 1
         validation = static_result
-        if static_result.status == "succeeded":
+        if self._validation_ok(static_result):
             validation = await self._sandbox.run(
                 SandboxRunRequest(
                     task_id=state["task_id"],
@@ -500,17 +574,27 @@ class CodingAgent:
             )
             traces.append(pytest_trace)
             sandbox_runs += 1
-        if validation.status == "succeeded":
+        if self._workspaces.source_snapshot(state["task_id"]) != snapshot:
+            raise CodingRunError(
+                "coding_source_changed", "Source changed during mandatory coding validation"
+            )
+        if self._validation_ok(validation):
             return {
                 "validation_succeeded": True,
                 "diagnostic": None,
                 "traces": traces,
                 "sandbox_runs": sandbox_runs,
+                "handoff_reason": state["handoff_reason"] or self._completion_trigger(state),
             }
         if state["repair_attempts"] >= self._limits.max_repairs:
             raise CodingRunError(
                 "code_repair_exhausted",
                 f"Code validation still failed after {self._limits.max_repairs} repair attempts",
+            )
+        if self._completion_trigger(state) is not None:
+            raise CodingRunError(
+                "coding_tool_budget_exceeded",
+                "Mandatory coding validation failed without remaining authoring budget",
             )
         consume("code_repairs")
         return {
@@ -520,7 +604,12 @@ class CodingAgent:
             "traces": traces,
             "sandbox_runs": sandbox_runs,
             "messages": [],
+            "handoff_reason": None,
         }
+
+    @staticmethod
+    def _validation_ok(result: SandboxRunResult) -> bool:
+        return result.status == "succeeded" and result.exit_code == 0 and not result.truncated
 
     def _finalize(self, state: CodingState) -> dict[str, Any]:
         files = self._workspaces.list_source_files(state["task_id"])
@@ -561,10 +650,14 @@ class CodingAgent:
             state,
             call_id=f"sandbox-{log_number}",
             tool_name=tool_name,
-            arguments={},
+            arguments=(
+                {"handoff_reason": state["handoff_reason"] or self._completion_trigger(state)}
+                if state["snapshot_mode"]
+                else {}
+            ),
             output=output,
-            succeeded=result.status == "succeeded",
-            error_code=None if result.status == "succeeded" else ErrorParser.parse(result).category,
+            succeeded=self._validation_ok(result),
+            error_code=None if self._validation_ok(result) else ErrorParser.parse(result).category,
             duration_ms=result.duration_ms,
             sequence=log_number,
         )
@@ -596,16 +689,17 @@ class CodingAgent:
 
     @staticmethod
     def _route_after_author(state: CodingState) -> str:
+        if state["handoff_reason"] is not None:
+            return "validate"
         calls = state["pending_tool_calls"]
         if not calls:
             return "author"
         return "validate" if calls[0].name == "submit_code_ready" else "tool"
 
-    @staticmethod
-    def _route_after_tool(state: CodingState) -> str:
+    def _route_after_tool(self, state: CodingState) -> str:
         calls = state["pending_tool_calls"]
         if not calls:
-            return "author"
+            return "validate" if self._handoff_reason(state) is not None else "author"
         return "validate" if calls[0].name == "submit_code_ready" else "tool"
 
     @staticmethod
