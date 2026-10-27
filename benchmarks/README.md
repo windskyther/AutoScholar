@@ -1316,13 +1316,23 @@ The targeted triad still permits at most 36 new LLM requests (12/task), 0 Tavily
 the exact committed-source plan requires separate paid confirmation. Full paired ablations
 remain separate. See [the v6 preparation report](phase10-recovery-authority-v6-preparation-20261027.md).
 
+2026-10-27 separately approved v6 live result: **29 LLM / 0 Tavily**, **156516 tokens**,
+all HTTP 200 with valid native JSON and known usage matching durable accounting. Normal
+passed in 7 requests, recovery passed in 10 with unchanged code/plan and exactly two training
+runs. No Replanning used 12 requests but stopped after eight successful edits without
+`submit_code_ready`; no validation, training or injected fault occurred. Its original
+`coding_tool_budget_exceeded` cause and failed parent are preserved. Three-task measurement
+is complete, targeted acceptance remains **false**. All 575 historical hashes are unchanged;
+owned temporary resources were cleaned. Next work is free Coding convergence analysis before
+any separately approved new live scope. See [the v6 live record](../docs/releases/2026-10-27-v6-acceptance.md).
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
 closure now have passing evidence, including separately approved tool and Chinese v2
 confirmations. Original frozen v1 failures remain visible and are not retroactively passed.
-Real normal baseline has passed in the closed-corpus pilot, but fault recovery, full paired
-real-LLM ablations and overall acceptance remain incomplete; any additional
+Real normal baseline and fault recovery have passed in the v6 closed-corpus pilot. The current
+No Replanning negative control, full paired real-LLM ablations and overall acceptance remain incomplete; any additional
 paid request needs separate owner approval. Under the owner's 2026-10-26 policy, independently
 verified modules may be integrated into main before the entire Phase is accepted. Runtime
 repairs from `edf2f1d` were isolated and tested on main (470 passed, 3 skipped); the evaluation
