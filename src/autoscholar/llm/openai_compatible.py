@@ -149,6 +149,16 @@ class OpenAICompatibleProvider:
             reasoning_content = None
         tool_calls: list[ToolCall] = []
         if message is not None and message.tool_calls:
+            if finish_reason == "length":
+                raise LLMResponseError(
+                    code="llm_response_truncated",
+                    message="The language model tool response was truncated; no tool was executed",
+                    usage=usage,
+                    retryable=False,
+                    model=response.model or self._model,
+                    finish_reason=finish_reason,
+                    validation_reason="output_truncated",
+                )
             for typed_call in message.tool_calls:
                 raw_call: Any = typed_call
                 try:

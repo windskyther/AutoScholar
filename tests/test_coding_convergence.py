@@ -271,12 +271,13 @@ async def test_automatic_validation_does_not_override_a_real_unmet_requirement(
             if len(self.payloads) == 1:
                 return call("create_file", {"path": "provenance.txt", "content": "unverified"})
             source = payload["source_files"]["train.py"]
+            anchor = source.rstrip("\n").splitlines()[-1] + "\n"
             return call(
                 "edit_file",
                 {
                     "path": "train.py",
-                    "old_text": source,
-                    "new_text": source + "\n# harmless edit\n",
+                    "old_text": anchor,
+                    "new_text": anchor + f"\n# harmless edit {len(self.payloads)}\n",
                 },
             )
 
