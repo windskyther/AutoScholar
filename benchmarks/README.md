@@ -1390,9 +1390,16 @@ cases meet expected controls, with 19 actual training runs and five rejecting ch
 oracles. The 106 scripted callbacks are not real-model measurements; vendor requests are
 **0**. All source/history fingerprints match and dedicated temporary resources are cleaned.
 
-The proposed new ceiling is **180 LLM / 0 Tavily**, at most 12 requests and a 120000-token
-stopping threshold per case. It remains unapproved; free scripted-model Docker verification
-is separate from real-model measurement. See the
+The original proposed ceiling was **180 LLM / 0 Tavily**, at most 12 requests and a 120000-token
+stopping threshold per case. After separate approval, the first normal baseline stopped on
+an output-truncated coding response: **7 LLM / 0 Tavily**, **31399 tokens** (17088 input,
+14311 output). The last response reached 8192 output tokens and contained two edits, the
+second with invalid JSON; neither edit was executed. No validation, training or injected
+fault occurred. All calls are accounted, with no open requests; the baseline remains
+`provider_error` / null task success and the other 14 cases remain unattempted. The
+728 prior and 24 new primary hashes are unchanged; owned temporary resources are cleaned.
+The consumed v8 scope cannot be replayed or reset with another approval ID. See the
+[v8 live stop report](../docs/releases/2026-10-28-v8-live-result.md) and
 [v8 preparation report](phase10-paired-v8-preparation-20261028.md).
 
 ## Next stages
