@@ -1402,6 +1402,23 @@ The consumed v8 scope cannot be replayed or reset with another approval ID. See 
 [v8 live stop report](../docs/releases/2026-10-28-v8-live-result.md) and
 [v8 preparation report](phase10-paired-v8-preparation-20261028.md).
 
+### Free snapshot-output repair (2026-10-28)
+
+Snapshot tools retain their names but advertise and enforce small local edits (old/new each
+1024 characters, new file 2048, ready summary 240, combined arguments at most 4096 UTF-8 bytes).
+Complete source, objective, request preflight and mandatory validation remain intact. Snapshot
+authoring requires native calls. Any native tool completion marked `length` is rejected before
+exposing calls, with known usage charged and no automatic retry, even if its JSON looks complete.
+
+Independent main full regression: **494 passed / 3 skipped**; core retest **47 passed**.
+The initial full dev run's one old `auto` assertion and the later corrected test are recorded
+separately; the old XML is preserved. Ruff/mypy pass. Actual Docker scripts reject invalid local
+source, validate bounded edits and cover normal/recovery/No Replanning outcomes; saved v8 response
+replay makes no write or sandbox run. New vendor requests are **0**, and 760 protected file hashes
+remain unchanged. Verified runtime changes are eligible for partial main publication; paid
+behavior on the new runtime still requires a separately frozen confirmation. See the
+[repair and evidence scope](../docs/releases/2026-10-28-coding-output-bounds.md).
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider

@@ -404,7 +404,7 @@ def test_workspace_preview_preserves_disk_and_matches_utf8_newlines_and_edit(
 
 
 @pytest.mark.parametrize("operation", ["create_file", "edit_file"])
-async def test_oversized_source_write_is_rejected_then_ready_runs_mandatory_checks(
+async def test_oversized_coding_arguments_are_rejected_then_ready_runs_mandatory_checks(
     tmp_path: Path, operation: str
 ) -> None:
     requests: list[dict[str, Any]] = []
@@ -417,12 +417,12 @@ async def test_oversized_source_write_is_rejected_then_ready_runs_mandatory_chec
         if len(requests) == 2:
             source = json.loads(payload["messages"][-1]["content"])["source_files"]
             arguments = (
-                {"path": "extra.py", "content": "#" + "中文" * 6000}
+                {"path": "extra.py", "content": "#" + "x" * 2048}
                 if operation == "create_file"
                 else {
                     "path": "train.py",
-                    "old_text": source["train.py"],
-                    "new_text": source["train.py"] + "\n#" + "中文" * 6000,
+                    "old_text": source["train.py"].splitlines()[0],
+                    "new_text": "#" + "x" * 1024,
                 }
             )
             return reply(operation, arguments)
@@ -430,8 +430,9 @@ async def test_oversized_source_write_is_rejected_then_ready_runs_mandatory_chec
             previous = json.loads(requests[1]["messages"][-1]["content"])
             current = json.loads(payload["messages"][-1]["content"])
             assert current["source_files"] == previous["source_files"]
-            assert current["recent_operations"][-1]["status"] == "failed"
-            assert "file unchanged" in current["recent_operations"][-1]["output"]
+            assert current["recent_operations"] == previous["recent_operations"]
+            assert "at most" in current["protocol_feedback"]
+            assert "no arguments were truncated" in current["protocol_feedback"]
             return reply(
                 "submit_code_ready", {"summary": "Existing seeded code satisfies requirements"}
             )
@@ -468,8 +469,7 @@ async def test_oversized_source_write_is_rejected_then_ready_runs_mandatory_chec
             assert task
             traces = task.tool_calls
             rejected = [t for t in traces if t.tool_name == operation]
-            assert len(rejected) == 1 and rejected[0].status == "failed"
-            assert rejected[0].error_code == "coding_snapshot_too_large"
+            assert not rejected  # Protocol rejected before any file tool was executed.
             assert {"static_check", "run_pytest"}.issubset(
                 {t.tool_name for t in traces if t.status == "succeeded"}
             )

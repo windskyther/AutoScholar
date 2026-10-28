@@ -1440,6 +1440,12 @@ Coding 检查及一次训练后触发指标故障，并按关闭重规划规则�
 详见 [v8 实测停止记录](docs/releases/2026-10-28-v8-live-result.md)
 和 [v8 完整消融准备](benchmarks/phase10-paired-v8-preparation-20261028.md)。
 
+随后免费收紧 Snapshot Coding：只允许短小局部编辑，写入前校验参数大小；
+截断的原生工具响应明确停止，保持用量记账且不执行部分调用。
+独立 main 完整回归 **494 passed、3 skipped**，核心复测 47 项、真实 Docker 控制流程和
+原始截断响应离线回放通过。本轮新增供应商调用 **0**；新版真实确认尚未执行，v8 原结果保留。
+详见 [Coding 输出边界修复](docs/releases/2026-10-28-coding-output-bounds.md)。
+
 ## 开发路线
 
 | 阶段 | 重点 |
