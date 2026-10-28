@@ -166,7 +166,7 @@ async def test_autonomous_passes_with_negative_results_and_real_source_handoff(
         training = next(item for item in sandbox.requests if item.action == "run_python")
         assert training.files["train.py"] == service.workspace.read_text(child.id, "train.py")
         assert len(await service.workflows.history(result.task.id, "reviews")) == 1
-        assert all(item["tool_choice"] == "auto" for item in provider.calls)
+        assert [item["tool_choice"] for item in provider.calls] == ["auto", "required", "auto"]
     finally:
         await engine.dispose()
 
