@@ -1357,16 +1357,32 @@ Related regression: **118 passed**, including the full mock-wire v7 entrypoint, 
 history gates; Ruff/mypy pass. One scripted-model/actual-Docker control reaches mandatory
 checks, one real training and one injected fault, then stops as expected. Ten callbacks fit
 the twelve-call budget; actual vendor requests are **0**. Owned temporary resources were
-cleaned. The exact clean-source plan still requires separate paid confirmation. See the
+cleaned. The original clean-source plan required separate paid confirmation. See the
 [v7 preparation report](phase10-coding-control-v7-preparation-20261027.md).
+
+### Single-control acceptance v7 measured result
+
+After separate approval, the frozen `bc66041` run used **7 LLM / 0 Tavily**, with **30605**
+known vendor tokens (21396 input, 9209 output). One real training reached the injected
+metrics fault and stopped with `evaluation_replanning_disabled`; no replan or second
+training occurred. The task remains failed and the intended negative-control contract
+passes. Every request returned HTTP 200 with valid native JSON; accounting matches and
+no request remains open. The model selected ready without edits, so edit-boundary handoff
+coverage still comes from the free scripted tests, not this real-model run.
+
+The 2026-10-28 audit verifies 693 protected older files and 29 new primary files unchanged.
+The dedicated controller/network and owned children are cleaned; no whole-task replay
+occurred. Unused allowance is not reusable. See the
+[v7 measured report](../docs/releases/2026-10-28-v7-control-acceptance.md).
 
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
 closure now have passing evidence, including separately approved tool and Chinese v2
 confirmations. Original frozen v1 failures remain visible and are not retroactively passed.
-Real normal baseline and fault recovery have passed in the v6 closed-corpus pilot. The current
-No Replanning negative control, full paired real-LLM ablations and overall acceptance remain incomplete; any additional
+Real normal baseline and fault recovery passed in the v6 closed-corpus pilot; the separate v7
+No Replanning control now passes on its own frozen source. This is not a fresh same-source triad.
+Full paired real-LLM ablations and overall acceptance remain incomplete; any additional
 paid request needs separate owner approval. Under the owner's 2026-10-26 policy, independently
 verified modules may be integrated into main before the entire Phase is accepted. Runtime
 repairs from `edf2f1d` were isolated and tested on main (470 passed, 3 skipped); the evaluation
