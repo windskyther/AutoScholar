@@ -1375,6 +1375,26 @@ The dedicated controller/network and owned children are cleaned; no whole-task r
 occurred. Unused allowance is not reusable. See the
 [v7 measured report](../docs/releases/2026-10-28-v7-control-acceptance.md).
 
+### Paired v8 preparation
+
+A separate source-bound v8 entrypoint schedules all 15 cases (three scenarios, five variants)
+without reusing mixed-version v6/v7 results. It protects 728 older files in bounded shards,
+preserves all eight consumed claims, and rejects source/fixture/history changes before dispatch.
+The original request and output caps remain in force. Failed scenario baselines and any
+provider/accounting/intervention/model-identity/cleanup fault stop the remaining schedule.
+Exact paired binary tests and four-way Holm adjustment require all three same-identity pairs;
+this small pilot cannot establish a general component-benefit claim.
+
+Related regression: **204 passed**; Ruff/mypy pass. All **15/15 scripted-model/actual-Docker**
+cases meet expected controls, with 19 actual training runs and five rejecting checkpoint
+oracles. The 106 scripted callbacks are not real-model measurements; vendor requests are
+**0**. All source/history fingerprints match and dedicated temporary resources are cleaned.
+
+The proposed new ceiling is **180 LLM / 0 Tavily**, at most 12 requests and a 120000-token
+stopping threshold per case. It remains unapproved; free scripted-model Docker verification
+is separate from real-model measurement. See the
+[v8 preparation report](phase10-paired-v8-preparation-20261028.md).
+
 ## Next stages
 
 Engineering, bounded default-cache neural retrieval and the mixed-version bounded provider
