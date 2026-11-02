@@ -9,6 +9,14 @@ from uuid import uuid4
 
 import httpx
 
+from autoscholar.evaluation.baseline_protocol import (
+    CLAIM as BASELINE_CLAIM,
+)
+from autoscholar.evaluation.baseline_protocol import (
+    BaselineLedger,
+    baseline_contract,
+    baseline_summary,
+)
 from autoscholar.evaluation.component_fixture import load_fixture
 from autoscholar.evaluation.datasets import payload_digest
 from autoscholar.evaluation.docker_sandbox import DockerEvaluationSandbox
@@ -35,11 +43,25 @@ from autoscholar.evaluation.workflow_fixture import WorkflowFixture
 from autoscholar.llm.openai_compatible import OpenAICompatibleProvider
 
 
-def prepare_paired(root: Path, history: Path) -> Path:
+def selected_contract(version: int) -> dict[str, Any]:
+    if type(version) is not int or version not in (8, 9):
+        raise ValueError("Only paired v8 or single baseline v9 supported")
+    return baseline_contract() if version == 9 else paired_contract()
+
+
+def checked_history(history: Path, base: Path, version: int) -> dict[str, str]:
+    protected, binding = history_snapshot(history, base)
+    if version == 9 and CLAIM not in protected:
+        raise ValueError("Baseline v9 must protect the consumed v8 claim")
+    return binding
+
+
+def prepare_paired(root: Path, history: Path, version: int = 8) -> Path:
+    contract = selected_contract(version)
     revision, dirty = _git_state(root)
     if not revision or dirty is not False:
         raise ValueError("Prepare a clean committed source tree")
-    _, binding = history_snapshot(history, root / "data/evaluation")
+    binding = checked_history(history, root / "data/evaluation", version)
     _, fixture = load_fixture(
         root / "benchmarks/ablations/workflow_fixture_v2.json", WorkflowFixture
     )
@@ -49,7 +71,7 @@ def prepare_paired(root: Path, history: Path) -> Path:
         directory / "plan.json",
         {
             "schema_version": 1,
-            "contract": paired_contract(),
+            "contract": contract,
             "git_revision": revision,
             "fixture_sha256": fixture,
             "history_index": binding,
@@ -61,7 +83,8 @@ def prepare_paired(root: Path, history: Path) -> Path:
     return directory
 
 
-def load_paired_plan(path: Path, root: Path) -> dict[str, Any]:
+def load_paired_plan(path: Path, root: Path, version: int = 8) -> dict[str, Any]:
+    contract = selected_contract(version)
     base = root / "data/evaluation"
     plan, _ = read_public(path.resolve(), base)
     revision, dirty = _git_state(root)
@@ -71,7 +94,7 @@ def load_paired_plan(path: Path, root: Path) -> dict[str, Any]:
     if (
         not isinstance(plan, dict)
         or plan.get("schema_version") != 1
-        or plan.get("contract") != paired_contract()
+        or plan.get("contract") != contract
         or not revision
         or dirty is not False
         or plan.get("git_revision") != revision
@@ -84,21 +107,26 @@ def load_paired_plan(path: Path, root: Path) -> dict[str, Any]:
     binding = plan.get("history_index")
     if not isinstance(binding, dict) or not isinstance(binding.get("path"), str):
         raise ValueError("Missing historical binding")
-    if history_snapshot(base / binding["path"], base)[1] != binding:
+    if checked_history(base / binding["path"], base, version) != binding:
         raise ValueError("Historical index changed")
     return plan
 
 
 async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path, bool]:
+    version = getattr(args, "protocol_version", 8)
+    contract = selected_contract(version)
+    cap = contract["physical_limits"]["llm"]
+    label = "Baseline v9" if version == 9 else "Paired v8"
     if not args.allow_paid or not args.plan or not args.approval_id or not args.sandbox_container:
         raise ValueError(
             "Paid paired execution requires separate approval, exact plan and controller"
         )
-    plan = load_paired_plan(args.plan, repo_root)
+    plan = load_paired_plan(args.plan, repo_root, version)
     base = (repo_root / "data/evaluation").resolve()
-    claim, grant = base / CLAIM, approval_path(base, args.approval_id)
+    claim = base / (BASELINE_CLAIM if version == 9 else CLAIM)
+    grant = approval_path(base, args.approval_id)
     if claim.exists() or grant.exists():
-        raise ValueError("Paired v8 already claimed; no reset or task replay")
+        raise ValueError(f"{label} already claimed; no reset or task replay")
     settings, _ = load_explicit_settings(repo_root / ".env", require_tavily=False)
     endpoint = httpx.URL(settings.llm_base_url.rstrip("/") + "/chat/completions")
     if endpoint.scheme != "https" or endpoint.userinfo or endpoint.query or endpoint.fragment:
@@ -109,14 +137,17 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
     )
     sandbox = DockerEvaluationSandbox(args.sandbox_container)
     resources = sandbox_resources(await sandbox.health(), dataset=True)
+    if version == 9 and resources != contract["resources"]:
+        await sandbox.close()
+        raise ValueError("Frozen baseline resources changed")
     if not await no_owned_children(sandbox):
         raise ValueError("Dedicated controller already owns children")
-    directory = base / ("live-paired-v8-" + uuid4().hex)
+    directory = base / (("live-baseline-v9-" if version == 9 else "live-paired-v8-") + uuid4().hex)
     directory.mkdir(exist_ok=False)
     _write_json(
         directory / "manifest.json",
         {
-            "protocol_version": 8,
+            "protocol_version": version,
             "git_revision": plan["git_revision"],
             "prepared_plan": plan,
             "plan_sha256": payload_digest(plan),
@@ -128,7 +159,11 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
     )
     with claim.open("x", encoding="utf-8") as stream:
         json.dump({"run_id": directory.name, "plan_sha256": payload_digest(plan)}, stream)
-    ledger = PairedLedger(grant, run_id=directory.name)
+    ledger = (
+        BaselineLedger(grant, run_id=directory.name)
+        if version == 9
+        else PairedLedger(grant, run_id=directory.name)
+    )
     transport = GuardedTransport(
         provider="llm",
         endpoint=str(endpoint),
@@ -146,7 +181,7 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
                 settings, http_client=client, request_validator=transport.validate_payload
             )
             for task in plan["contract"]["tasks"]:
-                load_paired_plan(args.plan, repo_root)
+                load_paired_plan(args.plan, repo_root, version)
                 scenario, _, variant = task.partition("-")
                 if variant not in WORKFLOW_VARIANTS:
                     raise ValueError("Unknown frozen variant")
@@ -154,7 +189,7 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
                     update={"prompt": fixture.scripts[scenario].prompt + SUFFIX}
                 )
                 provider = RepairWorkflowProvider(native, transport, task)
-                provider.verify_source = lambda: load_paired_plan(args.plan, repo_root)
+                provider.verify_source = lambda: load_paired_plan(args.plan, repo_root, version)
                 target = directory / task
                 target.mkdir(exist_ok=False)
                 record: dict[str, Any] = {
@@ -177,7 +212,7 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
                 }
                 records.append(record)
                 _write_json(directory / "cases.json", records)
-                print(f"Paired v8 {task}; LLM {len(ledger.attempts)}/180", flush=True)
+                print(f"{label} {task}; LLM {len(ledger.attempts)}/{cap}", flush=True)
                 try:
                     async with asyncio.timeout(660):
                         record.update(
@@ -189,7 +224,7 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
                                 provider=provider,
                                 sandbox=sandbox,
                                 resources=resources,
-                                protocol_version=8,
+                                protocol_version=version,
                             )
                         )
                 finally:
@@ -212,6 +247,8 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
                     raise ValueError(
                         "Baseline/provider/accounting/intervention/identity/cleanup gate failed"
                     )
+                record["execution_gates_passed"] = True
+                _write_json(directory / "cases.json", records)
     except Exception as exc:
         print(
             f"Paired pilot stopped ({type(exc).__name__}); partial evidence retained; no replay",
@@ -222,15 +259,21 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
         await sandbox.close()
         _write_json(directory / "request_ledger.json", ledger.data)
         try:
-            load_paired_plan(args.plan, repo_root)
+            load_paired_plan(args.plan, repo_root, version)
             unchanged = True
         except (OSError, ValueError):
             unchanged = False
-        summary = paired_summary(records, ledger, clean=clean, unchanged=unchanged)
+        if isinstance(ledger, BaselineLedger):
+            summary = baseline_summary(records, ledger, clean=clean, unchanged=unchanged)
+            accepted = bool(summary["baseline_acceptance"])
+        else:
+            summary = paired_summary(records, ledger, clean=clean, unchanged=unchanged)
+            accepted = bool(summary["paired_pilot_acceptance"])
         _write_json(directory / "acceptance.json", summary)
         (directory / "evaluation_report.md").write_text(
-            f"# Paired v8\n\nAcceptance: {summary['paired_pilot_acceptance']}. "
-            f"Physical LLM requests: {len(ledger.attempts)}/180; Tavily 0.\n\n" + summary["scope"],
+            f"# {label}\n\nAcceptance: {accepted}. "
+            f"Physical LLM requests: {len(ledger.attempts)}/{cap}; Tavily 0.\n\n"
+            + summary["scope"],
             encoding="utf-8",
         )
-    return directory, bool(summary["paired_pilot_acceptance"])
+    return directory, accepted

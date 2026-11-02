@@ -168,9 +168,17 @@ class GuardedTransport(httpx.AsyncBaseTransport):
             and ledger.data.get("scope") == "phase10_paired_workflow_v8"
             and ledger.limits == {"llm": 180, "tavily": 0}
         )
+        output_baseline = (
+            ledger.data.get("protocol_version") == 9
+            and ledger.data.get("scope") == "phase10_output_baseline_v9"
+            and ledger.limits == {"llm": 12, "tavily": 0}
+            and ledger.data.get("tasks") == ["normal-baseline"]
+        )
         if max_output_tokens != MAX_OUTPUT_TOKENS and not (
             max_output_tokens == 8192
-            and (versioned_pilot or repair_pilot or coding_control or paired_pilot)
+            and (
+                versioned_pilot or repair_pilot or coding_control or paired_pilot or output_baseline
+            )
         ):
             raise ValueError("Expanded output cap requires the versioned remaining-budget pilot")
         self.max_output_tokens = max_output_tokens

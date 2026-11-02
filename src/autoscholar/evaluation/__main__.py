@@ -357,6 +357,7 @@ def main() -> int:
         help="Prepare 15-case v8 plan offline; paid execution requires separate approval",
     )
     paired.add_argument("--history-index", type=Path)
+    paired.add_argument("--protocol-version", type=int, choices=(8, 9), default=8)
     paired.add_argument("--allow-paid", action="store_true")
     paired.add_argument("--plan", type=Path)
     paired.add_argument("--approval-id")
@@ -378,11 +379,16 @@ def main() -> int:
             if not args.allow_paid:
                 if args.history_index is None:
                     raise ValueError("Free preparation requires --history-index")
-                directory = prepare_paired(REPO_ROOT, args.history_index)
-                print(f"Paired v8 plan prepared; external API calls 0: {directory}")
+                directory = prepare_paired(REPO_ROOT, args.history_index, args.protocol_version)
+                print(
+                    f"Protocol v{args.protocol_version} prepared; external API calls 0: {directory}"
+                )
                 return 0
             directory, accepted = asyncio.run(run_paired(args, repo_root=REPO_ROOT))
-            print(f"Paired v8 {'passed' if accepted else 'NOT accepted'}: {directory}")
+            print(
+                f"Protocol v{args.protocol_version} {'passed' if accepted else 'NOT accepted'}: "
+                f"{directory}"
+            )
             return 0 if accepted else 1
         if args.command == "repairs":
             from autoscholar.evaluation.repair_validation import prepare_repairs, run_repairs

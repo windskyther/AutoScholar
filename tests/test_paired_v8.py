@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from autoscholar.evaluation import paired_validation as paired
+from autoscholar.evaluation.baseline_protocol import baseline_contract
 from autoscholar.evaluation.live_ablation import execute_task
 from autoscholar.evaluation.live_ablation_contract import TASKS
 from autoscholar.evaluation.paired_protocol import (
@@ -37,20 +38,23 @@ def write(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
-def history(root: Path) -> Path:
+def history(root: Path, version: int = 8) -> Path:
     base = root / "data/evaluation"
     rows = {}
-    for name in (*HISTORICAL_CLAIMS, "old-v6/acceptance.json"):
+    names = (*HISTORICAL_CLAIMS, "old-v6/acceptance.json")
+    if version == 9:
+        names = (*names, CLAIM)
+    for name in names:
         target = base / name
         write(target, {"old_failed_result": False})
         rows[name] = hashlib.sha256(target.read_bytes()).hexdigest()
     return write_history(base, rows)
 
 
-def prepare(root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def prepare(root: Path, monkeypatch: pytest.MonkeyPatch, version: int = 8) -> Path:
     monkeypatch.setattr(paired, "_git_state", lambda root: ("a" * 40, False))
     monkeypatch.setattr(paired, "load_fixture", lambda *args: (fixture(), "b" * 64))
-    return paired.prepare_paired(root, history(root)) / "plan.json"
+    return paired.prepare_paired(root, history(root, version), version) / "plan.json"
 
 
 @pytest.mark.parametrize("changed", ["source", "fixture", "old_result", "claim", "shard", "index"])
@@ -158,17 +162,28 @@ def test_one_shot_180_ceiling_and_only_approved_output_cap(tmp_path: Path) -> No
             )
 
 
-@pytest.mark.parametrize("stopping", [None, "baseline", "accounting", "resource", "identity"])
+@pytest.mark.parametrize(
+    "stopping", [None, "baseline", "accounting", "resource", "identity", "truncated"]
+)
+@pytest.mark.parametrize("version", [8, 9])
 async def test_mock_wire_full_schedule_or_first_baseline_stop(
-    wire_root: Path, monkeypatch: pytest.MonkeyPatch, stopping: str | None
+    wire_root: Path, monkeypatch: pytest.MonkeyPatch, stopping: str | None, version: int
 ) -> None:
     tmp_path = wire_root
-    path = prepare(tmp_path, monkeypatch)
+    if version == 9:
+        mock_contract = baseline_contract()
+        mock_contract["resources"] = RESOURCES
+        monkeypatch.setattr(paired, "baseline_contract", lambda: mock_contract)
+    path = prepare(tmp_path, monkeypatch, version)
     monkeypatch.setattr(
         paired, "load_explicit_settings", lambda *args, **kwargs: (configured_settings(), None)
     )
     monkeypatch.setattr(paired, "DockerEvaluationSandbox", lambda *args: WorkflowReplaySandbox())
-    monkeypatch.setattr(paired, "sandbox_resources", lambda *args, **kwargs: RESOURCES)
+    monkeypatch.setattr(
+        paired,
+        "sandbox_resources",
+        lambda *args, **kwargs: RESOURCES,
+    )
 
     cleanup_checks = 0
 
@@ -226,7 +241,11 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
                 "choices": [
                     {
                         "index": 0,
-                        "finish_reason": "tool_calls",
+                        "finish_reason": (
+                            "length"
+                            if stopping == "truncated" and call.name == "submit_code_ready"
+                            else "tool_calls"
+                        ),
                         "message": {
                             "role": "assistant",
                             "content": None,
@@ -254,18 +273,23 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
 
     monkeypatch.setattr(paired, "GuardedTransport", transport)
     args = argparse.Namespace(
-        allow_paid=True, plan=path, approval_id="mock-v8-only", sandbox_container="fake"
+        allow_paid=True,
+        plan=path,
+        approval_id=f"mock-v{version}-only",
+        sandbox_container="fake",
+        protocol_version=version,
     )
     directory, accepted = await paired.run_paired(args, repo_root=tmp_path)
     rows = json.loads((directory / "cases.json").read_text())
     summary = json.loads((directory / "acceptance.json").read_text())
-    assert [r["task"] for r in rows] == list(TASKS[:1] if stopping else TASKS)
+    assert [r["task"] for r in rows] == list(TASKS[:1] if stopping or version == 9 else TASKS)
     assert accepted is (not stopping)
-    assert summary["paired_measurement_complete"] is (not stopping)
+    key = "baseline_acceptance" if version == 9 else "paired_measurement_complete"
+    assert summary[key] is (not stopping)
     assert summary["phase10_overall_acceptance"] is False
     assert summary["statistical_benefit_claim"] is False
-    assert summary["physical_requests"]["llm"] <= 180
-    if not stopping:
+    assert summary["physical_requests"]["llm"] <= (12 if version == 9 else 180)
+    if not stopping and version == 8:
         assert all(c["paired"] == 3 for c in summary["contrasts"])
         assert all(
             c["exact_p"] is not None and c["holm_p"] is not None for c in summary["contrasts"]
