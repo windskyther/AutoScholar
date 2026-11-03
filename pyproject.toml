@@ -24,6 +24,7 @@ dependencies = [
     "python-multipart>=0.0.20,<1",
     "qdrant-client[fastembed]>=1.19,<2",
     "redis>=6,<8",
+    "referencing>=0.37,<1",
     "sqlalchemy[asyncio]>=2.0,<3",
     "structlog>=25,<26",
     "uvicorn[standard]>=0.35,<1",

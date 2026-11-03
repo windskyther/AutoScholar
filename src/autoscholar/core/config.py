@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr | None = None
     llm_model: str | None = None
     llm_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+    llm_compatibility_profile: Literal["auto", "generic", "deepseek"] = "auto"
 
     tavily_api_key: SecretStr | None = None
     semantic_scholar_api_key: SecretStr | None = None
