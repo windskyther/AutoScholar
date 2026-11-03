@@ -1023,9 +1023,14 @@ Coding 收敛控制已补充：显示剩余额度，在编辑或调用预留边�
 四项免费 Docker 验证符合预期，新增供应商请求为 0。v6 原失败结果保持原值，
 详见 [Coding 收敛修复](docs/releases/2026-10-27-coding-convergence.md)。
 
-## Phase 10：AutoScholar-Eval（构建中）
+## Phase 10：AutoScholar-Eval（评测工程已验证，真实配对待验）
 
 Phase 10 建立统一的 RAG、Research、Tool、Coding、Experiment 与端到端评测，及 Planner、Reranker、Reviewer、Memory、Replanning 消融。工程夹具、本地真实组件与真实供应商能力结果必须分开；付费联测仅在单独授权并显式开启时执行，不把固定模型响应的成功率当成真实模型能力。
+
+2026-11-03 当前状态：评测模块与 main 的最终组合回归 **1253 passed、3 skipped**，Ruff/mypy 通过。
+最新 v13 真实试验正常场景五组通过，恢复基线因根计划偏离固定 DAG 提前失败，九组未执行；
+实际新增 40 次 LLM、0 次搜索、148682 token。固定 DAG 的执行前检查和 Windows 工作树测试路径已免费修复，
+旧结果不改分、不自动付费重跑。**Phase 10 总验收仍未完成**；当前结论和剩余范围见 [公开验收报告](evaluation_report.md)。
 
 ### 10A：统一评测契约与运行记录
 
@@ -1466,7 +1471,7 @@ Coding 检查及一次训练后触发指标故障，并按关闭重规划规则�
 | Phase 7 | 持久化队列、Checkpoint、暂停恢复、人工审批、项目/经验 Memory |
 | Phase 8 | MCP 工具平台（无付费 CPU 验收、轻量真实 LLM/Tavily 补测通过） |
 | Phase 9 | 本地 Web 工作台（9A–9G 无付费 CPU 验收通过） |
-| Phase 10 | AutoScholar-Eval：统一评测、基准数据、消融与报告（构建中） |
+| Phase 10 | AutoScholar-Eval：评测工程及组合回归通过，完整真实配对待验 |
 | Phase 11 | 安全加固、CI/CD 与部署 |
 
 ## 分支与提交约定
