@@ -11,11 +11,13 @@ CLAIM = "live-paired-v11-claim.json"
 SCOPE = "phase10_repaired_paired_v11"
 RETRY_CLAIM = "live-paired-v12-claim.json"
 RETRY_SCOPE = "phase10_repaired_retry_v12"
+FINAL_CLAIM = "live-paired-v13-claim.json"
+FINAL_SCOPE = "phase10_final_paired_v13"
 
 
 def repaired_paired_contract(version: int = 11) -> dict[str, Any]:
-    if type(version) is not int or version not in (11, 12):
-        raise ValueError("Only repaired paired versions 11 and 12 supported")
+    if type(version) is not int or version not in (11, 12, 13):
+        raise ValueError("Only repaired paired versions 11 through 13 supported")
     contract = paired_contract()
     repaired = baseline_contract(10)
     contract.update(
@@ -43,6 +45,29 @@ def repaired_paired_contract(version: int = 11) -> dict[str, Any]:
                 "Same repaired runtime and 180/0 ceiling; historical grants and observations "
                 "stay separate. Three heterogeneous pairs per contrast; no powered benefit "
                 "claim or full Phase 10 acceptance. No automatic whole-task retry."
+            ),
+        )
+    if version == 13:
+        contract.update(
+            protocol_version=13,
+            scope=FINAL_SCOPE,
+            previous_attempt_scope=RETRY_SCOPE,
+            coding_schema_feedback={
+                "snapshot_only": True,
+                "complete_local_schema_rejection_only": True,
+                "known_consistent_usage_and_physical_receipt_required": True,
+                "shares_one_task_correction_with_coordinator": True,
+                "successful_edit_does_not_reset_correction": True,
+                "rejected_batch_executes_no_tools": True,
+                "existing_call_token_and_reserve_limits_preserved": True,
+            },
+            limitations=(
+                "One authorized 15-task final paired engineering run after the bounded Coding "
+                "schema-feedback fix; no separate paid warmup. All observations are new on "
+                "one frozen source. Same 180/0 ceiling and 12 per task. Three heterogeneous "
+                "pairs per contrast, no powered component-benefit claim. Overall Phase 10 "
+                "acceptance requires the separate final evidence and integration audit. "
+                "No old grant reuse or automatic whole-task retry."
             ),
         )
     return contract

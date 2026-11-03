@@ -26,7 +26,11 @@ from autoscholar.evaluation.paired_protocol import (
 )
 from autoscholar.evaluation.provider_transport import GuardedTransport
 from autoscholar.evaluation.repaired_paired import CLAIM as REPAIRED_PAIRED_CLAIM
-from autoscholar.evaluation.repaired_paired import repaired_paired_contract, repaired_paired_summary
+from autoscholar.evaluation.repaired_paired import (
+    RETRY_CLAIM,
+    repaired_paired_contract,
+    repaired_paired_summary,
+)
 from autoscholar.evaluation.workflow_knowledge import PUBLIC_KNOWLEDGE
 from autoscholar.llm.models import ChatMessage, ConversationMessage, ToolDefinition
 from tests.test_evaluation_workflow import RESOURCES, WorkflowReplaySandbox
@@ -45,14 +49,16 @@ def history(root: Path, version: int = 8) -> Path:
     base = root / "data/evaluation"
     rows = {}
     names = (*HISTORICAL_CLAIMS, "old-v6/acceptance.json")
-    if version in (9, 10, 11, 12):
+    if version in (9, 10, 11, 12, 13):
         names = (*names, CLAIM)
-    if version in (10, 11, 12):
+    if version in (10, 11, 12, 13):
         names = (*names, BASELINE_CLAIM)
-    if version in (11, 12):
+    if version in (11, 12, 13):
         names = (*names, COMPATIBILITY_CLAIM)
-    if version == 12:
+    if version in (12, 13):
         names = (*names, REPAIRED_PAIRED_CLAIM)
+    if version == 13:
+        names = (*names, RETRY_CLAIM)
     for name in names:
         target = base / name
         write(target, {"old_failed_result": False})
@@ -63,7 +69,7 @@ def history(root: Path, version: int = 8) -> Path:
 def prepare(root: Path, monkeypatch: pytest.MonkeyPatch, version: int = 8) -> Path:
     monkeypatch.setattr(paired, "_git_state", lambda root: ("a" * 40, False))
     monkeypatch.setattr(paired, "load_fixture", lambda *args: (fixture(), "b" * 64))
-    if version in (10, 11, 12):
+    if version in (10, 11, 12, 13):
         configuration = configured_settings()
         configuration.llm_compatibility_profile = "deepseek"
         monkeypatch.setattr(paired, "load_explicit_settings", lambda *a, **k: (configuration, ""))
@@ -179,10 +185,10 @@ def test_one_shot_180_ceiling_and_only_approved_output_cap(tmp_path: Path) -> No
     "version,stopping",
     [
         (version, stopping)
-        for version in (8, 9, 10, 11, 12)
+        for version in (8, 9, 10, 11, 12, 13)
         for stopping in (None, "baseline", "accounting", "resource", "identity", "truncated")
     ]
-    + [(v, kind) for v in (10, 11, 12) for kind in ("config_change", "plan_change")],
+    + [(v, kind) for v in (10, 11, 12, 13) for kind in ("config_change", "plan_change")],
 )
 async def test_mock_wire_full_schedule_or_first_baseline_stop(
     wire_root: Path, monkeypatch: pytest.MonkeyPatch, stopping: str | None, version: int
@@ -192,7 +198,7 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
         mock_contract = baseline_contract(version)
         mock_contract["resources"] = RESOURCES
         monkeypatch.setattr(paired, "baseline_contract", lambda version=version: mock_contract)
-    if version in (11, 12):
+    if version in (11, 12, 13):
         mock_contract = repaired_paired_contract(version)
         mock_contract["resources"] = RESOURCES
         monkeypatch.setattr(
@@ -200,7 +206,7 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
         )
     path = prepare(tmp_path, monkeypatch, version)
     configuration = configured_settings()
-    if version in (10, 11, 12):
+    if version in (10, 11, 12, 13):
         configuration.llm_compatibility_profile = "deepseek"
     monkeypatch.setattr(
         paired, "load_explicit_settings", lambda *args, **kwargs: (configuration, None)
@@ -244,7 +250,7 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
             cls = SnapshotFixtureProvider if variant == "no_planner" else RenamedFixtureProvider
             providers[task] = cls(data, data.scripts[scenario], project_source=PUBLIC_KNOWLEDGE)
         payload = json.loads(request.content)
-        if version in (10, 11, 12) and payload["tool_choice"] == "required":
+        if version in (10, 11, 12, 13) and payload["tool_choice"] == "required":
             assert payload["thinking"] == {"type": "disabled"}
         messages: list[ConversationMessage] = [
             ChatMessage(role=m["role"], content=m["content"]) for m in payload["messages"]
@@ -328,7 +334,7 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
     assert summary["physical_requests"]["llm"] <= (12 if version in (9, 10) else 180)
     if stopping in {"config_change", "plan_change"}:
         assert summary["physical_requests"]["llm"] == 1
-    if not stopping and version in (8, 11, 12):
+    if not stopping and version in (8, 11, 12, 13):
         assert all(c["paired"] == 3 for c in summary["contrasts"])
         assert all(
             c["exact_p"] is not None and c["holm_p"] is not None for c in summary["contrasts"]
@@ -355,7 +361,7 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
         assert not paired_summary(copy, ledger, clean=True, unchanged=True)[
             "paired_pilot_acceptance"
         ]
-        if version in (11, 12):
+        if version in (11, 12, 13):
             copy = json.loads(json.dumps(rows))
             copy[-1]["execution_gates_passed"] = False
             assert not repaired_paired_summary(copy, ledger, clean=True, unchanged=True)[

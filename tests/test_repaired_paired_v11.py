@@ -11,6 +11,7 @@ from autoscholar.evaluation.live_ablation_contract import TASKS
 from autoscholar.evaluation.provider_transport import GuardedTransport
 from autoscholar.evaluation.repaired_paired import (
     CLAIM,
+    FINAL_CLAIM,
     RETRY_CLAIM,
     RepairedPairedLedger,
     repaired_paired_contract,
@@ -19,7 +20,7 @@ from tests.test_llm_provider import configured_settings
 from tests.test_paired_v8 import history, prepare
 
 
-@pytest.mark.parametrize("version", [11, 12])
+@pytest.mark.parametrize("version", [11, 12, 13])
 def test_frozen_15_tasks_180_calls_and_no_grant_reset(tmp_path: Path, version: int) -> None:
     path = tmp_path / "mock-ledger.json"
     ledger = RepairedPairedLedger(path, run_id="mock-only", protocol_version=version)
@@ -54,7 +55,7 @@ def test_frozen_15_tasks_180_calls_and_no_grant_reset(tmp_path: Path, version: i
 
 
 @pytest.mark.parametrize("changed", ["model", "endpoint", "profile", "history", "contract"])
-@pytest.mark.parametrize("version", [11, 12])
+@pytest.mark.parametrize("version", [11, 12, 13])
 async def test_v11_changed_configuration_blocks_before_claim(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed: str, version: int
 ) -> None:
@@ -69,7 +70,7 @@ async def test_v11_changed_configuration_blocks_before_claim(
     elif changed == "profile":
         configuration.llm_compatibility_profile = "generic"
     elif changed == "history":
-        prior = "live-baseline-v10-claim.json" if version == 11 else "live-paired-v11-claim.json"
+        prior = {11: "live-baseline-v10-claim.json", 12: CLAIM, 13: RETRY_CLAIM}[version]
         (tmp_path / "data/evaluation" / prior).write_text("{}")
     else:
         value = json.loads(path.read_text())
@@ -84,11 +85,12 @@ async def test_v11_changed_configuration_blocks_before_claim(
     )
     with pytest.raises(ValueError):
         await paired.run_paired(args, repo_root=tmp_path)
-    assert not (tmp_path / "data/evaluation" / (CLAIM if version == 11 else RETRY_CLAIM)).exists()
+    claim = {11: CLAIM, 12: RETRY_CLAIM, 13: FINAL_CLAIM}[version]
+    assert not (tmp_path / "data/evaluation" / claim).exists()
     assert not (tmp_path / "data/evaluation/provider-approvals").exists()
 
 
-@pytest.mark.parametrize("version", [11, 12])
+@pytest.mark.parametrize("version", [11, 12, 13])
 def test_v11_protects_v10_without_reusing_its_observation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: int
 ) -> None:
@@ -98,7 +100,8 @@ def test_v11_protects_v10_without_reusing_its_observation(
     assert value["contract"]["tasks"] == list(TASKS)
     assert value["contract"]["historical_observations_reused"] is False
     assert "test-secret" not in path.read_text() and "llm.example" not in path.read_text()
-    expected = "consumed v10" if version == 11 else "consumed v11"
+    expected = f"consumed v{version - 1}"
     with pytest.raises(ValueError, match=expected):
         paired.prepare_paired(tmp_path, history(tmp_path, version - 1), version)
-    assert not (tmp_path / "data/evaluation" / (CLAIM if version == 11 else RETRY_CLAIM)).exists()
+    claim = {11: CLAIM, 12: RETRY_CLAIM, 13: FINAL_CLAIM}[version]
+    assert not (tmp_path / "data/evaluation" / claim).exists()
