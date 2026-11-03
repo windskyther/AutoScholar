@@ -269,7 +269,9 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
                 script = fixture.scripts[scenario].model_copy(
                     update={"prompt": fixture.scripts[scenario].prompt + SUFFIX}
                 )
-                provider = RepairWorkflowProvider(native, transport, task)
+                provider = RepairWorkflowProvider(
+                    native, transport, task, require_three_stage_plan=version >= 13
+                )
                 provider.verify_source = verify_run_plan
                 target = directory / task
                 target.mkdir(exist_ok=False)

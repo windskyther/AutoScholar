@@ -34,10 +34,12 @@ from tests.test_workflow_foundation import plan
 
 
 @pytest.fixture
-def wire_root() -> Iterator[Path]:
+def wire_root(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
     # The entrypoint adds its real run/case/workspace hierarchy. Keep the test root
     # short enough for Windows directory limits, while retaining the real layout.
-    parent = Path(__file__).resolve().parents[1] / "data"
+    # Respect the explicit short --basetemp also from nested Git worktrees. Using
+    # the checkout directory here silently adds its entire depth on Windows.
+    parent = tmp_path_factory.getbasetemp().parent
     parent.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=parent, prefix="rw-") as directory:
         result = Path(directory).resolve()
