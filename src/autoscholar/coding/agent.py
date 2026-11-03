@@ -30,7 +30,11 @@ from autoscholar.llm import (
     ToolDefinition,
     ToolResultMessage,
 )
-from autoscholar.llm.errors import LLMRequestRejected
+from autoscholar.llm.errors import (
+    LLMRequestRejected,
+    LLMResponseError,
+    correctable_tool_schema_error,
+)
 from autoscholar.llm.preflight import preflight_request
 from autoscholar.tool_platform.filesystem import mcp_file_tools
 from autoscholar.tool_platform.gateway import ToolGateway
@@ -298,7 +302,10 @@ class CodingAgent:
                     "Inspect the complete current source against the user objective and config. "
                     "Existing seeded files may already satisfy it: in that case call "
                     "submit_code_ready with a short summary to start mandatory static checks "
-                    "and pytest. Experiment execution and independent review follow separately. "
+                    "and pytest. "
+                    f"submit_code_ready.summary must be at most "
+                    f"{TEXT_LIMITS['submit_code_ready']['summary']} characters. "
+                    "Experiment execution and independent review follow separately. "
                     "Otherwise fix only a concrete missing requirement or reported diagnostic. "
                     "Return exactly one short native call, no prose or speculative refactoring. "
                     "For edit_file, quote the shortest unique old_text and a small new_text "
@@ -412,11 +419,35 @@ class CodingAgent:
             raise CodingRunError(
                 "coding_tool_budget_exceeded", "The coding file-operation budget was exhausted"
             )
-        result = await self._provider.generate(
-            self._request_messages(state),
-            tools=self._tool_definitions[state["task_id"]],
-            tool_choice="required" if state["snapshot_mode"] else "auto",
-        )
+        try:
+            result = await self._provider.generate(
+                self._request_messages(state),
+                tools=self._tool_definitions[state["task_id"]],
+                tool_choice="required" if state["snapshot_mode"] else "auto",
+            )
+        except LLMResponseError as exc:
+            if not state["snapshot_mode"] or not correctable_tool_schema_error(exc):
+                raise
+            if state["prompt_retries"] >= 1:
+                raise CodingRunError(
+                    "coding_protocol_error",
+                    "Coding requires exactly one bounded native tool call; no batch was executed",
+                ) from exc
+            # BudgetedLLM already charged and journaled the received completion. Record it
+            # locally too, without exposing any of its rejected arguments to executable tools.
+            return {
+                **self._usage(state, exc),
+                "pending_tool_calls": [],
+                "handoff_reason": None,
+                "prompt_retries": state["prompt_retries"] + 1,
+                "protocol_feedback": (
+                    "The previous response violated the local tool schema; no call was executed "
+                    "and no arguments were truncated. Return exactly one native tool call "
+                    "matching output_contract.field_character_limits and the declared fields "
+                    "and types. Inspect author_calls_remaining; submit_code_ready with a short "
+                    "summary only when the source is ready for mandatory validation."
+                ),
+            }
         updates = self._usage(state, result)
         violation = None
         if state["snapshot_mode"] and len(result.tool_calls) == 1:
@@ -465,7 +496,8 @@ class CodingAgent:
         return {
             **updates,
             "pending_tool_calls": calls,
-            "prompt_retries": 0,
+            # A successful edit cannot reset Snapshot's one protocol correction allowance.
+            "prompt_retries": state["prompt_retries"] if state["snapshot_mode"] else 0,
             "protocol_feedback": None,
             "handoff_reason": "model_ready" if calls[0].name == "submit_code_ready" else None,
             "messages": [
