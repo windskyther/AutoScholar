@@ -9,9 +9,13 @@ from autoscholar.evaluation.runner import _write_json
 
 CLAIM = "live-paired-v11-claim.json"
 SCOPE = "phase10_repaired_paired_v11"
+RETRY_CLAIM = "live-paired-v12-claim.json"
+RETRY_SCOPE = "phase10_repaired_retry_v12"
 
 
-def repaired_paired_contract() -> dict[str, Any]:
+def repaired_paired_contract(version: int = 11) -> dict[str, Any]:
+    if type(version) is not int or version not in (11, 12):
+        raise ValueError("Only repaired paired versions 11 and 12 supported")
     contract = paired_contract()
     repaired = baseline_contract(10)
     contract.update(
@@ -28,13 +32,27 @@ def repaired_paired_contract() -> dict[str, Any]:
             "No task replay, old grant reuse or full Phase 10 acceptance."
         ),
     )
+    if version == 12:
+        contract.update(
+            protocol_version=12,
+            scope=RETRY_SCOPE,
+            previous_attempt_scope=SCOPE,
+            retry_requires_new_user_instruction=True,
+            limitations=(
+                "One explicitly requested new 15-task attempt after v11 provider interruption. "
+                "Same repaired runtime and 180/0 ceiling; historical grants and observations "
+                "stay separate. Three heterogeneous pairs per contrast; no powered benefit "
+                "claim or full Phase 10 acceptance. No automatic whole-task retry."
+            ),
+        )
     return contract
 
 
 class RepairedPairedLedger(PairedLedger):
-    def __init__(self, path: Path, *, run_id: str) -> None:
+    def __init__(self, path: Path, *, run_id: str, protocol_version: int = 11) -> None:
+        contract = repaired_paired_contract(protocol_version)
         super().__init__(path, run_id=run_id)
-        self.data.update(protocol_version=11, scope=SCOPE)
+        self.data.update(protocol_version=protocol_version, scope=contract["scope"])
         _write_json(path, self.data)
 
 
@@ -42,19 +60,22 @@ def repaired_paired_summary(
     records: list[dict[str, Any]], ledger: PairedLedger, *, clean: bool, unchanged: bool
 ) -> dict[str, Any]:
     summary = paired_summary(records, ledger, clean=clean, unchanged=unchanged)
+    version = ledger.data.get("protocol_version")
+    if type(version) is not int:
+        raise ValueError("Missing repaired paired protocol version")
+    contract = repaired_paired_contract(version)
     complete = bool(
         summary["paired_measurement_complete"]
-        and ledger.data.get("protocol_version") == 11
-        and ledger.data.get("scope") == SCOPE
+        and ledger.data.get("scope") == contract["scope"]
         and ledger.limits == {"llm": 180, "tavily": 0}
         and all(row.get("execution_gates_passed") is True for row in records)
     )
     summary.update(
-        protocol_version=11,
+        protocol_version=version,
         paired_measurement_complete=complete,
         live_pilot_measurement_complete=complete,
         paired_pilot_acceptance=bool(complete and summary["paired_pilot_acceptance"]),
         historical_observations_reused=False,
-        scope=repaired_paired_contract()["limitations"],
+        scope=contract["limitations"],
     )
     return summary

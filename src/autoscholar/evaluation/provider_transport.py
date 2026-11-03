@@ -168,6 +168,7 @@ class GuardedTransport(httpx.AsyncBaseTransport):
         paired_pilot = (ledger.data.get("protocol_version"), ledger.data.get("scope")) in {
             (8, "phase10_paired_workflow_v8"),
             (11, "phase10_repaired_paired_v11"),
+                (12, "phase10_repaired_retry_v12"),
         } and ledger.limits == {"llm": 180, "tavily": 0}
         output_baseline = (
             (ledger.data.get("protocol_version"), ledger.data.get("scope"))
