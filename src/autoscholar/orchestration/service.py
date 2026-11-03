@@ -333,6 +333,8 @@ class AutonomousService:
                     "not_object",
                 }:
                     reason = f"invalid argument JSON: {exc.validation_reason}"
+                elif exc.validation_reason == "workflow_plan_contract":
+                    reason = "plan must follow the caller's required step types and dependencies"
             else:
                 if len(result.tool_calls) == 1 and result.tool_calls[0].name == name:
                     try:

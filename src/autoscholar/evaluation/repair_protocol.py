@@ -11,8 +11,9 @@ from autoscholar.coding.snapshot import TEXT_LIMITS
 from autoscholar.evaluation.datasets import payload_digest
 from autoscholar.evaluation.live_ablation_contract import LIMITS, LiveAblationLedger
 from autoscholar.evaluation.live_ablation_contract import LiveWorkflowProvider as LiveProvider
-from autoscholar.evaluation.live_ablation_v2 import OUTPUT_TOKENS, QUOTE_RULE, SUFFIX
-from autoscholar.evaluation.provider_transport import Provider
+from autoscholar.evaluation.live_ablation_v2 import OUTPUT_TOKENS, QUOTE_RULE, SUFFIX, plan_roles
+from autoscholar.evaluation.provider_transport import GuardedTransport, Provider
+from autoscholar.llm.base import LLMProvider
 from autoscholar.llm.errors import LLMResponseError, correctable_tool_schema_error
 from autoscholar.llm.models import (
     ChatMessage,
@@ -22,7 +23,7 @@ from autoscholar.llm.models import (
     ToolDefinition,
 )
 from autoscholar.orchestration.contracts import stage_contracts
-from autoscholar.orchestration.models import ExperimentRetry, ReviewResult
+from autoscholar.orchestration.models import ExperimentRetry, ReviewResult, TaskPlan
 
 REPAIR_TASKS = ("normal-baseline", "recover-baseline", "recover-no_replanning")
 REPAIR_REQUESTS = 36
@@ -195,13 +196,24 @@ class RepairWorkflowProvider(LiveProvider):
     corrections = 0
     verify_source: Callable[[], object] | None = None
 
+    def __init__(
+        self,
+        provider: LLMProvider,
+        transport: GuardedTransport,
+        task: str,
+        *,
+        require_three_stage_plan: bool = False,
+    ) -> None:
+        super().__init__(provider, transport, task)
+        self.require_three_stage_plan = require_three_stage_plan
+
     def check_available(self) -> None:
         super().check_available()
         if self.verify_source is not None:
             self.verify_source()
 
-    @staticmethod
     def _inputs(
+        self,
         messages: list[ConversationMessage],
         *,
         tools: list[ToolDefinition] | None = None,
@@ -210,6 +222,12 @@ class RepairWorkflowProvider(LiveProvider):
         rule = JSON_RULE + (
             QUOTE_RULE if name in {"submit_evidence", "submit_research_report"} else ""
         )
+        if self.require_three_stage_plan and name == "submit_task_plan":
+            rule += (
+                " Frozen trial DAG: exactly one research step, then one coding step depending "
+                "only on research, then one experiment step depending only on coding. "
+                "knowledge cannot replace research; no extra steps. Step IDs remain arbitrary."
+            )
         messages = [
             replace(item, content=item.content + rule)
             if isinstance(item, ChatMessage) and item.role == "system"
@@ -246,6 +264,21 @@ class RepairWorkflowProvider(LiveProvider):
         messages, tools = self._inputs(messages, tools=tools)
         try:
             result = await super().generate(messages, tools=tools, tool_choice=tool_choice)
+            if self.require_three_stage_plan and name == "submit_task_plan":
+                try:
+                    if len(result.tool_calls) != 1 or result.tool_calls[0].name != name:
+                        raise ValueError("One root plan call required")
+                    plan = TaskPlan.model_validate(result.tool_calls[0].arguments)
+                    if not plan_roles(plan):
+                        raise ValueError("Root DAG differs from the fixed trial roles")
+                except ValueError as exc:
+                    raise LLMResponseError(
+                        code="llm_invalid_tool_call",
+                        message="The root plan violates the required step types or dependencies",
+                        usage=result.usage,
+                        model=result.model,
+                        validation_reason="workflow_plan_contract",
+                    ) from exc
             if name == "submit_research_queries" and (
                 len(result.tool_calls) != 1
                 or result.tool_calls[0].name != name
