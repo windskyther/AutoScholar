@@ -13,11 +13,13 @@ RETRY_CLAIM = "live-paired-v12-claim.json"
 RETRY_SCOPE = "phase10_repaired_retry_v12"
 FINAL_CLAIM = "live-paired-v13-claim.json"
 FINAL_SCOPE = "phase10_final_paired_v13"
+DAG_CLAIM = "live-paired-v14-claim.json"
+DAG_SCOPE = "phase10_fixed_dag_paired_v14"
 
 
 def repaired_paired_contract(version: int = 11) -> dict[str, Any]:
-    if type(version) is not int or version not in (11, 12, 13):
-        raise ValueError("Only repaired paired versions 11 through 13 supported")
+    if type(version) is not int or version not in (11, 12, 13, 14):
+        raise ValueError("Only repaired paired versions 11 through 14 supported")
     contract = paired_contract()
     repaired = baseline_contract(10)
     contract.update(
@@ -47,7 +49,7 @@ def repaired_paired_contract(version: int = 11) -> dict[str, Any]:
                 "claim or full Phase 10 acceptance. No automatic whole-task retry."
             ),
         )
-    if version == 13:
+    if version in (13, 14):
         contract.update(
             protocol_version=13,
             scope=FINAL_SCOPE,
@@ -67,6 +69,26 @@ def repaired_paired_contract(version: int = 11) -> dict[str, Any]:
                 "one frozen source. Same 180/0 ceiling and 12 per task. Three heterogeneous "
                 "pairs per contrast, no powered component-benefit claim. Overall Phase 10 "
                 "acceptance requires the separate final evidence and integration audit. "
+                "No old grant reuse or automatic whole-task retry."
+            ),
+        )
+    if version == 14:
+        contract.update(
+            protocol_version=14,
+            scope=DAG_SCOPE,
+            previous_attempt_scope=FINAL_SCOPE,
+            root_dag_admission={
+                "roles": ["research", "coding", "experiment"],
+                "linear_dependencies": True,
+                "before_any_child_execution": True,
+                "wrong_plan_is_not_rewritten": True,
+                "shares_existing_one_metered_correction": True,
+            },
+            limitations=(
+                "One authorized new 15-task paired run after fixed-DAG admission repair. "
+                "Same runtime, 180/0 ceiling and 12 per task; no paid warmup or old observation "
+                "reuse. Three heterogeneous pairs per contrast, no powered benefit claim. "
+                "Overall Phase 10 acceptance requires final evidence and integration audit. "
                 "No old grant reuse or automatic whole-task retry."
             ),
         )

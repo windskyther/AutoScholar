@@ -354,10 +354,12 @@ def main() -> int:
     live_ablations.add_argument("--continue-v2", type=Path)
     paired = commands.add_parser(
         "paired",
-        help="Prepare v8/v11-v13 paired or v9/v10 baseline; paid runs need separate approval",
+        help="Prepare v8/v11-v14 paired or v9/v10 baseline; paid runs need separate approval",
     )
     paired.add_argument("--history-index", type=Path)
-    paired.add_argument("--protocol-version", type=int, choices=(8, 9, 10, 11, 12, 13), default=8)
+    paired.add_argument(
+        "--protocol-version", type=int, choices=(8, 9, 10, 11, 12, 13, 14), default=8
+    )
     paired.add_argument("--allow-paid", action="store_true")
     paired.add_argument("--plan", type=Path)
     paired.add_argument("--approval-id")
