@@ -6,9 +6,10 @@ fixtures; no provider requests, private design documents, credentials or runtime
 included. The CLI implements RAG replay, controlled Research/Tool component execution and
 explicitly injected real Docker Coding/Experiment and durable E2E execution. Controlled workflow
 ablations and cached-neural reranker comparisons are implemented; real-LLM workflow ablations
-remain incomplete. The current real pilot passed all five normal configurations, but stopped
-before the recovery fault and left nine tasks unattempted. See the [current acceptance report](../evaluation_report.md)
-for the fixed-DAG repair, 1253 passing integration tests, immutable outcomes and remaining scope.
+remain incomplete. The current v14 pilot completed all normal/recovery checks and two deceptive-metric
+checks, but stopped on a missing-dependency root plan; two tasks remain unattempted.
+See the [current acceptance report](../evaluation_report.md) for 1268 passing integration tests,
+the dependency-field repair, immutable outcomes and remaining scope.
 
 ## Public RAG scoring suite
 
