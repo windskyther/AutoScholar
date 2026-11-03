@@ -3,6 +3,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 import httpx
+from jsonschema import Draft202012Validator, ValidationError
 from openai import (
     APIConnectionError,
     APIStatusError,
@@ -12,9 +13,12 @@ from openai import (
     RateLimitError,
 )
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
+from referencing import Registry
+from referencing.exceptions import Unresolvable
 
 from autoscholar.core.config import Settings
 from autoscholar.core.rejections import LocalRequestRejected
+from autoscholar.llm.compatibility import adapt_deepseek_request, deepseek_schema, resolve_profile
 from autoscholar.llm.errors import (
     LLMResponseError,
     LLMUnavailableError,
@@ -47,6 +51,9 @@ class OpenAICompatibleProvider:
             raise ValueError("LLM API key and model are required")
 
         self._model = settings.llm_model
+        self._compatibility_profile = resolve_profile(
+            settings.llm_compatibility_profile, settings.llm_base_url
+        )
         self._request_validator = request_validator
         self._client = AsyncOpenAI(
             api_key=settings.llm_api_key.get_secret_value(),
@@ -79,6 +86,8 @@ class OpenAICompatibleProvider:
                 tool_choice=request_tool_choice,
                 parallel_tool_calls=False,
             )
+        if self._compatibility_profile == "deepseek":
+            return adapt_deepseek_request(request)
         return request
 
     async def preflight(
@@ -102,6 +111,10 @@ class OpenAICompatibleProvider:
     ) -> LLMResult:
         await self.preflight(messages, tools=tools, tool_choice=tool_choice)
         request = self._request_payload(messages, tools=tools, tool_choice=tool_choice)
+        # Preflight validates the final wire body. The SDK accepts vendor fields via extra_body.
+        thinking = request.pop("thinking", None)
+        if thinking is not None:
+            request["extra_body"] = {"thinking": thinking}
         try:
             response = await self._client.chat.completions.create(**request)
         except AuthenticationError as exc:
@@ -180,6 +193,28 @@ class OpenAICompatibleProvider:
                         arguments=arguments,
                     )
                 )
+
+        # Validate the whole completion before exposing any executable calls. Projecting wire
+        # schema constraints does not relax the original local schema or Snapshot write guards.
+        if self._compatibility_profile == "deepseek":
+            for tool in tools or []:
+                if not tool.strict or deepseek_schema(tool.parameters) == tool.parameters:
+                    continue
+                validator = Draft202012Validator(tool.parameters, registry=Registry())
+                for call in tool_calls:
+                    if call.name != tool.name:
+                        continue
+                    try:
+                        validator.validate(call.arguments)
+                    except (ValidationError, Unresolvable) as exc:
+                        raise LLMResponseError(
+                            code="llm_invalid_tool_call",
+                            message="The model returned arguments outside the original tool schema",
+                            usage=usage,
+                            model=response.model or self._model,
+                            finish_reason=finish_reason,
+                            validation_reason="tool_schema_violation",
+                        ) from exc
 
         if not content and not tool_calls:
             raise LLMResponseError(

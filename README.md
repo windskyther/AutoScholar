@@ -84,6 +84,11 @@ TAVILY_API_KEY=your-tavily-api-key
 SEMANTIC_SCHOLAR_API_KEY=your-semantic-scholar-api-key
 ```
 
+`LLM_COMPATIBILITY_PROFILE=auto` 默认仅对官方 `api.deepseek.com` 启用 DeepSeek 兼容处理。
+DeepSeek 兼容网关可显式设置为 `deepseek`；其他兼容服务可用 `generic` 保留标准请求。
+DeepSeek 强制工具调用会显式关闭思考模式，严格工具 schema 中不受支持的长度/数组数量约束
+改由本地原始 schema 继续校验；模型返回违规参数时不交给工具执行。配置后需重启 API/Worker。
+
 Agent 只使用原生 Function Calling，不提供 JSON Prompt 降级方案。模型至少需要支持 `tools` 和 `tool_choice=auto`；若未返回要求的原生工具调用，任务会明确失败并持久化错误。`.env` 已被 Git 忽略，禁止把任何密钥提交到仓库或粘贴到日志、Issue。
 
 ### 使用 Docker 启动
