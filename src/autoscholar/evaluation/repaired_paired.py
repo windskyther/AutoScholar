@@ -15,11 +15,13 @@ FINAL_CLAIM = "live-paired-v13-claim.json"
 FINAL_SCOPE = "phase10_final_paired_v13"
 DAG_CLAIM = "live-paired-v14-claim.json"
 DAG_SCOPE = "phase10_fixed_dag_paired_v14"
+MEASURED_CLAIM = "live-paired-v15-claim.json"
+MEASURED_SCOPE = "phase10_measured_failures_paired_v15"
 
 
 def repaired_paired_contract(version: int = 11) -> dict[str, Any]:
-    if type(version) is not int or version not in (11, 12, 13, 14):
-        raise ValueError("Only repaired paired versions 11 through 14 supported")
+    if type(version) is not int or version not in (11, 12, 13, 14, 15):
+        raise ValueError("Only repaired paired versions 11 through 15 supported")
     contract = paired_contract()
     repaired = baseline_contract(10)
     contract.update(
@@ -49,7 +51,7 @@ def repaired_paired_contract(version: int = 11) -> dict[str, Any]:
                 "claim or full Phase 10 acceptance. No automatic whole-task retry."
             ),
         )
-    if version in (13, 14):
+    if version in (13, 14, 15):
         contract.update(
             protocol_version=13,
             scope=FINAL_SCOPE,
@@ -72,7 +74,7 @@ def repaired_paired_contract(version: int = 11) -> dict[str, Any]:
                 "No old grant reuse or automatic whole-task retry."
             ),
         )
-    if version == 14:
+    if version in (14, 15):
         contract.update(
             protocol_version=14,
             scope=DAG_SCOPE,
@@ -90,6 +92,30 @@ def repaired_paired_contract(version: int = 11) -> dict[str, Any]:
                 "reuse. Three heterogeneous pairs per contrast, no powered benefit claim. "
                 "Overall Phase 10 acceptance requires final evidence and integration audit. "
                 "No old grant reuse or automatic whole-task retry."
+            ),
+        )
+    if version == 15:
+        contract.update(
+            protocol_version=15,
+            scope=MEASURED_SCOPE,
+            previous_attempt_scope=DAG_SCOPE,
+            terminal_protocol_failure={
+                "complete_http_200_with_matching_physical_usage_only": True,
+                "task_success": False,
+                "continue_nonbaseline_cases": True,
+                "failed_baseline_stops_run": True,
+                "no_more_dispatch_in_failed_task": True,
+                "unknown_usage_truncation_and_transport_errors_stop_run": True,
+                "historical_results_unchanged": True,
+            },
+            limitations=(
+                "One authorized new 15-task run after explicit dependency-field repair. "
+                "Complete, metered terminal model protocol failures are measured task failures; "
+                "they never pass the task or cause a replay. Failed controls or uncertain "
+                "transport/accounting still stop the run. Same frozen inputs, provider and "
+                "180/0 ceiling, 12 calls per task, one shared correction, no paid warmup. "
+                "Three heterogeneous pairs per contrast; no powered benefit claim. "
+                "Overall Phase 10 acceptance requires a separate final evidence audit."
             ),
         )
     return contract

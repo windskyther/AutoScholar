@@ -45,6 +45,7 @@ from autoscholar.evaluation.repaired_paired import (
 from autoscholar.evaluation.repaired_paired import (
     DAG_CLAIM,
     FINAL_CLAIM,
+    MEASURED_CLAIM,
     RETRY_CLAIM,
     RepairedPairedLedger,
     repaired_paired_contract,
@@ -58,11 +59,11 @@ from autoscholar.llm.openai_compatible import OpenAICompatibleProvider
 
 
 def selected_contract(version: int) -> dict[str, Any]:
-    if type(version) is not int or version not in (8, 9, 10, 11, 12, 13, 14):
-        raise ValueError("Only paired v8/v11-v14 or single baselines v9/v10 supported")
+    if type(version) is not int or version not in (8, 9, 10, 11, 12, 13, 14, 15):
+        raise ValueError("Only paired v8/v11-v15 or single baselines v9/v10 supported")
     if version == 11:
         return repaired_paired_contract()
-    if version in (12, 13, 14):
+    if version in (12, 13, 14, 15):
         return repaired_paired_contract(version)
     if version == 10:
         return baseline_contract(10)
@@ -91,18 +92,20 @@ def verify_provider(plan: dict[str, Any], settings: Settings) -> None:
 
 def checked_history(history: Path, base: Path, version: int) -> dict[str, str]:
     protected, binding = history_snapshot(history, base)
-    if version in (9, 10, 11, 12, 13, 14) and CLAIM not in protected:
+    if version in (9, 10, 11, 12, 13, 14, 15) and CLAIM not in protected:
         raise ValueError("Baseline v9 must protect the consumed v8 claim")
-    if version in (10, 11, 12, 13, 14) and BASELINE_CLAIM not in protected:
+    if version in (10, 11, 12, 13, 14, 15) and BASELINE_CLAIM not in protected:
         raise ValueError("Baseline v10 must protect the consumed v9 claim")
-    if version in (11, 12, 13, 14) and COMPATIBILITY_CLAIM not in protected:
+    if version in (11, 12, 13, 14, 15) and COMPATIBILITY_CLAIM not in protected:
         raise ValueError("Repaired paired v11 must protect the consumed v10 claim")
-    if version in (12, 13, 14) and REPAIRED_PAIRED_CLAIM not in protected:
+    if version in (12, 13, 14, 15) and REPAIRED_PAIRED_CLAIM not in protected:
         raise ValueError("Retry v12 must protect the consumed v11 claim")
-    if version in (13, 14) and RETRY_CLAIM not in protected:
+    if version in (13, 14, 15) and RETRY_CLAIM not in protected:
         raise ValueError("Final v13 must protect the consumed v12 claim")
-    if version == 14 and FINAL_CLAIM not in protected:
+    if version in (14, 15) and FINAL_CLAIM not in protected:
         raise ValueError("Fixed DAG v14 must protect the consumed v13 claim")
+    if version == 15 and DAG_CLAIM not in protected:
+        raise ValueError("Measured failures v15 must protect the consumed v14 claim")
     return binding
 
 
@@ -116,7 +119,7 @@ def prepare_paired(root: Path, history: Path, version: int = 8) -> Path:
         root / "benchmarks/ablations/workflow_fixture_v2.json", WorkflowFixture
     )
     configuration = None
-    if version in (10, 11, 12, 13, 14):
+    if version in (10, 11, 12, 13, 14, 15):
         settings, _ = load_explicit_settings(root / ".env", require_tavily=False)
         configuration = provider_binding(settings)
     directory = root / "data/evaluation" / ("paired-plan-" + uuid4().hex)
@@ -163,7 +166,7 @@ def load_paired_plan(path: Path, root: Path, version: int = 8) -> dict[str, Any]
         raise ValueError("Missing historical binding")
     if checked_history(base / binding["path"], base, version) != binding:
         raise ValueError("Historical index changed")
-    if version in (10, 11, 12, 13, 14):
+    if version in (10, 11, 12, 13, 14, 15):
         settings, _ = load_explicit_settings(root / ".env", require_tavily=False)
         verify_provider(plan, settings)
     return plan
@@ -188,18 +191,19 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
         12: RETRY_CLAIM,
         13: FINAL_CLAIM,
         14: DAG_CLAIM,
+        15: MEASURED_CLAIM,
     }[version]
     claim = base / claim_name
     grant = approval_path(base, args.approval_id)
     if claim.exists() or grant.exists():
         raise ValueError(f"{label} already claimed; no reset or task replay")
     settings, _ = load_explicit_settings(repo_root / ".env", require_tavily=False)
-    if version in (10, 11, 12, 13, 14):
+    if version in (10, 11, 12, 13, 14, 15):
         verify_provider(plan, settings)
 
     def verify_run_plan() -> dict[str, Any]:
         current = load_paired_plan(args.plan, repo_root, version)
-        if version in (10, 11, 12, 13, 14):
+        if version in (10, 11, 12, 13, 14, 15):
             if current != plan:
                 raise ValueError("Frozen execution plan changed; no dispatch")
             verify_provider(current, settings)
@@ -214,7 +218,7 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
     )
     sandbox = DockerEvaluationSandbox(args.sandbox_container)
     resources = sandbox_resources(await sandbox.health(), dataset=True)
-    if version in (9, 10, 11, 12, 13, 14) and resources != contract["resources"]:
+    if version in (9, 10, 11, 12, 13, 14, 15) and resources != contract["resources"]:
         await sandbox.close()
         raise ValueError("Frozen baseline resources changed")
     if not await no_owned_children(sandbox):
@@ -234,7 +238,7 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
             "configured_model": settings.llm_model,
             **(
                 {"provider_binding": provider_binding(settings)}
-                if version in (10, 11, 12, 13, 14)
+                if version in (10, 11, 12, 13, 14, 15)
                 else {}
             ),
             "resources": resources,
@@ -245,7 +249,7 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
     ledger: BaselineLedger | PairedLedger
     if version in (9, 10):
         ledger = BaselineLedger(grant, run_id=directory.name, protocol_version=version)
-    elif version in (11, 12, 13, 14):
+    elif version in (11, 12, 13, 14, 15):
         ledger = RepairedPairedLedger(grant, run_id=directory.name, protocol_version=version)
     else:
         ledger = PairedLedger(grant, run_id=directory.name)
@@ -274,7 +278,11 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
                     update={"prompt": fixture.scripts[scenario].prompt + SUFFIX}
                 )
                 provider = RepairWorkflowProvider(
-                    native, transport, task, require_three_stage_plan=version >= 13
+                    native,
+                    transport,
+                    task,
+                    require_three_stage_plan=version >= 13,
+                    measure_protocol_failures=version == 15,
                 )
                 provider.verify_source = verify_run_plan
                 target = directory / task
@@ -322,7 +330,7 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
                     record["physical_accounting_verified"] = physical_accounting(record, provider)
                     _write_json(directory / "cases.json", records)
                 if (
-                    provider.failed
+                    (provider.failed and not (version == 15 and provider.measured_protocol_failure))
                     or record["status"] != "measured"
                     or not record["physical_accounting_verified"]
                     or not record.get("intervention_verified")

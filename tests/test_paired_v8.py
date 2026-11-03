@@ -27,6 +27,7 @@ from autoscholar.evaluation.paired_protocol import (
 from autoscholar.evaluation.provider_transport import GuardedTransport
 from autoscholar.evaluation.repaired_paired import CLAIM as REPAIRED_PAIRED_CLAIM
 from autoscholar.evaluation.repaired_paired import (
+    DAG_CLAIM,
     FINAL_CLAIM,
     RETRY_CLAIM,
     repaired_paired_contract,
@@ -50,18 +51,20 @@ def history(root: Path, version: int = 8) -> Path:
     base = root / "data/evaluation"
     rows = {}
     names = (*HISTORICAL_CLAIMS, "old-v6/acceptance.json")
-    if version in (9, 10, 11, 12, 13, 14):
+    if version in (9, 10, 11, 12, 13, 14, 15):
         names = (*names, CLAIM)
-    if version in (10, 11, 12, 13, 14):
+    if version in (10, 11, 12, 13, 14, 15):
         names = (*names, BASELINE_CLAIM)
-    if version in (11, 12, 13, 14):
+    if version in (11, 12, 13, 14, 15):
         names = (*names, COMPATIBILITY_CLAIM)
-    if version in (12, 13, 14):
+    if version in (12, 13, 14, 15):
         names = (*names, REPAIRED_PAIRED_CLAIM)
-    if version in (13, 14):
+    if version in (13, 14, 15):
         names = (*names, RETRY_CLAIM)
-    if version == 14:
+    if version in (14, 15):
         names = (*names, FINAL_CLAIM)
+    if version == 15:
+        names = (*names, DAG_CLAIM)
     for name in names:
         target = base / name
         write(target, {"old_failed_result": False})
@@ -72,7 +75,7 @@ def history(root: Path, version: int = 8) -> Path:
 def prepare(root: Path, monkeypatch: pytest.MonkeyPatch, version: int = 8) -> Path:
     monkeypatch.setattr(paired, "_git_state", lambda root: ("a" * 40, False))
     monkeypatch.setattr(paired, "load_fixture", lambda *args: (fixture(), "b" * 64))
-    if version in (10, 11, 12, 13, 14):
+    if version in (10, 11, 12, 13, 14, 15):
         configuration = configured_settings()
         configuration.llm_compatibility_profile = "deepseek"
         monkeypatch.setattr(paired, "load_explicit_settings", lambda *a, **k: (configuration, ""))
@@ -188,10 +191,11 @@ def test_one_shot_180_ceiling_and_only_approved_output_cap(tmp_path: Path) -> No
     "version,stopping",
     [
         (version, stopping)
-        for version in (8, 9, 10, 11, 12, 13, 14)
+        for version in (8, 9, 10, 11, 12, 13, 14, 15)
         for stopping in (None, "baseline", "accounting", "resource", "identity", "truncated")
     ]
-    + [(v, kind) for v in (10, 11, 12, 13, 14) for kind in ("config_change", "plan_change")],
+    + [(v, kind) for v in (10, 11, 12, 13, 14, 15) for kind in ("config_change", "plan_change")]
+    + [(v, kind) for v in (14, 15) for kind in ("known_protocol", "unknown_protocol")],
 )
 async def test_mock_wire_full_schedule_or_first_baseline_stop(
     wire_root: Path, monkeypatch: pytest.MonkeyPatch, stopping: str | None, version: int
@@ -201,7 +205,7 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
         mock_contract = baseline_contract(version)
         mock_contract["resources"] = RESOURCES
         monkeypatch.setattr(paired, "baseline_contract", lambda version=version: mock_contract)
-    if version in (11, 12, 13, 14):
+    if version in (11, 12, 13, 14, 15):
         mock_contract = repaired_paired_contract(version)
         mock_contract["resources"] = RESOURCES
         monkeypatch.setattr(
@@ -209,7 +213,7 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
         )
     path = prepare(tmp_path, monkeypatch, version)
     configuration = configured_settings()
-    if version in (10, 11, 12, 13, 14):
+    if version in (10, 11, 12, 13, 14, 15):
         configuration.llm_compatibility_profile = "deepseek"
     monkeypatch.setattr(
         paired, "load_explicit_settings", lambda *args, **kwargs: (configuration, None)
@@ -253,7 +257,7 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
             cls = SnapshotFixtureProvider if variant == "no_planner" else RenamedFixtureProvider
             providers[task] = cls(data, data.scripts[scenario], project_source=PUBLIC_KNOWLEDGE)
         payload = json.loads(request.content)
-        if version in (10, 11, 12, 13, 14) and payload["tool_choice"] == "required":
+        if version in (10, 11, 12, 13, 14, 15) and payload["tool_choice"] == "required":
             assert payload["thinking"] == {"type": "disabled"}
         messages: list[ConversationMessage] = [
             ChatMessage(role=m["role"], content=m["content"]) for m in payload["messages"]
@@ -267,10 +271,23 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
             )
             for t in payload["tools"]
         ]
+        protocol_failure = (
+            stopping in {"known_protocol", "unknown_protocol"}
+            and task == "deception-no_reviewer"
+            and tools[0].name == "submit_task_plan"
+        )
+        # The scripted fixture reads the last message as the original JSON payload.
+        # Generate its canned root plan from that payload on correction turns too;
+        # the actual SDK wire request and the deliberately invalid responses stay intact.
         result = await providers[task].generate(
-            messages, tools=tools, tool_choice=payload["tool_choice"]
+            messages[:2] if protocol_failure else messages,
+            tools=tools,
+            tool_choice=payload["tool_choice"],
         )
         call = result.tool_calls[0]
+        arguments = call.arguments
+        if protocol_failure:
+            arguments = {**arguments, "steps": []}
         if stopping in {"config_change", "plan_change"}:
             configuration.llm_model = "changed-mid-flight"
             if stopping == "plan_change":
@@ -301,14 +318,16 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
                                     "type": "function",
                                     "function": {
                                         "name": call.name,
-                                        "arguments": json.dumps(call.arguments),
+                                        "arguments": json.dumps(arguments),
                                     },
                                 }
                             ],
                         },
                     }
                 ],
-                "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+                "usage": None
+                if protocol_failure and stopping == "unknown_protocol"
+                else {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
             },
         )
 
@@ -328,16 +347,37 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
     directory, accepted = await paired.run_paired(args, repo_root=tmp_path)
     rows = json.loads((directory / "cases.json").read_text())
     summary = json.loads((directory / "acceptance.json").read_text())
-    assert [r["task"] for r in rows] == list(TASKS[:1] if stopping or version in (9, 10) else TASKS)
-    assert accepted is (not stopping)
+    continued_failure = version == 15 and stopping == "known_protocol"
+    completed = not stopping or continued_failure
+    expected = TASKS if completed and version not in (9, 10) else TASKS[:1]
+    if stopping in {"known_protocol", "unknown_protocol"} and not continued_failure:
+        expected = TASKS[:13]
+    assert [r["task"] for r in rows] == list(expected), json.dumps(rows[-1])
+    assert accepted is bool(completed)
     key = "baseline_acceptance" if version in (9, 10) else "paired_measurement_complete"
-    assert summary[key] is (not stopping)
+    assert summary[key] is bool(completed)
     assert summary["phase10_overall_acceptance"] is False
     assert summary["statistical_benefit_claim"] is False
     assert summary["physical_requests"]["llm"] <= (12 if version in (9, 10) else 180)
     if stopping in {"config_change", "plan_change"}:
         assert summary["physical_requests"]["llm"] == 1
-    if not stopping and version in (8, 11, 12, 13, 14):
+    if stopping in {"known_protocol", "unknown_protocol"}:
+        rejected = rows[12]
+        assert rejected["task"] == "deception-no_reviewer"
+        assert rejected["status"] == ("measured" if continued_failure else "provider_error")
+        assert rejected["task_success"] is (False if continued_failure else None)
+        assert rejected["physical_requests"] == (2 if stopping == "known_protocol" else 1)
+        assert rejected["step_counts"] == {"research": 0, "code": 0, "train": 0}
+        assert rejected["usage"].get("training_runs", 0) == 0
+        assert rejected["native_json_corrections"] == (1 if stopping == "known_protocol" else 0)
+        assert rejected["physical_accounting_verified"] is (stopping == "known_protocol")
+        own = [
+            a
+            for a in holder["transport"].ledger.attempts
+            if a["case_id"].startswith("deception-no_reviewer--")
+        ]
+        assert all(a["state"] == "returned" and a["http_status"] == 200 for a in own)
+    if completed and version in (8, 11, 12, 13, 14, 15):
         assert all(c["paired"] == 3 for c in summary["contrasts"])
         assert all(
             c["exact_p"] is not None and c["holm_p"] is not None for c in summary["contrasts"]
@@ -364,7 +404,7 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
         assert not paired_summary(copy, ledger, clean=True, unchanged=True)[
             "paired_pilot_acceptance"
         ]
-        if version in (11, 12, 13, 14):
+        if version in (11, 12, 13, 14, 15):
             copy = json.loads(json.dumps(rows))
             copy[-1]["execution_gates_passed"] = False
             assert not repaired_paired_summary(copy, ledger, clean=True, unchanged=True)[
