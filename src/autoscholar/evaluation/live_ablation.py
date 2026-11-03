@@ -344,15 +344,21 @@ async def execute_task(
             in {"queued", "running", "pause_requested", "cancel_requested", "recovery_required"}
             and not provider.failed
         )
+        measured_failure = bool(
+            protocol_version == 15
+            and provider.failed
+            and getattr(provider, "measured_protocol_failure", False)
+        )
         return {
             "status": "infrastructure_incomplete"
             if incomplete
-            else ("measured" if not provider.failed else "provider_error"),
+            else ("measured" if not provider.failed or measured_failure else "provider_error"),
             "workflow_status": parent.status,
             "error_code": parent.error_code,
             "task_success": parent.status == "succeeded" and all(checks.values())
             if not provider.failed and not incomplete
-            else None,
+            else (False if measured_failure else None),
+            **({"measured_protocol_failure": measured_failure} if protocol_version == 15 else {}),
             "checks": checks,
             "intervention_verified": intervention,
             "paths": paths,

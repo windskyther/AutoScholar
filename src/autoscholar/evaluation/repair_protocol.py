@@ -203,9 +203,12 @@ class RepairWorkflowProvider(LiveProvider):
         task: str,
         *,
         require_three_stage_plan: bool = False,
+        measure_protocol_failures: bool = False,
     ) -> None:
         super().__init__(provider, transport, task)
         self.require_three_stage_plan = require_three_stage_plan
+        self.measure_protocol_failures = measure_protocol_failures
+        self.measured_protocol_failure = False
 
     def check_available(self) -> None:
         super().check_available()
@@ -345,5 +348,15 @@ class RepairWorkflowProvider(LiveProvider):
                 self.failed = False
             else:
                 self.failed = True
+                self.measured_protocol_failure = bool(
+                    self.measure_protocol_failures
+                    and known
+                    and exc.code == "llm_invalid_tool_call"
+                    and exc.finish_reason != "length"
+                    and (
+                        exc.finish_reason in {"tool_calls", "stop"}
+                        or exc.validation_reason in {"workflow_plan_contract", "schema_invalid"}
+                    )
+                )
             exc.retryable = bool(allowed)
             raise
