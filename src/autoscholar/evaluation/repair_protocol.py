@@ -7,12 +7,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from autoscholar.coding.snapshot import TEXT_LIMITS
 from autoscholar.evaluation.datasets import payload_digest
 from autoscholar.evaluation.live_ablation_contract import LIMITS, LiveAblationLedger
 from autoscholar.evaluation.live_ablation_contract import LiveWorkflowProvider as LiveProvider
 from autoscholar.evaluation.live_ablation_v2 import OUTPUT_TOKENS, QUOTE_RULE, SUFFIX
 from autoscholar.evaluation.provider_transport import Provider
-from autoscholar.llm.errors import LLMResponseError
+from autoscholar.llm.errors import LLMResponseError, correctable_tool_schema_error
 from autoscholar.llm.models import (
     ChatMessage,
     ConversationMessage,
@@ -280,7 +281,15 @@ class RepairWorkflowProvider(LiveProvider):
                 and exc.retryable
                 and self.corrections < 1
                 and self.calls < 12
-                and name in {"submit_task_plan", "submit_plan_revision", "submit_review"}
+                and (
+                    name in {"submit_task_plan", "submit_plan_revision", "submit_review"}
+                    or (
+                        name == "coding"
+                        and tool_choice == "required"
+                        and {tool.name for tool in tools or []} == set(TEXT_LIMITS)
+                        and correctable_tool_schema_error(exc)
+                    )
+                )
                 and exc.code == "llm_invalid_tool_call"
                 and exc.finish_reason != "length"
             )
