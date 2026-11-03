@@ -40,6 +40,24 @@ REVISION = "a" * 40
 POSITIVE_SOURCE = "def stable_unique(values):\n    return list(dict.fromkeys(values))\n"
 
 
+@pytest.mark.parametrize("profile", ["auto", "generic", "deepseek"])
+def test_explicit_settings_preserve_compatibility_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str
+) -> None:
+    config = tmp_path / "public-test.env"
+    config.write_text(
+        f"LLM_API_KEY=offline-fixture\nLLM_MODEL=offline\nLLM_COMPATIBILITY_PROFILE={profile}\n",
+        encoding="utf-8",
+    )
+    for key in ("LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "LLM_COMPATIBILITY_PROFILE"):
+        monkeypatch.delenv(key, raising=False)
+    settings, _ = validation.load_explicit_settings(config, require_tavily=False)
+    assert settings.llm_compatibility_profile == profile
+    monkeypatch.setenv("LLM_COMPATIBILITY_PROFILE", "generic")
+    overridden, _ = validation.load_explicit_settings(config, require_tavily=False)
+    assert overridden.llm_compatibility_profile == "generic"
+
+
 def case(identifier: str) -> Any:
     return next(item for item in CASES if item.id == identifier)
 

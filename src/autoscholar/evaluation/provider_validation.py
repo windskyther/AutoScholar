@@ -69,7 +69,13 @@ def load_explicit_settings(path: Path, *, require_tavily: bool = True) -> tuple[
     values = dotenv_values(path, interpolate=False)
     selected = {
         key: os.getenv(key) or values.get(key)
-        for key in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "TAVILY_API_KEY")
+        for key in (
+            "LLM_BASE_URL",
+            "LLM_API_KEY",
+            "LLM_MODEL",
+            "TAVILY_API_KEY",
+            "LLM_COMPATIBILITY_PROFILE",
+        )
     }
     required = (
         ("LLM_API_KEY", "LLM_MODEL", "TAVILY_API_KEY")
@@ -84,6 +90,7 @@ def load_explicit_settings(path: Path, *, require_tavily: bool = True) -> tuple[
         llm_api_key=SecretStr(selected["LLM_API_KEY"] or ""),
         llm_model=selected["LLM_MODEL"],
         llm_timeout_seconds=60,
+        llm_compatibility_profile=selected["LLM_COMPATIBILITY_PROFILE"] or "auto",  # type: ignore[arg-type]
         research_tool_backend="native",
         filesystem_tool_backend="native",
         experiment_tool_backend="native",
