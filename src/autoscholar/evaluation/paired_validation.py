@@ -39,6 +39,14 @@ from autoscholar.evaluation.provider_transport import GuardedTransport, approval
 from autoscholar.evaluation.provider_validation import load_explicit_settings, no_owned_children
 from autoscholar.evaluation.repair_protocol import RepairWorkflowProvider
 from autoscholar.evaluation.repair_validation import physical_accounting
+from autoscholar.evaluation.repaired_paired import (
+    CLAIM as REPAIRED_PAIRED_CLAIM,
+)
+from autoscholar.evaluation.repaired_paired import (
+    RepairedPairedLedger,
+    repaired_paired_contract,
+    repaired_paired_summary,
+)
 from autoscholar.evaluation.runner import _git_state, _write_json
 from autoscholar.evaluation.workflow_ablation import WORKFLOW_VARIANTS
 from autoscholar.evaluation.workflow_fixture import WorkflowFixture
@@ -47,8 +55,10 @@ from autoscholar.llm.openai_compatible import OpenAICompatibleProvider
 
 
 def selected_contract(version: int) -> dict[str, Any]:
-    if type(version) is not int or version not in (8, 9, 10):
-        raise ValueError("Only paired v8 or single baselines v9/v10 supported")
+    if type(version) is not int or version not in (8, 9, 10, 11):
+        raise ValueError("Only paired v8/v11 or single baselines v9/v10 supported")
+    if version == 11:
+        return repaired_paired_contract()
     if version == 10:
         return baseline_contract(10)
     return baseline_contract() if version == 9 else paired_contract()
@@ -60,7 +70,7 @@ def provider_binding(settings: Settings) -> dict[str, str]:
         raise ValueError("Use a credential-free HTTPS endpoint")
     profile = resolve_profile(settings.llm_compatibility_profile, settings.llm_base_url)
     if profile != "deepseek" or not settings.llm_model:
-        raise ValueError("v10 requires a configured model and the repaired DeepSeek profile")
+        raise ValueError("Repaired evaluation requires a model and the DeepSeek profile")
     return {
         "configured_model": settings.llm_model,
         "configured_profile": settings.llm_compatibility_profile,
@@ -76,10 +86,12 @@ def verify_provider(plan: dict[str, Any], settings: Settings) -> None:
 
 def checked_history(history: Path, base: Path, version: int) -> dict[str, str]:
     protected, binding = history_snapshot(history, base)
-    if version in (9, 10) and CLAIM not in protected:
+    if version in (9, 10, 11) and CLAIM not in protected:
         raise ValueError("Baseline v9 must protect the consumed v8 claim")
-    if version == 10 and BASELINE_CLAIM not in protected:
+    if version in (10, 11) and BASELINE_CLAIM not in protected:
         raise ValueError("Baseline v10 must protect the consumed v9 claim")
+    if version == 11 and COMPATIBILITY_CLAIM not in protected:
+        raise ValueError("Repaired paired v11 must protect the consumed v10 claim")
     return binding
 
 
@@ -93,7 +105,7 @@ def prepare_paired(root: Path, history: Path, version: int = 8) -> Path:
         root / "benchmarks/ablations/workflow_fixture_v2.json", WorkflowFixture
     )
     configuration = None
-    if version == 10:
+    if version in (10, 11):
         settings, _ = load_explicit_settings(root / ".env", require_tavily=False)
         configuration = provider_binding(settings)
     directory = root / "data/evaluation" / ("paired-plan-" + uuid4().hex)
@@ -140,7 +152,7 @@ def load_paired_plan(path: Path, root: Path, version: int = 8) -> dict[str, Any]
         raise ValueError("Missing historical binding")
     if checked_history(base / binding["path"], base, version) != binding:
         raise ValueError("Historical index changed")
-    if version == 10:
+    if version in (10, 11):
         settings, _ = load_explicit_settings(root / ".env", require_tavily=False)
         verify_provider(plan, settings)
     return plan
@@ -150,25 +162,30 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
     version = getattr(args, "protocol_version", 8)
     contract = selected_contract(version)
     cap = contract["physical_limits"]["llm"]
-    label = f"Baseline v{version}" if version in (9, 10) else "Paired v8"
+    label = f"Baseline v{version}" if version in (9, 10) else f"Paired v{version}"
     if not args.allow_paid or not args.plan or not args.approval_id or not args.sandbox_container:
         raise ValueError(
             "Paid paired execution requires separate approval, exact plan and controller"
         )
     plan = load_paired_plan(args.plan, repo_root, version)
     base = (repo_root / "data/evaluation").resolve()
-    claim_name = COMPATIBILITY_CLAIM if version == 10 else BASELINE_CLAIM if version == 9 else CLAIM
+    claim_name = {
+        8: CLAIM,
+        9: BASELINE_CLAIM,
+        10: COMPATIBILITY_CLAIM,
+        11: REPAIRED_PAIRED_CLAIM,
+    }[version]
     claim = base / claim_name
     grant = approval_path(base, args.approval_id)
     if claim.exists() or grant.exists():
         raise ValueError(f"{label} already claimed; no reset or task replay")
     settings, _ = load_explicit_settings(repo_root / ".env", require_tavily=False)
-    if version == 10:
+    if version in (10, 11):
         verify_provider(plan, settings)
 
     def verify_run_plan() -> dict[str, Any]:
         current = load_paired_plan(args.plan, repo_root, version)
-        if version == 10:
+        if version in (10, 11):
             if current != plan:
                 raise ValueError("Frozen execution plan changed; no dispatch")
             verify_provider(current, settings)
@@ -183,12 +200,12 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
     )
     sandbox = DockerEvaluationSandbox(args.sandbox_container)
     resources = sandbox_resources(await sandbox.health(), dataset=True)
-    if version in (9, 10) and resources != contract["resources"]:
+    if version in (9, 10, 11) and resources != contract["resources"]:
         await sandbox.close()
         raise ValueError("Frozen baseline resources changed")
     if not await no_owned_children(sandbox):
         raise ValueError("Dedicated controller already owns children")
-    prefix = f"live-baseline-v{version}-" if version in (9, 10) else "live-paired-v8-"
+    prefix = f"live-baseline-v{version}-" if version in (9, 10) else f"live-paired-v{version}-"
     directory = base / (prefix + uuid4().hex)
     directory.mkdir(exist_ok=False)
     _write_json(
@@ -201,17 +218,19 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
             "approval_id": args.approval_id,
             "explicit_paid_execution": True,
             "configured_model": settings.llm_model,
-            **({"provider_binding": provider_binding(settings)} if version == 10 else {}),
+            **({"provider_binding": provider_binding(settings)} if version in (10, 11) else {}),
             "resources": resources,
         },
     )
     with claim.open("x", encoding="utf-8") as stream:
         json.dump({"run_id": directory.name, "plan_sha256": payload_digest(plan)}, stream)
-    ledger = (
-        BaselineLedger(grant, run_id=directory.name, protocol_version=version)
-        if version in (9, 10)
-        else PairedLedger(grant, run_id=directory.name)
-    )
+    ledger: BaselineLedger | PairedLedger
+    if version in (9, 10):
+        ledger = BaselineLedger(grant, run_id=directory.name, protocol_version=version)
+    elif version == 11:
+        ledger = RepairedPairedLedger(grant, run_id=directory.name)
+    else:
+        ledger = PairedLedger(grant, run_id=directory.name)
     transport = GuardedTransport(
         provider="llm",
         endpoint=str(endpoint),
@@ -314,6 +333,9 @@ async def run_paired(args: argparse.Namespace, *, repo_root: Path) -> tuple[Path
         if isinstance(ledger, BaselineLedger):
             summary = baseline_summary(records, ledger, clean=clean, unchanged=unchanged)
             accepted = bool(summary["baseline_acceptance"])
+        elif isinstance(ledger, RepairedPairedLedger):
+            summary = repaired_paired_summary(records, ledger, clean=clean, unchanged=unchanged)
+            accepted = bool(summary["paired_pilot_acceptance"])
         else:
             summary = paired_summary(records, ledger, clean=clean, unchanged=unchanged)
             accepted = bool(summary["paired_pilot_acceptance"])
