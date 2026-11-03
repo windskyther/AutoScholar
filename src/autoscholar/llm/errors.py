@@ -58,3 +58,21 @@ class LLMResponseError(LLMUpstreamError):
 class LLMUnavailableError(AppError):
     def __init__(self, *, code: str, message: str) -> None:
         super().__init__(status_code=503, code=code, message=message)
+
+
+def correctable_tool_schema_error(error: LLMResponseError) -> bool:
+    """Only a complete, metered local schema rejection can request bounded feedback."""
+    usage = error.usage
+    return bool(
+        error.code == "llm_invalid_tool_call"
+        and error.validation_reason == "tool_schema_violation"
+        and error.retryable
+        and error.finish_reason == "tool_calls"
+        and error.model
+        and usage is not None
+        and all(
+            type(value) is int and value >= 0
+            for value in (usage.input_tokens, usage.output_tokens, usage.total_tokens)
+        )
+        and usage.total_tokens == usage.input_tokens + usage.output_tokens
+    )
