@@ -171,8 +171,11 @@ class GuardedTransport(httpx.AsyncBaseTransport):
             and ledger.limits == {"llm": 180, "tavily": 0}
         )
         output_baseline = (
-            ledger.data.get("protocol_version") == 9
-            and ledger.data.get("scope") == "phase10_output_baseline_v9"
+            (ledger.data.get("protocol_version"), ledger.data.get("scope"))
+            in {
+                (9, "phase10_output_baseline_v9"),
+                (10, "phase10_compatibility_baseline_v10"),
+            }
             and ledger.limits == {"llm": 12, "tavily": 0}
             and ledger.data.get("tasks") == ["normal-baseline"]
         )

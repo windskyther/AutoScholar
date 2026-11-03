@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from autoscholar.evaluation import paired_validation as paired
+from autoscholar.evaluation.baseline_protocol import CLAIM as BASELINE_CLAIM
 from autoscholar.evaluation.baseline_protocol import baseline_contract
 from autoscholar.evaluation.live_ablation import execute_task
 from autoscholar.evaluation.live_ablation_contract import TASKS
@@ -42,8 +43,10 @@ def history(root: Path, version: int = 8) -> Path:
     base = root / "data/evaluation"
     rows = {}
     names = (*HISTORICAL_CLAIMS, "old-v6/acceptance.json")
-    if version == 9:
+    if version in (9, 10):
         names = (*names, CLAIM)
+    if version == 10:
+        names = (*names, BASELINE_CLAIM)
     for name in names:
         target = base / name
         write(target, {"old_failed_result": False})
@@ -54,6 +57,10 @@ def history(root: Path, version: int = 8) -> Path:
 def prepare(root: Path, monkeypatch: pytest.MonkeyPatch, version: int = 8) -> Path:
     monkeypatch.setattr(paired, "_git_state", lambda root: ("a" * 40, False))
     monkeypatch.setattr(paired, "load_fixture", lambda *args: (fixture(), "b" * 64))
+    if version == 10:
+        configuration = configured_settings()
+        configuration.llm_compatibility_profile = "deepseek"
+        monkeypatch.setattr(paired, "load_explicit_settings", lambda *a, **k: (configuration, ""))
     return paired.prepare_paired(root, history(root, version), version) / "plan.json"
 
 
@@ -163,20 +170,28 @@ def test_one_shot_180_ceiling_and_only_approved_output_cap(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize(
-    "stopping", [None, "baseline", "accounting", "resource", "identity", "truncated"]
+    "version,stopping",
+    [
+        (version, stopping)
+        for version in (8, 9, 10)
+        for stopping in (None, "baseline", "accounting", "resource", "identity", "truncated")
+    ]
+    + [(10, "config_change"), (10, "plan_change")],
 )
-@pytest.mark.parametrize("version", [8, 9])
 async def test_mock_wire_full_schedule_or_first_baseline_stop(
     wire_root: Path, monkeypatch: pytest.MonkeyPatch, stopping: str | None, version: int
 ) -> None:
     tmp_path = wire_root
-    if version == 9:
-        mock_contract = baseline_contract()
+    if version in (9, 10):
+        mock_contract = baseline_contract(version)
         mock_contract["resources"] = RESOURCES
-        monkeypatch.setattr(paired, "baseline_contract", lambda: mock_contract)
+        monkeypatch.setattr(paired, "baseline_contract", lambda version=version: mock_contract)
     path = prepare(tmp_path, monkeypatch, version)
+    configuration = configured_settings()
+    if version == 10:
+        configuration.llm_compatibility_profile = "deepseek"
     monkeypatch.setattr(
-        paired, "load_explicit_settings", lambda *args, **kwargs: (configured_settings(), None)
+        paired, "load_explicit_settings", lambda *args, **kwargs: (configuration, None)
     )
     monkeypatch.setattr(paired, "DockerEvaluationSandbox", lambda *args: WorkflowReplaySandbox())
     monkeypatch.setattr(
@@ -217,6 +232,8 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
             cls = SnapshotFixtureProvider if variant == "no_planner" else RenamedFixtureProvider
             providers[task] = cls(data, data.scripts[scenario], project_source=PUBLIC_KNOWLEDGE)
         payload = json.loads(request.content)
+        if version == 10 and payload["tool_choice"] == "required":
+            assert payload["thinking"] == {"type": "disabled"}
         messages: list[ConversationMessage] = [
             ChatMessage(role=m["role"], content=m["content"]) for m in payload["messages"]
         ]
@@ -229,8 +246,16 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
             )
             for t in payload["tools"]
         ]
-        result = await providers[task].generate(messages, tools=tools, tool_choice="auto")
+        result = await providers[task].generate(
+            messages, tools=tools, tool_choice=payload["tool_choice"]
+        )
         call = result.tool_calls[0]
+        if stopping in {"config_change", "plan_change"}:
+            configuration.llm_model = "changed-mid-flight"
+            if stopping == "plan_change":
+                value = json.loads(path.read_text())
+                value["provider_binding"] = paired.provider_binding(configuration)
+                path.write_text(json.dumps(value))
         return httpx.Response(
             200,
             json={
@@ -282,13 +307,15 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
     directory, accepted = await paired.run_paired(args, repo_root=tmp_path)
     rows = json.loads((directory / "cases.json").read_text())
     summary = json.loads((directory / "acceptance.json").read_text())
-    assert [r["task"] for r in rows] == list(TASKS[:1] if stopping or version == 9 else TASKS)
+    assert [r["task"] for r in rows] == list(TASKS[:1] if stopping or version in (9, 10) else TASKS)
     assert accepted is (not stopping)
-    key = "baseline_acceptance" if version == 9 else "paired_measurement_complete"
+    key = "baseline_acceptance" if version in (9, 10) else "paired_measurement_complete"
     assert summary[key] is (not stopping)
     assert summary["phase10_overall_acceptance"] is False
     assert summary["statistical_benefit_claim"] is False
-    assert summary["physical_requests"]["llm"] <= (12 if version == 9 else 180)
+    assert summary["physical_requests"]["llm"] <= (12 if version in (9, 10) else 180)
+    if stopping in {"config_change", "plan_change"}:
+        assert summary["physical_requests"]["llm"] == 1
     if not stopping and version == 8:
         assert all(c["paired"] == 3 for c in summary["contrasts"])
         assert all(
@@ -315,6 +342,12 @@ async def test_mock_wire_full_schedule_or_first_baseline_stop(
         assert not baseline_passed(copy[0])
         assert not paired_summary(copy, ledger, clean=True, unchanged=True)[
             "paired_pilot_acceptance"
+        ]
+    if stopping == "config_change":
+        # Restore the original public config so the replay attempt reaches the claim gate.
+        # The changed config already proved it stops after exactly one physical request.
+        configuration.llm_model = json.loads(path.read_text())["provider_binding"][
+            "configured_model"
         ]
     args.approval_id = "reset-with-other-id"
     with pytest.raises(ValueError, match="already claimed"):
