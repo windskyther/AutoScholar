@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -11,6 +12,7 @@ import httpx
 
 from autoscholar.evaluation.datasets import decode_json, payload_digest
 from autoscholar.evaluation.models import MeasuredUsage
+from autoscholar.evaluation.provider_diagnostics import error_diagnostic
 from autoscholar.evaluation.runner import _write_json
 from autoscholar.llm.errors import LLMRequestRejected
 
@@ -322,6 +324,14 @@ class GuardedTransport(httpx.AsyncBaseTransport):
                 self.ledger.finish(
                     index, state="returned", status=response.status_code, usage=usage
                 )
+                if response.status_code != 200:
+                    # Diagnostics must not change dispatch, retry, or known-return accounting.
+                    # Only fixed vocabulary is persisted, never raw vendor prose or headers.
+                    with suppress(OSError):
+                        _write_json(
+                            self.output / f"error-{self.provider}-{self.case_id}.json",
+                            error_diagnostic(bytes(content), response.status_code),
+                        )
                 # aiter_bytes() already decompressed the wire body. Forwarding the old
                 # encoding/length headers would make httpx decode it a second time.
                 response_headers = dict(response.headers)
