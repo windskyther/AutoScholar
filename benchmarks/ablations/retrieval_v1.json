@@ -1,0 +1,14 @@
+{
+  "schema_version":1,
+  "id":"public-reranker-ablation-v1",
+  "category":"rag",
+  "description":"Five English public engineering queries over pre-chunked text, using actual Qdrant Local cosine/sparse/RRF retrieval and deterministic lexical overlap reranking. Same candidate pool for both variants. Not production neural embeddings/cross-encoder or multilingual semantic evaluation.",
+  "provenance":"Self-authored public corpus and independent relevance IDs. No fixed rankings supplied. Algorithmic token counts are computed from input text only; no gold labels enter indexing or reranking. No downloads, network, provider calls, application DB or .env.",
+  "cases":[
+    {"id":"reranker-network","prompt":"What networking is available inside the Docker sandbox?","inputs":{"query_id":"network"},"expected":{"relevant_document_ids":["public-sandbox"],"relevant_chunk_ids":["sandbox-network"]}},
+    {"id":"reranker-digest","prompt":"How should an artifact SHA digest and byte length be verified?","inputs":{"query_id":"digest"},"expected":{"relevant_document_ids":["public-artifacts"],"relevant_chunk_ids":["artifact-integrity"]}},
+    {"id":"reranker-checkpoint","prompt":"How is checkpoint test accuracy independently recomputed?","inputs":{"query_id":"checkpoint"},"expected":{"relevant_document_ids":["public-artifacts"],"relevant_chunk_ids":["checkpoint-accuracy"]}},
+    {"id":"reranker-memory","prompt":"Where is project memory scoped?","inputs":{"query_id":"memory"},"expected":{"relevant_document_ids":["public-workflow"],"relevant_chunk_ids":["workflow-memory"]}},
+    {"id":"reranker-budget","prompt":"What shared budget applies to the root task and its children?","inputs":{"query_id":"budget"},"expected":{"relevant_document_ids":["public-workflow"],"relevant_chunk_ids":["workflow-budget"]}}
+  ]
+}

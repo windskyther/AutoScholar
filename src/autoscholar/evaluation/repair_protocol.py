@@ -1,0 +1,302 @@
+"""Separately approved, version-bound repair checks; never reset consumed grants."""
+
+import copy
+import json
+from collections.abc import Callable
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+from autoscholar.coding.snapshot import TEXT_LIMITS
+from autoscholar.evaluation.datasets import payload_digest
+from autoscholar.evaluation.live_ablation_contract import LIMITS, LiveAblationLedger
+from autoscholar.evaluation.live_ablation_contract import LiveWorkflowProvider as LiveProvider
+from autoscholar.evaluation.live_ablation_v2 import OUTPUT_TOKENS, QUOTE_RULE, SUFFIX
+from autoscholar.evaluation.provider_transport import Provider
+from autoscholar.llm.errors import LLMResponseError, correctable_tool_schema_error
+from autoscholar.llm.models import (
+    ChatMessage,
+    ConversationMessage,
+    LLMResult,
+    ToolChoice,
+    ToolDefinition,
+)
+from autoscholar.orchestration.contracts import stage_contracts
+from autoscholar.orchestration.models import ExperimentRetry, ReviewResult
+
+REPAIR_TASKS = ("normal-baseline", "recover-baseline", "recover-no_replanning")
+REPAIR_REQUESTS = 36
+REPAIR_SCOPE = "phase10_targeted_repairs_v3"
+REPAIR_CLAIM = "live-repair-v3-claim.json"
+JSON_RULE = (
+    " Tool arguments must be exactly one JSON object matching the supplied schema. "
+    "Do not append prose, another object, repeated keys or a second copy of the payload. "
+    "Research queries search external sources only: submit exactly three queries for the "
+    "three requested topics. The platform separately retrieves local project documents; "
+    "never plan a web query for local project files. Respect repair_constraints."
+)
+
+
+def repair_claim(protocol_version: int) -> str:
+    if type(protocol_version) is not int or protocol_version not in (3, 4, 5, 6, 7):
+        raise ValueError("Only frozen repair protocols 3 through 7 are supported")
+    return f"live-repair-v{protocol_version}-claim.json"
+
+
+def repair_contract(protocol_version: int = 3) -> dict[str, Any]:
+    repair_claim(protocol_version)
+    contract: dict[str, Any] = {
+        "protocol_version": 3,
+        "scope": REPAIR_SCOPE,
+        "tasks": list(REPAIR_TASKS),
+        "physical_limits": {"llm": REPAIR_REQUESTS, "tavily": 0, "per_task_llm": 12},
+        "limits": LIMITS.model_dump(),
+        "max_output_tokens": OUTPUT_TOKENS,
+        "native_json_corrections_per_task": 1,
+        "coordinator_attempts_per_stage": 2,
+        "automatic_task_replays": False,
+        "objective_suffix": SUFFIX,
+        "json_rule": JSON_RULE,
+        "quote_rule": QUOTE_RULE,
+        "search_backend": "closed-public-engineering-corpus-v2",
+        "acceptance": {
+            "normal-baseline": "All production checks and independent oracle pass; code runs once",
+            "recover-baseline": (
+                "One metrics fault; experiment-only recovery; same validated source; "
+                "two training runs; independent oracle passes"
+            ),
+            "recover-no_replanning": (
+                "Reach the injected metrics fault; stop with evaluation_replanning_disabled; "
+                "no replan or second training"
+            ),
+            "all": (
+                "Known physical usage matches durable calls; source unchanged; owned children clean"
+            ),
+        },
+        "phase10_overall_acceptance": False,
+        "main_merge_authorized": False,
+        "limitations": (
+            "Targeted seeded-code CPU/MNIST/closed-corpus verification only. "
+            "Not a complete workflow ablation, an open-corpus research benchmark, "
+            "or a statistical component-benefit claim. Old results remain separate."
+        ),
+    }
+    if protocol_version >= 4:
+        contract.update(
+            protocol_version=4,
+            scope="phase10_reviewer_retry_acceptance_v4",
+            previous_grants_reusable=False,
+            review_verification=(
+                "Persisted positive facts; at most one correction; no automatic PASS"
+            ),
+            recovery_verification=(
+                "Server-retained immutable DAG; ExperimentRetry only for eligible collection faults"
+            ),
+            runtime_schema_sha256={
+                "review": payload_digest(ReviewResult.model_json_schema()),
+                "experiment_retry": payload_digest(ExperimentRetry.model_json_schema()),
+            },
+        )
+    if protocol_version >= 5:
+        contract.update(
+            protocol_version=5,
+            scope="phase10_request_preflight_acceptance_v5",
+            request_admission={
+                "max_request_bytes": 32768,
+                "snapshot_feedback_reserve_bytes": 1024,
+                "check_sdk_and_forwarded_utf8_bytes": True,
+                "before_budget_and_journal": True,
+                "late_proven_unsent_rejection_unwinds_only_own_reservation": True,
+                "unknown_remote_outcomes_remain_pending": True,
+                "oversized_snapshot_write_preserves_original_source": True,
+                "source_truncation": False,
+            },
+        )
+    if protocol_version >= 6:
+        contract.update(
+            protocol_version=6,
+            scope="phase10_recovery_authority_acceptance_v6",
+            stage_contracts_sha256=payload_digest(stage_contracts()),
+            coding_review_evidence={
+                "all_issue_categories_require_source_and_requirement_evidence": True,
+                "planner_output_cannot_expand_stage_duties": True,
+                "source_quote_alone_does_not_prove_semantic_defect": True,
+                "unsupported_diagnoses_do_not_automatically_pass": True,
+            },
+            machine_recovery={
+                "eligibility_uses_persisted_failure_training_source_and_specification": True,
+                "model_issue_codes_do_not_determine_eligibility": True,
+                "max_unchanged_collection_retries": 1,
+                "repeated_collection_failure_cannot_bypass_limit_via_full_revision": True,
+                "unaffordable_code_repairs_stop_before_replanning_or_child_creation": True,
+            },
+        )
+    if protocol_version == 7:
+        contract.update(
+            protocol_version=7,
+            scope="phase10_coding_control_acceptance_v7",
+            tasks=["recover-no_replanning"],
+            physical_limits={"llm": 12, "tavily": 0, "per_task_llm": 12},
+            acceptance={
+                key: value
+                for key, value in contract["acceptance"].items()
+                if key in {"recover-no_replanning", "all"}
+            },
+            coding_convergence={
+                "max_snapshot_edit_calls": 8,
+                "one_native_tool_call_per_snapshot_turn": True,
+                "invalid_batches_rejected_before_writes": True,
+                "bounded_protocol_corrections": 1,
+                "progress_exposes_edit_and_shared_call_budgets": True,
+                "reserve_review_and_optional_replan_calls_within_existing_budget": True,
+                "successful_write_hands_off_at_edit_or_reserved_call_boundary": True,
+                "mandatory_static_and_pytest_must_exit_zero_without_truncation": True,
+                "source_must_remain_unchanged_during_validation": True,
+                "no_synthetic_model_ready_or_automatic_review_pass": True,
+            },
+            limitations=(
+                "One new No Replanning control only, on the repaired coding runtime. "
+                "Prior normal/recovery evidence remains version-specific; v6 is not regraded. "
+                "Not a fresh three-task acceptance, complete ablation or full Phase 10 acceptance."
+            ),
+        )
+    return contract
+
+
+class RepairLedger(LiveAblationLedger):
+    def __init__(self, path: Path, *, run_id: str, protocol_version: int = 3) -> None:
+        contract = repair_contract(protocol_version)
+        self.path = path
+        self.limits = {"llm": contract["physical_limits"]["llm"], "tavily": 0}
+        self.blocked_case_ids = ()
+        self.data = {
+            "schema_version": 1,
+            "protocol_version": protocol_version,
+            "scope": contract["scope"],
+            "run_id": run_id,
+            "limits": self.limits,
+            "tasks": list(contract["tasks"]),
+            "per_task_llm_limit": 12,
+            "automatic_retries": False,
+            "native_json_corrections_per_task": 1,
+            "attempts": [],
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("x", encoding="utf-8") as stream:
+            json.dump(self.data, stream, allow_nan=False)
+
+    def reserve(self, provider: Provider, case_id: str, payload: dict[str, Any]) -> int:
+        if case_id.rpartition("--")[0] not in self.data["tasks"]:
+            raise ValueError("Only the version-bound approved repair tasks may dispatch")
+        return super().reserve(provider, case_id, payload)
+
+
+class RepairWorkflowProvider(LiveProvider):
+    corrections = 0
+    verify_source: Callable[[], object] | None = None
+
+    def check_available(self) -> None:
+        super().check_available()
+        if self.verify_source is not None:
+            self.verify_source()
+
+    @staticmethod
+    def _inputs(
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+    ) -> tuple[list[ConversationMessage], list[ToolDefinition] | None]:
+        name = tools[0].name if tools and len(tools) == 1 else "coding"
+        rule = JSON_RULE + (
+            QUOTE_RULE if name in {"submit_evidence", "submit_research_report"} else ""
+        )
+        messages = [
+            replace(item, content=item.content + rule)
+            if isinstance(item, ChatMessage) and item.role == "system"
+            else item
+            for item in messages
+        ]
+        if name == "submit_research_queries" and tools:
+            parameters = copy.deepcopy(tools[0].parameters)
+            parameters["properties"]["queries"].update(minItems=3, maxItems=3)
+            tools = [replace(tools[0], parameters=parameters)]
+        return messages, tools
+
+    async def preflight(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+        reserve_bytes: int = 0,
+    ) -> None:
+        messages, tools = self._inputs(messages, tools=tools)
+        await super().preflight(
+            messages, tools=tools, tool_choice=tool_choice, reserve_bytes=reserve_bytes
+        )
+
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        name = tools[0].name if tools and len(tools) == 1 else "coding"
+        messages, tools = self._inputs(messages, tools=tools)
+        try:
+            result = await super().generate(messages, tools=tools, tool_choice=tool_choice)
+            if name == "submit_research_queries" and (
+                len(result.tool_calls) != 1
+                or result.tool_calls[0].name != name
+                or not isinstance(result.tool_calls[0].arguments.get("queries"), list)
+                or len(result.tool_calls[0].arguments["queries"]) != 3
+            ):
+                self.failed = True
+                raise LLMResponseError(
+                    code="llm_invalid_tool_call",
+                    message="Exactly three external queries required",
+                    usage=result.usage,
+                    retryable=False,
+                    model=result.model,
+                    validation_reason="schema_invalid",
+                )
+            return result
+        except LLMResponseError as exc:
+            if exc.model:
+                self.models.add(exc.model)
+            attempts = self.transport.ledger.attempts
+            known = bool(
+                attempts
+                and attempts[-1]["case_id"] == f"{self.task}--{self.calls}"
+                and attempts[-1]["state"] == "returned"
+                and attempts[-1]["http_status"] == 200
+                and exc.usage is not None
+                and attempts[-1]["usage"]["total_tokens"] == exc.usage.total_tokens
+                and attempts[-1]["usage"]["input_tokens"] == exc.usage.input_tokens
+                and attempts[-1]["usage"]["output_tokens"] == exc.usage.output_tokens
+            )
+            allowed = (
+                known
+                and exc.retryable
+                and self.corrections < 1
+                and self.calls < 12
+                and (
+                    name in {"submit_task_plan", "submit_plan_revision", "submit_review"}
+                    or (
+                        name == "coding"
+                        and tool_choice == "required"
+                        and {tool.name for tool in tools or []} == set(TEXT_LIMITS)
+                        and correctable_tool_schema_error(exc)
+                    )
+                )
+                and exc.code == "llm_invalid_tool_call"
+                and exc.finish_reason != "length"
+            )
+            if allowed:
+                self.corrections += 1
+                self.failed = False
+            else:
+                self.failed = True
+            exc.retryable = bool(allowed)
+            raise

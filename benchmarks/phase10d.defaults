@@ -1,0 +1,3 @@
+# Public offline component settings. Never substitute the repository .env for this file.
+AUTOSCHOLAR_EVAL_MANAGER_IMAGE=autoscholar-api:phase9-acceptance
+AUTOSCHOLAR_EVAL_SANDBOX_IMAGE=autoscholar-python-sandbox:phase4

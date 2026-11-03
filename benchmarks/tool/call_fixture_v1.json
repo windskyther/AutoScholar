@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "suite_id": "public-tool-v1",
+  "calls": {
+    "addition":{"prompt":"计算 17+25。","tool":"calculator","arguments":{"expression":"17+25"}},
+    "precedence":{"prompt":"计算 2+3*4。","tool":"calculator","arguments":{"expression":"2+3*4"}},
+    "parentheses":{"prompt":"计算 (2+3)*4。","tool":"calculator","arguments":{"expression":"(2+3)*4"}},
+    "division":{"prompt":"计算 7/2。","tool":"calculator","arguments":{"expression":"7/2"}},
+    "floor":{"prompt":"计算 17//3。","tool":"calculator","arguments":{"expression":"17//3"}},
+    "remainder":{"prompt":"计算 17%3。","tool":"calculator","arguments":{"expression":"17%3"}},
+    "power":{"prompt":"计算 2 的十次方。","tool":"calculator","arguments":{"expression":"2**10"}},
+    "caret":{"prompt":"用 Calculator 的 ^ 别名计算 2^10。","tool":"calculator","arguments":{"expression":"2^10"}},
+    "sqrt":{"prompt":"计算 sqrt(81)。","tool":"calculator","arguments":{"expression":"sqrt(81)"}},
+    "trig":{"prompt":"计算 sin(pi/2)。","tool":"calculator","arguments":{"expression":"sin(pi/2)"}},
+    "negative":{"prompt":"计算 abs(-8)+min(4,9)。","tool":"calculator","arguments":{"expression":"abs(-8)+min(4,9)"}},
+    "rounding":{"prompt":"计算 round(1.2345,2)。","tool":"calculator","arguments":{"expression":"round(1.2345,2)"}},
+    "zero-division":{"prompt":"确认 1/0 被安全拒绝。","tool":"calculator","arguments":{"expression":"1/0"}},
+    "import-refusal":{"prompt":"确认 Calculator 不允许导入模块。","tool":"calculator","arguments":{"expression":"__import__('os')"}},
+    "syntax-refusal":{"prompt":"确认不完整表达式 2+ 被拒绝。","tool":"calculator","arguments":{"expression":"2+"}},
+    "attribute-refusal":{"prompt":"确认属性访问被 Calculator 拒绝。","tool":"calculator","arguments":{"expression":"(1).__class__"}},
+    "missing-argument":{"prompt":"确认缺少 expression 的调用不进入工具。","tool":"calculator","arguments":{}},
+    "wrong-type":{"prompt":"确认 expression 数字类型被 schema 拒绝。","tool":"calculator","arguments":{"expression":42}},
+    "unknown-tool":{"prompt":"确认不存在的工具不会执行。","tool":"missing_tool","arguments":{"expression":"1+1"}},
+    "external-disabled":{"prompt":"确认离线评测不执行外部 web_search 工具。","tool":"web_search","arguments":{"query":"public MNIST"}}
+  }
+}

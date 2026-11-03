@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "public-tool-v1",
+  "category": "tool",
+  "description": "Twenty controlled native-call fixtures executed against the real Calculator: twelve numerical answers and eight expected refusals.",
+  "provenance": "Original public engineering fixtures. Selection is predetermined, not a measured LLM decision. No external services or private materials.",
+  "cases": [
+    {"id":"addition","prompt":"计算 17+25。","inputs":{"query_id":"addition"},"expected":{"tool":"calculator","arguments":{"expression":"17+25"},"succeeded":true,"result":42.0}},
+    {"id":"precedence","prompt":"计算 2+3*4。","inputs":{"query_id":"precedence"},"expected":{"tool":"calculator","arguments":{"expression":"2+3*4"},"succeeded":true,"result":14.0}},
+    {"id":"parentheses","prompt":"计算 (2+3)*4。","inputs":{"query_id":"parentheses"},"expected":{"tool":"calculator","arguments":{"expression":"(2+3)*4"},"succeeded":true,"result":20.0}},
+    {"id":"division","prompt":"计算 7/2。","inputs":{"query_id":"division"},"expected":{"tool":"calculator","arguments":{"expression":"7/2"},"succeeded":true,"result":3.5}},
+    {"id":"floor","prompt":"计算 17//3。","inputs":{"query_id":"floor"},"expected":{"tool":"calculator","arguments":{"expression":"17//3"},"succeeded":true,"result":5.0}},
+    {"id":"remainder","prompt":"计算 17%3。","inputs":{"query_id":"remainder"},"expected":{"tool":"calculator","arguments":{"expression":"17%3"},"succeeded":true,"result":2.0}},
+    {"id":"power","prompt":"计算 2 的十次方。","inputs":{"query_id":"power"},"expected":{"tool":"calculator","arguments":{"expression":"2**10"},"succeeded":true,"result":1024.0}},
+    {"id":"caret","prompt":"用 Calculator 的 ^ 别名计算 2^10。","inputs":{"query_id":"caret"},"expected":{"tool":"calculator","arguments":{"expression":"2^10"},"succeeded":true,"result":1024.0}},
+    {"id":"sqrt","prompt":"计算 sqrt(81)。","inputs":{"query_id":"sqrt"},"expected":{"tool":"calculator","arguments":{"expression":"sqrt(81)"},"succeeded":true,"result":9.0}},
+    {"id":"trig","prompt":"计算 sin(pi/2)。","inputs":{"query_id":"trig"},"expected":{"tool":"calculator","arguments":{"expression":"sin(pi/2)"},"succeeded":true,"result":1.0}},
+    {"id":"negative","prompt":"计算 abs(-8)+min(4,9)。","inputs":{"query_id":"negative"},"expected":{"tool":"calculator","arguments":{"expression":"abs(-8)+min(4,9)"},"succeeded":true,"result":12.0}},
+    {"id":"rounding","prompt":"计算 round(1.2345,2)。","inputs":{"query_id":"rounding"},"expected":{"tool":"calculator","arguments":{"expression":"round(1.2345,2)"},"succeeded":true,"result":1.23}},
+    {"id":"zero-division","prompt":"确认 1/0 被安全拒绝。","inputs":{"query_id":"zero-division"},"expected":{"tool":"calculator","arguments":{"expression":"1/0"},"succeeded":false,"error_code":"calculator_invalid_expression"}},
+    {"id":"import-refusal","prompt":"确认 Calculator 不允许导入模块。","inputs":{"query_id":"import-refusal"},"expected":{"tool":"calculator","arguments":{"expression":"__import__('os')"},"succeeded":false,"error_code":"calculator_invalid_expression"}},
+    {"id":"syntax-refusal","prompt":"确认不完整表达式 2+ 被拒绝。","inputs":{"query_id":"syntax-refusal"},"expected":{"tool":"calculator","arguments":{"expression":"2+"},"succeeded":false,"error_code":"calculator_invalid_expression"}},
+    {"id":"attribute-refusal","prompt":"确认属性访问被 Calculator 拒绝。","inputs":{"query_id":"attribute-refusal"},"expected":{"tool":"calculator","arguments":{"expression":"(1).__class__"},"succeeded":false,"error_code":"calculator_invalid_expression"}},
+    {"id":"missing-argument","prompt":"确认缺少 expression 的调用不进入工具。","inputs":{"query_id":"missing-argument"},"expected":{"tool":"calculator","arguments":{},"succeeded":false,"error_code":"invalid_arguments"}},
+    {"id":"wrong-type","prompt":"确认 expression 数字类型被 schema 拒绝。","inputs":{"query_id":"wrong-type"},"expected":{"tool":"calculator","arguments":{"expression":42},"succeeded":false,"error_code":"invalid_arguments"}},
+    {"id":"unknown-tool","prompt":"确认不存在的工具不会执行。","inputs":{"query_id":"unknown-tool"},"expected":{"tool":"missing_tool","arguments":{"expression":"1+1"},"succeeded":false,"error_code":"unknown_tool"}},
+    {"id":"external-disabled","prompt":"确认离线评测不执行外部 web_search 工具。","inputs":{"query_id":"external-disabled"},"expected":{"tool":"web_search","arguments":{"query":"public MNIST"},"succeeded":false,"error_code":"unknown_tool"}}
+  ]
+}

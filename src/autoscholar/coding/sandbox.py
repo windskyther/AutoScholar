@@ -115,6 +115,7 @@ class SandboxHealth(BaseModel):
     mnist_dataset: bool
     dataset_id: str | None = None
     dataset_sha256: str | None = None
+    image_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 class SandboxExecutor(Protocol):
@@ -127,9 +128,7 @@ class SandboxExecutor(Protocol):
 
 class SandboxClient:
     def __init__(self, base_url: str, *, timeout_seconds: float = 310) -> None:
-        self._client = httpx.AsyncClient(
-            base_url=base_url.rstrip("/"), timeout=timeout_seconds
-        )
+        self._client = httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=timeout_seconds)
 
     async def run(self, request: SandboxRunRequest) -> SandboxRunResult:
         try:
@@ -174,15 +173,19 @@ class DockerSandboxExecutor:
         dataset_ready_file: str,
         docker_socket: str = "/var/run/docker.sock",
         limits: DockerLimits | None = None,
+        evaluation_owner: str | None = None,
     ) -> None:
         transport = httpx.AsyncHTTPTransport(uds=docker_socket)
         self._client = httpx.AsyncClient(
-            base_url="http://docker", transport=transport, timeout=20
+            base_url="http://docker", transport=transport, timeout=20, trust_env=False
         )
         self._image = image
         self._dataset_volume = dataset_volume
         self._dataset_ready_file = dataset_ready_file
         self._limits = limits or DockerLimits()
+        self._resource_labels = (
+            {"autoscholar.evaluation": evaluation_owner} if evaluation_owner else {}
+        )
 
     async def run(self, request: SandboxRunRequest) -> SandboxRunResult:
         started = asyncio.get_running_loop().time()
@@ -193,7 +196,10 @@ class DockerSandboxExecutor:
         try:
             volume_response = await self._client.post(
                 "/volumes/create",
-                json={"Name": volume_name, "Labels": {"autoscholar.temporary": "true"}},
+                json={
+                    "Name": volume_name,
+                    "Labels": {"autoscholar.temporary": "true", **self._resource_labels},
+                },
             )
             self._raise_engine_error(volume_response)
             loader_response = await self._client.post(
@@ -281,18 +287,24 @@ class DockerSandboxExecutor:
                         f"/containers/{container_id}", params={"force": "true", "v": "true"}
                     )
             with suppress(httpx.HTTPError):
-                await self._client.delete(
-                    f"/volumes/{volume_name}", params={"force": "true"}
-                )
+                await self._client.delete(f"/volumes/{volume_name}", params={"force": "true"})
 
     async def health(self) -> SandboxHealth:
         engine = image = False
+        image_sha256: str | None = None
         try:
             ping = await self._client.get("/_ping", timeout=3)
             engine = ping.status_code == 200
             inspected = await self._client.get(f"/images/{self._image}/json", timeout=3)
             image = inspected.status_code == 200
-        except httpx.HTTPError:
+            if image:
+                identifier = str(inspected.json().get("Id", ""))
+                candidate = identifier.removeprefix("sha256:")
+                if len(candidate) == 64 and all(
+                    character in "0123456789abcdef" for character in candidate
+                ):
+                    image_sha256 = candidate
+        except (httpx.HTTPError, ValueError, AttributeError):
             pass
         dataset = PurePosixPath(self._dataset_ready_file)
         dataset_ready = (
@@ -322,6 +334,7 @@ class DockerSandboxExecutor:
             mnist_dataset=dataset_ready,
             dataset_id=dataset_id,
             dataset_sha256=dataset_sha256,
+            image_sha256=image_sha256,
         )
 
     async def close(self) -> None:
@@ -332,6 +345,7 @@ class DockerSandboxExecutor:
     ) -> dict[str, Any]:
         return {
             "Image": self._image,
+            "Labels": self._resource_labels,
             "Cmd": self._command(request),
             "WorkingDir": "/workspace/source",
             "User": "65532:65532",
@@ -364,7 +378,7 @@ class DockerSandboxExecutor:
                         "Source": self._dataset_volume,
                         "Target": "/datasets/mnist",
                         "ReadOnly": True,
-                    }
+                    },
                 ],
             },
         }
@@ -372,6 +386,7 @@ class DockerSandboxExecutor:
     def _loader_config(self, workspace_volume: str) -> dict[str, Any]:
         return {
             "Image": self._image,
+            "Labels": self._resource_labels,
             "Cmd": ["python", "-c", "import time; time.sleep(30)"],
             "WorkingDir": "/",
             "User": "65532:65532",

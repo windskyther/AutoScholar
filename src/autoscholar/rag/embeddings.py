@@ -58,10 +58,24 @@ class Reranker(Protocol):
 
 
 class FastEmbedProvider:
-    def __init__(self, *, model: str, dimensions: int, cache_dir: Path) -> None:
+    def __init__(
+        self,
+        *,
+        model: str,
+        dimensions: int,
+        cache_dir: Path,
+        local_files_only: bool = False,
+        model_path: Path | None = None,
+        threads: int | None = None,
+    ) -> None:
         self._model_name = model
         self._dimensions = dimensions
         self._cache_dir = cache_dir
+        self._local_files_only, self._model_path, self._threads = (
+            local_files_only,
+            model_path,
+            threads,
+        )
         self._embedding: TextEmbedding | None = None
         self._load_lock = asyncio.Lock()
 
@@ -104,7 +118,11 @@ class FastEmbedProvider:
                     model_name=self._model_name,
                     cache_dir=str(self._cache_dir),
                     lazy_load=True,
+                    local_files_only=self._local_files_only,
+                    specific_model_path=str(self._model_path) if self._model_path else None,
+                    threads=self._threads,
                 )
+        assert self._embedding is not None
         return self._embedding
 
     def _validate(self, vectors: Sequence[Sequence[float]]) -> None:
@@ -164,9 +182,22 @@ class OpenAICompatibleEmbeddingProvider:
 
 
 class FastEmbedSparseProvider:
-    def __init__(self, *, model: str, cache_dir: Path) -> None:
+    def __init__(
+        self,
+        *,
+        model: str,
+        cache_dir: Path,
+        local_files_only: bool = False,
+        model_path: Path | None = None,
+        threads: int | None = None,
+    ) -> None:
         self._model_name = model
         self._cache_dir = cache_dir
+        self._local_files_only, self._model_path, self._threads = (
+            local_files_only,
+            model_path,
+            threads,
+        )
         self._embedding: SparseTextEmbedding | None = None
         self._load_lock = asyncio.Lock()
 
@@ -209,14 +240,31 @@ class FastEmbedSparseProvider:
                     model_name=self._model_name,
                     cache_dir=str(self._cache_dir),
                     lazy_load=True,
+                    local_files_only=self._local_files_only,
+                    specific_model_path=str(self._model_path) if self._model_path else None,
+                    threads=self._threads,
                 )
+        assert self._embedding is not None
         return self._embedding
 
 
 class FastEmbedReranker:
-    def __init__(self, *, model: str, cache_dir: Path) -> None:
+    def __init__(
+        self,
+        *,
+        model: str,
+        cache_dir: Path,
+        local_files_only: bool = False,
+        model_path: Path | None = None,
+        threads: int | None = None,
+    ) -> None:
         self._model_name = model
         self._cache_dir = cache_dir
+        self._local_files_only, self._model_path, self._threads = (
+            local_files_only,
+            model_path,
+            threads,
+        )
         self._reranker: TextCrossEncoder | None = None
         self._load_lock = asyncio.Lock()
 
@@ -256,5 +304,9 @@ class FastEmbedReranker:
                     model_name=self._model_name,
                     cache_dir=str(self._cache_dir),
                     lazy_load=True,
+                    local_files_only=self._local_files_only,
+                    specific_model_path=str(self._model_path) if self._model_path else None,
+                    threads=self._threads,
                 )
+        assert self._reranker is not None
         return self._reranker

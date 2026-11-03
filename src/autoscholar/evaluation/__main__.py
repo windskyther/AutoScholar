@@ -1,0 +1,485 @@
+"""Bounded evaluation entry point. Never autoload application .env/settings."""
+
+import argparse
+import asyncio
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+from autoscholar.coding.sandbox import SandboxError
+from autoscholar.evaluation.datasets import load_suite
+from autoscholar.evaluation.models import BenchmarkSuite, RunConfiguration
+from autoscholar.evaluation.runner import EvaluationAdapter
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+@dataclass
+class PreparedEvaluation:
+    suite: BenchmarkSuite
+    digest: str
+    adapters: list[EvaluationAdapter]
+    configuration: RunConfiguration
+    destination: Path
+
+
+async def _prepare(args: argparse.Namespace) -> PreparedEvaluation:
+    from autoscholar.evaluation.coding_adapter import (
+        CodingFixture,
+        CodingOracleFixture,
+        InjectedCodingAdapter,
+    )
+    from autoscholar.evaluation.component_fixture import load_fixture
+    from autoscholar.evaluation.docker_sandbox import DockerEvaluationSandbox
+    from autoscholar.evaluation.e2e_adapter import InjectedWorkflowAdapter
+    from autoscholar.evaluation.experiment_adapter import (
+        ExperimentFixture,
+        InjectedExperimentAdapter,
+    )
+    from autoscholar.evaluation.isolated_components import sandbox_resources
+    from autoscholar.evaluation.rag_adapter import ReplayRAGAdapter, load_ranking_fixture
+    from autoscholar.evaluation.research_adapter import FixtureResearchAdapter, ResearchFixture
+    from autoscholar.evaluation.retrieval_ablation import (
+        RETRIEVAL_VARIANTS,
+        InjectedRetrievalAblationAdapter,
+        RetrievalFixture,
+        RetrievalPairAudit,
+    )
+    from autoscholar.evaluation.tool_adapter import FixtureToolAdapter, ToolFixture
+    from autoscholar.evaluation.workflow_ablation import WORKFLOW_VARIANTS
+    from autoscholar.evaluation.workflow_fixture import WorkflowFixture
+
+    category = args.category or "rag"
+    ablations = args.ablations
+    if ablations and category not in ("rag", "end_to_end"):
+        raise ValueError("Ablations support workflow or controlled local retrieval only")
+    dataset = args.dataset or REPO_ROOT / (
+        f"benchmarks/ablations/{'workflow' if category == 'end_to_end' else 'retrieval'}_v1.json"
+        if ablations
+        else f"benchmarks/{category}/public_v1.json"
+    )
+    suite, digest = load_suite(dataset)
+    if args.category and suite.category != args.category:
+        raise ValueError("Dataset category differs from requested category")
+    category = suite.category
+    if ablations and category not in ("rag", "end_to_end"):
+        raise ValueError("Ablation dataset has an unsupported category")
+    fixture_name = {
+        "rag": "ranking_fixture_v1.json",
+        "research": "provider_fixture_v1.json",
+        "tool": "call_fixture_v1.json",
+        "coding": "source_fixture_v1.json",
+        "experiment": "experiment_fixture_v1.json",
+        "end_to_end": "workflow_fixture_v1.json",
+    }.get(category)
+    if fixture_name is None:
+        raise ValueError("Evaluation category is not implemented")
+    fixture_path = args.fixture or REPO_ROOT / (
+        f"benchmarks/ablations/{'workflow' if category == 'end_to_end' else 'retrieval'}"
+        "_fixture_v1.json"
+        if ablations
+        else f"benchmarks/{category}/{fixture_name}"
+    )
+    root = (REPO_ROOT / "data/evaluation").resolve()
+    destination = args.output_root.resolve() if args.output_root else root
+    if not root.is_relative_to(REPO_ROOT.resolve()) or not destination.is_relative_to(root):
+        raise ValueError("Output must stay in this repository's data/evaluation directory")
+    configuration = RunConfiguration(
+        profile=args.profile,
+        seed=args.seed,
+        repeats=args.repeats,
+        case_timeout_seconds=args.timeout,
+    )
+    adapters: list[EvaluationAdapter]
+    if category in ("coding", "experiment", "end_to_end"):
+        if args.profile != "injected" or not args.sandbox_container:
+            raise ValueError(
+                "Coding/Experiment/E2E require explicit injected Docker controller; "
+                "no host fallback"
+            )
+        if args.ks is not None or args.modes not in (None, ["baseline"]):
+            raise ValueError("Isolated component evaluations use baseline without K")
+    elif ablations and category == "rag":
+        if args.profile != "injected" or args.sandbox_container or args.oracle or args.modes:
+            raise ValueError(
+                "Retrieval ablations require explicit injected profile without Docker/modes/oracle"
+            )
+    elif args.profile != "offline" or args.sandbox_container or args.oracle:
+        raise ValueError("Only Coding/Experiment/E2E expose sandbox injection")
+    if category == "rag" and ablations:
+        retrieval, fixture_digest = load_fixture(fixture_path, RetrievalFixture)
+        audit = RetrievalPairAudit()
+        workspace_root = (root / "retrieval-workspaces").resolve()
+        if not workspace_root.is_relative_to(root):
+            raise ValueError("Retrieval workspace escaped evaluation output scope")
+        adapters = [
+            InjectedRetrievalAblationAdapter(
+                retrieval,
+                fixture_sha256=fixture_digest,
+                variant=variant,
+                workspace_root=workspace_root,
+                audit=audit,
+                ks=args.ks or [1, 5, 10],
+            )
+            for variant in RETRIEVAL_VARIANTS
+        ]
+        fixture_suite = retrieval.suite_id
+    elif category == "rag":
+        fixture, fixture_digest = load_ranking_fixture(fixture_path)
+        modes = args.modes or ["dense", "sparse", "hybrid", "hybrid_rerank"]
+        adapters = [
+            ReplayRAGAdapter(
+                fixture, fixture_sha256=fixture_digest, mode=mode, ks=args.ks or [5, 10]
+            )
+            for mode in modes
+        ]
+        fixture_suite = fixture.suite_id
+    elif category == "coding":
+        coding, fixture_digest = load_fixture(fixture_path, CodingFixture)
+        oracle_path = args.oracle or REPO_ROOT / "benchmarks/coding/oracle_fixture_v1.json"
+        oracle, oracle_digest = load_fixture(oracle_path, CodingOracleFixture)
+        sandbox = DockerEvaluationSandbox(args.sandbox_container)
+        resources = sandbox_resources(await sandbox.health(), dataset=False)
+        workspace_root = (root / "component-workspaces").resolve()
+        if not workspace_root.is_relative_to(root):
+            raise ValueError("Component workspace escaped evaluation output scope")
+        adapters = [
+            InjectedCodingAdapter(
+                coding,
+                oracle,
+                fixture_sha256=fixture_digest,
+                oracle_sha256=oracle_digest,
+                sandbox=sandbox,
+                resources=resources,
+                workspace_root=workspace_root,
+            )
+        ]
+        fixture_suite = coding.suite_id
+    elif category == "experiment":
+        if args.oracle:
+            raise ValueError(
+                "Experiment uses a fixed checkpoint oracle, not arbitrary oracle files"
+            )
+        experiment, fixture_digest = load_fixture(fixture_path, ExperimentFixture)
+        sandbox = DockerEvaluationSandbox(args.sandbox_container)
+        resources = sandbox_resources(await sandbox.health(), dataset=True)
+        workspace_root = (root / "component-workspaces").resolve()
+        if not workspace_root.is_relative_to(root):
+            raise ValueError("Component workspace escaped evaluation output scope")
+        adapters = [
+            InjectedExperimentAdapter(
+                experiment,
+                fixture_sha256=fixture_digest,
+                sandbox=sandbox,
+                resources=resources,
+                workspace_root=workspace_root,
+            )
+        ]
+        fixture_suite = experiment.suite_id
+    elif category == "end_to_end":
+        if args.oracle:
+            raise ValueError("E2E uses a fixed checkpoint oracle, not arbitrary oracle files")
+        workflow, fixture_digest = load_fixture(fixture_path, WorkflowFixture)
+        sandbox = DockerEvaluationSandbox(args.sandbox_container)
+        resources = sandbox_resources(await sandbox.health(), dataset=True)
+        workspace_root = (root / "workflow-workspaces").resolve()
+        if not workspace_root.is_relative_to(root):
+            raise ValueError("Workflow workspace escaped evaluation output scope")
+        adapters = [
+            InjectedWorkflowAdapter(
+                workflow,
+                fixture_sha256=fixture_digest,
+                sandbox=sandbox,
+                resources=resources,
+                workspace_root=workspace_root,
+                ablation=ablations,
+                variant=variant,
+            )
+            for variant in (WORKFLOW_VARIANTS if ablations else ("baseline",))
+        ]
+        fixture_suite = workflow.suite_id
+    else:
+        if args.ks is not None or args.modes not in (None, ["baseline"]):
+            raise ValueError("Research/Tool only support baseline; K is a RAG option")
+        if category == "research":
+            research, fixture_digest = load_fixture(fixture_path, ResearchFixture)
+            adapters = [FixtureResearchAdapter(research, fixture_sha256=fixture_digest)]
+            fixture_suite = research.suite_id
+        else:
+            tool, fixture_digest = load_fixture(fixture_path, ToolFixture)
+            adapters = [FixtureToolAdapter(tool, fixture_sha256=fixture_digest)]
+            fixture_suite = tool.suite_id
+    if fixture_suite != suite.id:
+        raise ValueError("Fixture and suite IDs differ")
+    return PreparedEvaluation(suite, digest, adapters, configuration, destination)
+
+
+async def _evaluate(prepared: PreparedEvaluation, *, ablations: bool) -> Path:
+    from autoscholar.evaluation.runner import run_evaluation
+
+    directory = await run_evaluation(
+        prepared.suite,
+        dataset_sha256=prepared.digest,
+        adapters=prepared.adapters,
+        configuration=prepared.configuration,
+        output_root=prepared.destination,
+        repo_root=REPO_ROOT,
+    )
+    if ablations:
+        from autoscholar.evaluation.ablation_report import write_comparison
+
+        write_comparison(
+            directory, planned=len(prepared.suite.cases) * prepared.configuration.repeats
+        )
+    return directory
+
+
+async def _run(args: argparse.Namespace) -> int:
+    prepared = await _prepare(args)
+    directory = await _evaluate(prepared, ablations=args.ablations)
+    summary = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
+    failed = any(
+        group["status_counts"].get(status, 0)
+        for group in summary["groups"]
+        for status in ("failed", "error", "timeout")
+    )
+    print(f"Evaluation {'checks failed' if failed else 'checks passed'}: {directory}")
+    print(
+        f"Profile: {args.profile} {prepared.suite.category}; external API calls: 0. "
+        "Scripted responses do NOT measure real LLM ability; RAG replay is NOT real retrieval. "
+        "Expected refusals passing checks are not completed research/numerical tasks."
+    )
+    return 1 if failed else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="AutoScholar-Eval (offline by default)")
+    commands = parser.add_subparsers(dest="command", required=True)
+    validate = commands.add_parser("validate", help="Validate a versioned benchmark dataset")
+    validate.add_argument("--dataset", type=Path, required=True)
+    run = commands.add_parser("run", help="Run controlled public fixtures (no provider requests)")
+    run.add_argument(
+        "--category", choices=["rag", "research", "tool", "coding", "experiment", "end_to_end"]
+    )
+    run.add_argument("--dataset", type=Path)
+    run.add_argument("--fixture", type=Path)
+    run.add_argument("--profile", choices=["offline", "injected"], default="offline")
+    run.add_argument(
+        "--ablations",
+        action="store_true",
+        help="Explicit paired workflow or local lexical retrieval execution ablations",
+    )
+    run.add_argument("--sandbox-container", help="Explicit autoscholar-eval-* dedicated controller")
+    run.add_argument("--oracle", type=Path, help="Separate held-out Coding oracle fixture")
+    run.add_argument(
+        "--modes",
+        nargs="+",
+        choices=["dense", "sparse", "hybrid", "hybrid_rerank", "baseline"],
+    )
+    run.add_argument("--ks", nargs="+", type=int)
+    run.add_argument("--seed", type=int, default=42)
+    run.add_argument("--repeats", type=int, default=1)
+    run.add_argument("--timeout", type=float, default=30.0)
+    run.add_argument("--output-root", type=Path)
+    pack = commands.add_parser(
+        "pack", help="Run all eight controlled engineering suites; no paid API or host fallback"
+    )
+    pack.add_argument("--sandbox-container", required=True)
+    pack.add_argument("--seed", type=int, default=42)
+    pack.add_argument("--repeats", type=int, default=1)
+    pack.add_argument("--timeout", type=float, default=360.0)
+    pack.add_argument("--output-root", type=Path)
+    neural = commands.add_parser(
+        "neural", help="Actual cached default models in a network-none inference container"
+    )
+    neural.add_argument("--image", required=True, help="Explicit locally cached inference image")
+    neural.add_argument(
+        "--cache-volume", required=True, help="Explicit existing public model cache"
+    )
+    neural.add_argument("--seed", type=int, default=42)
+    neural.add_argument("--repeats", type=int, default=2)
+    neural.add_argument("--timeout", type=float, default=60.0)
+    neural.add_argument("--output-root", type=Path)
+    providers = commands.add_parser(
+        "providers", help="Explicit one-shot bounded paid-provider verification"
+    )
+    providers.add_argument("--allow-paid", action="store_true")
+    providers.add_argument("--approval-id", required=True)
+    providers.add_argument("--sandbox-container", required=True)
+    providers.add_argument(
+        "--prior-run",
+        type=Path,
+        help="Explicitly approved 11-request follow-up; reuse verified planning only",
+    )
+    providers.add_argument(
+        "--continue-unattempted",
+        type=Path,
+        help="Explicitly continue only independent unattempted cases; preserve consumed allowance",
+    )
+    providers.add_argument(
+        "--confirm-tools-from",
+        type=Path,
+        help="New approval: two tool-only LLM requests, zero searches; preserve old scores",
+    )
+    chinese = commands.add_parser(
+        "chinese", help="Prepare Chinese format v2 offline; paid only with new explicit approval"
+    )
+    chinese.add_argument("--allow-paid", action="store_true")
+    chinese.add_argument("--approval-id")
+    closure = commands.add_parser(
+        "closure",
+        help="Audit historical Phase 10 evidence and write scoped closure, zero API requests",
+    )
+    closure.add_argument("--engineering-run", type=Path, required=True)
+    closure.add_argument("--semantic-run", type=Path, required=True)
+    closure.add_argument("--chinese-run", type=Path)
+    for command in (chinese, closure):
+        command.add_argument("--original-run", type=Path, required=True)
+        command.add_argument("--independent-run", type=Path, required=True)
+        command.add_argument("--tool-run", type=Path, required=True)
+    ablation_audit = commands.add_parser(
+        "ablation-audit",
+        help="Final offline paired ablation evidence/statistics review, zero API calls",
+    )
+    ablation_audit.add_argument("--engineering-run", type=Path, required=True)
+    ablation_audit.add_argument("--semantic-run", type=Path, required=True)
+    live_ablations = commands.add_parser(
+        "live-ablations", help="Explicit one-shot 15-task live LLM pilot, maximum 180/0 requests"
+    )
+    live_ablations.add_argument("--allow-paid", action="store_true")
+    live_ablations.add_argument("--approval-id", required=True)
+    live_ablations.add_argument("--sandbox-container", required=True)
+    live_ablations.add_argument("--protocol-version", type=int, choices=(1, 2), default=1)
+    live_ablations.add_argument("--prior-run", type=Path)
+    live_ablations.add_argument("--continue-v2", type=Path)
+    paired = commands.add_parser(
+        "paired",
+        help="Prepare v8/v11-v13 paired or v9/v10 baseline; paid runs need separate approval",
+    )
+    paired.add_argument("--history-index", type=Path)
+    paired.add_argument("--protocol-version", type=int, choices=(8, 9, 10, 11, 12, 13), default=8)
+    paired.add_argument("--allow-paid", action="store_true")
+    paired.add_argument("--plan", type=Path)
+    paired.add_argument("--approval-id")
+    paired.add_argument("--sandbox-container")
+    repairs = commands.add_parser(
+        "repairs", help="Prepare a versioned repair plan offline; paid execution requires approval"
+    )
+    repairs.add_argument("--allow-paid", action="store_true")
+    repairs.add_argument("--plan", type=Path)
+    repairs.add_argument("--approval-id")
+    repairs.add_argument("--sandbox-container")
+    repairs.add_argument("--protocol-version", type=int, choices=(3, 4, 5, 6, 7), default=3)
+    repairs.add_argument("--proposal", type=Path)
+    args = parser.parse_args()
+    try:
+        if args.command == "paired":
+            from autoscholar.evaluation.paired_validation import prepare_paired, run_paired
+
+            if not args.allow_paid:
+                if args.history_index is None:
+                    raise ValueError("Free preparation requires --history-index")
+                directory = prepare_paired(REPO_ROOT, args.history_index, args.protocol_version)
+                print(
+                    f"Protocol v{args.protocol_version} prepared; external API calls 0: {directory}"
+                )
+                return 0
+            directory, accepted = asyncio.run(run_paired(args, repo_root=REPO_ROOT))
+            print(
+                f"Protocol v{args.protocol_version} {'passed' if accepted else 'NOT accepted'}: "
+                f"{directory}"
+            )
+            return 0 if accepted else 1
+        if args.command == "repairs":
+            from autoscholar.evaluation.repair_validation import prepare_repairs, run_repairs
+
+            if not args.allow_paid:
+                directory = prepare_repairs(REPO_ROOT, args.protocol_version, args.proposal)
+                print(f"Free repair plan prepared; external API calls: 0: {directory}")
+                return 0
+            directory, accepted = asyncio.run(run_repairs(args, repo_root=REPO_ROOT))
+            print(f"Targeted repairs {'passed' if accepted else 'NOT accepted'}: {directory}")
+            return 0 if accepted else 1
+        if args.command == "run":
+            return asyncio.run(_run(args))
+        if args.command == "live-ablations":
+            from autoscholar.evaluation.live_ablation import run_live_ablations
+
+            directory, accepted = asyncio.run(run_live_ablations(args, repo_root=REPO_ROOT))
+            label = "Seven-task continuation" if args.continue_v2 else "Live ablation"
+            print(f"{label} measurement {'complete' if accepted else 'incomplete'}: {directory}")
+            if args.continue_v2:
+                print(
+                    "Original interrupted outcome remains unknown; full Phase 10 is NOT accepted."
+                )
+            return 0 if accepted else 1
+        if args.command == "ablation-audit":
+            from autoscholar.evaluation.ablation_audit import run_ablation_audit
+
+            directory, accepted = run_ablation_audit(args, repo_root=REPO_ROOT)
+            print(f"Free ablation review {'passed' if accepted else 'NOT accepted'}: {directory}")
+            print("No new inference/API; live LLM ablations and main merge remain unapproved.")
+            return 0 if accepted else 1
+        if args.command == "chinese":
+            from autoscholar.evaluation.provider_chinese import run_chinese
+
+            directory, accepted = asyncio.run(run_chinese(args, repo_root=REPO_ROOT))
+            print(f"Chinese v2 {'passed' if accepted else 'pending / NOT accepted'}: {directory}")
+            return (0 if accepted else 1) if args.allow_paid else 0
+        if args.command == "closure":
+            from autoscholar.evaluation.phase10_closure import run_closure
+
+            directory, accepted = asyncio.run(run_closure(args, repo_root=REPO_ROOT))
+            print(f"Bounded closure {'passed' if accepted else 'NOT accepted'}: {directory}")
+            print("Audit requests: 0. Overall Phase 10/E2E and main merge are NOT approved.")
+            return 0 if accepted else 1
+        if args.command == "pack":
+            from autoscholar.evaluation.pack import run_pack
+
+            directory, accepted = asyncio.run(run_pack(args, repo_root=REPO_ROOT))
+            print(f"Engineering pack {'passed' if accepted else 'NOT accepted'}: {directory}")
+            print(
+                "Real neural semantic/provider ability remains unverified; "
+                "this is NOT overall Phase 10 acceptance. No paid providers are enabled."
+            )
+            return 0 if accepted else 1
+        if args.command == "providers":
+            from autoscholar.evaluation.provider_validation import run_providers
+
+            directory, accepted = asyncio.run(run_providers(args, repo_root=REPO_ROOT))
+            label = (
+                "Tool-only confirmation"
+                if args.confirm_tools_from
+                else "Bounded real-provider verification"
+            )
+            print(f"{label} {'passed' if accepted else 'NOT accepted'}: {directory}")
+            return 0 if accepted else 1
+        if args.command == "neural":
+            from autoscholar.evaluation.neural_validation import run_neural
+
+            directory, accepted = asyncio.run(run_neural(args, repo_root=REPO_ROOT))
+            print(
+                f"Bounded neural semantic validation {'passed' if accepted else 'NOT accepted'}: "
+                f"{directory}"
+            )
+            print("No external API calls. Real provider/model ability remains unverified.")
+            return 0 if accepted else 1
+        suite, digest = load_suite(args.dataset)
+    except (OSError, ValueError, SandboxError):
+        print(
+            "Evaluation configuration/IO invalid. Check schema, case/query bindings, "
+            "supported categories, K values and data/evaluation output scope."
+        )
+        return 2
+    except KeyboardInterrupt:
+        print("Evaluation cancelled; any started run retains partial records in data/evaluation.")
+        return 130
+    print(
+        f"Valid suite: {suite.id}; category: {suite.category}; cases: {len(suite.cases)}; "
+        f"sha256: {digest}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

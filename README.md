@@ -1023,10 +1023,428 @@ Coding 收敛控制已补充：显示剩余额度，在编辑或调用预留边�
 四项免费 Docker 验证符合预期，新增供应商请求为 0。v6 原失败结果保持原值，
 详见 [Coding 收敛修复](docs/releases/2026-10-27-coding-convergence.md)。
 
+## Phase 10：AutoScholar-Eval（构建中）
+
+Phase 10 建立统一的 RAG、Research、Tool、Coding、Experiment 与端到端评测，及 Planner、Reranker、Reviewer、Memory、Replanning 消融。工程夹具、本地真实组件与真实供应商能力结果必须分开；付费联测仅在单独授权并显式开启时执行，不把固定模型响应的成功率当成真实模型能力。
+
+### 10A：统一评测契约与运行记录
+
+新增 `autoscholar.evaluation` 数据集校验入口，以及可注入适配器的串行评测运行器。数据集使用版本化 JSON，包含唯一用例 ID、类别、公开来源说明、执行输入和独立标准答案；执行方法不会收到标准答案。拒绝重复 JSON 键、非法 UTF-8、非有限数、未知字段、重复 ID 和超过 8 MiB 的输入。
+
+运行器每次新建 `eval-<UUID>` 目录，输出 `manifest.json`、`cases.jsonl`、`summary.json` 与 `evaluation_report.md`，记录数据摘要、适配器/资源摘要、代码版本及工作区是否有未提交修改、种子、重复次数和逐用例耗时。失败、超时和取消均保留记录；错误不输出异常原文或提示内容。取消后保存部分报告并继续向调用者传播取消，不自动恢复或重跑。
+
+规则检查通过率与端到端任务成功率分别统计；所有计划执行的用例保留在检查通过率分母中。指标均值展示实际计分/计划数量，缺失用量及没有价格依据的费用保持未知。实际供应商 Token 与预算保护计数分开。`validate` 校验数据契约，10B 的 `run` 提供可直接执行的离线 RAG 夹具。10E 已归集持久化工作流预算，并分开记录脚本模拟 Token 与真实供应商 Token；付费供应商能力／用量验证仍需单独授权。
+
+```powershell
+Set-Location D:\98281\deepscholar
+.venv\Scripts\python.exe -m autoscholar.evaluation validate --dataset <版本化数据集.json>
+```
+
+评测运行记录应保存至被 Git 忽略的 `data/evaluation/`，不提交实际运行数据、密钥、`.env` 或设计文档。新入口不自动加载应用 Settings 或 `.env`。后续真实组件及付费模式不会隐式启用；CI/CD、正式部署与全局安全加固仍留给 Phase 11。
+
+### 10B：RAG 计分与公开排序回放
+
+新增 20 条自编公开查询及独立文档/chunk 标签，详见 [评测数据说明](benchmarks/README.md)。默认回放 Dense、Sparse、Hybrid、Hybrid＋Reranker 四种**预设排序标签**，共 80 条记录；这些不是实际算法的检索输出，也不证明语义质量、供应商能力或某种模式优于另一种。原始文本和排序均是公开工程夹具，不来自私有设计文档。
+
+```powershell
+Set-Location D:\98281\deepscholar
+.venv\Scripts\python.exe -m autoscholar.evaluation validate --dataset benchmarks/rag/public_v1.json
+if ($LASTEXITCODE -ne 0) { throw '评测数据无效' }
+.venv\Scripts\python.exe -m autoscholar.evaluation run
+if ($LASTEXITCODE -ne 0) { throw '离线评测失败；检查本轮报告' }
+```
+
+RAG 的 `run` 支持 `--modes dense hybrid`、`--ks 1 5 10`、`--repeats 2`、`--seed 42` 和 `--timeout 30`；可用 `--output-root data/evaluation/custom` 分组保存。RAG CLI 只允许 `--profile offline`，输出必须留在本项目 `data/evaluation/` 中，不读取 `.env`、不初始化 HTTP 客户端、数据库或模型权重，也不调用 LLM、检索供应商或训练。退出码 0 表示检查通过，1 表示存在失败/超时/运行错误，2 表示配置或 IO 错误，130 表示用户取消。两轮重复的实际种子分别记录，按 32 位范围递增；重复回放不代表两个独立模型样本。
+
+指标分别输出文档级和 chunk 级 Recall@K、HitRate@K、MRR 与 NDCG@K。K 以实际返回的 chunk 位置计数，文档身份投影到这些位置；重复 ID 消耗排名位置但仅首次获得相关性增益，避免重复结果抬高 NDCG。MRR 截止最大 K；没有对应级别的标签时不计分，不补 0。旧 JSONL 入口保留 chunk 优先、缺失时按文档计分的兼容字段，并新增独立 `document_metrics` / `chunk_metrics` 及各自样本数；其旧式混合均值不能当成同一粒度的指标。
+
+提供显式注入检索器的 RAG 适配器，但不会自动创建检索器；通用运行器默认 `offline` 拒绝注入组件，调用方需显式指定 `injected` 并自行建立受控组件。RAG CLI 仍不开放注入检索器模式。注入组件的 Embedding/供应商用量保持未知，不从检索结果推算费用。真实语义检索比较仍未完成，不将排序回放当作真实检索验收。
+
+### 10C：Research / Tool 本地组件评测
+
+新增 10 个 Research 和 20 个 Tool 公开工程用例，接入统一运行器、重复执行、摘要及 Markdown 报告。运行器不读取 `.env`，不创建真实供应商客户端，不执行外部 API 调用。
+
+Research 用固定原生工具响应及公开搜索夹具驱动真实 `AgentRunner`，每个用例使用独立内存 SQLite；需要已安装开发依赖中的 `aiosqlite`。验证引用编号、正文引用位置、主张与来源的标注绑定、证据快照、证据相关性和来源质量。主张支持采用封闭语料的明确标注及文本匹配，不是通用语义/NLI 判断；质量值是人工工程标注，不代表真实网站信誉。负例确保 Agent 状态成功或引用编号有效不等于内容正确。
+
+Tool 使用预设选择调用真实 Calculator，分别计分工具选择、参数一致性、JSON Schema、执行结果与数值准确度；未知工具不会执行，参数错误不会进入工具。评测层使用现有 Gateway 的 schema 校验，不声称已改造 Agent 的所有工具分发路径。同步计算前限制表达式长度、节点及 `**`/`^` 的字面量指数；这是评测输入边界，不是通用沙箱安全结论。
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation run --category research
+if ($LASTEXITCODE -ne 0) { throw 'Research engineering checks failed' }
+.venv\Scripts\python.exe -m autoscholar.evaluation run --category tool
+if ($LASTEXITCODE -ne 0) { throw 'Tool engineering checks failed' }
+```
+
+Research 包含 6 个有支持的报告及 4 个预期失败（供应商未配置、搜索错误、空证据、无效引用）；Tool 包含 12 个数值答案及 8 个预期拒绝。拒绝路径检查通过不计为任务完成，结果指标及计分覆盖单独展示；脚本回调次数不是真实 LLM 请求次数，费用保持未知。可用 `--repeats 2` 验证重复记录。
+
+### 10D：Coding / Experiment 真实隔离组件评测
+
+新增 10 个 Coding 和 5 个 Experiment 公开用例，仅开放显式 `injected` Docker 执行，不在宿主机执行夹具代码，也没有沙箱不可用时的本地回退。独立控制容器使用固定缓存镜像、隔离内网和源码只读挂载；不加载 `.env`、不拉取镜像、不连接应用数据库，只读使用缓存的公开 MNIST。Windows 运行器通过有界标准输入／输出驱动真实 Docker executor，保留本机 Git 版本记录。
+
+Coding 运行真实 `CodingAgent`、静态检查与 pytest，覆盖正常实现、语法／逻辑修复和修复耗尽。独立 oracle 不交给脚本作者，并在新的受限子容器中执行；“恒定返回零且只自测零”的实现能被识别，不把自测通过当作功能正确。
+
+Experiment 在 CPU 上实际训练 MLP/CNN（默认各 128 个训练／测试样本、1 epoch），再从保存位置重读全部 10 个产物，校验大小、SHA-256、指标、配置和源码指纹。独立 oracle 在沙箱内以 `weights_only=True` 恢复检查点，复算测试准确率、参数量、数据集指纹及完整 PNG；检查点不会在宿主机反序列化。覆盖两组正常种子、错误指标、种子不符及伪造准确率。小子集结果不代表完整 MNIST 基准。
+
+完整 PowerShell 启动／验收／清理流程见 [公开评测说明](benchmarks/README.md#coding--experiment-isolated-component-suites)。真实隔离补测验证非 root、权限／资源限制、只读数据集、无外网、超时与取消后仅本轮临时容器和卷清理为零；运行记录及产物保留在忽略的 `data/` 内，不上传 GitHub。
+
+### 10E：持久化端到端工作流评测
+
+新增 5 个公开用例，以固定决策／检索脚本驱动真实 `DurableService`、Planner、Research、Coding、Experiment、Reviewer/Replanner 和确定性 Writer。每例新建独立文件 SQLite 和工作区，仅保存在 `data/evaluation/workflow-workspaces/`，不连接应用数据库，不启用真实供应商。代码检查、MLP/CNN 训练及检查点校验均在 10D 的独立受限 Docker 中执行，没有宿主机代码执行回退。
+
+覆盖正常完成、种子 7 的已提交检查点恢复、无效指标后的单步重规划、一次脚本调用预算中止，以及合法 JSON 中伪造准确率的独立识别。恢复会关闭并重新打开数据库连接、重建服务及 worker owner，验证既有源码和预算未重置；不是整进程／集群灾难恢复测试。故障在真实训练后注入，不伪造训练已执行。
+
+完成标准包含父子任务／历史绑定、证据与引用快照、静态检查及 pytest 对应的源码、Coding→Experiment 源码 SHA、全部产物重读、真实检查点准确率复算，以及最终报告只引用最新已审核结果。故意伪造指标的例子会出现工作流状态成功但 `task_success=false`：评测 oracle 能发现该问题，不表示已给生产 Reviewer 增加防止所有指标造假的通用能力。
+
+用量取自持久化预算与实际执行记录交叉核验；脚本回调不是供应商请求，模拟的每回调 3 个 Token 仅记入 `budget_tokens`，真实供应商 Token／外部 API 调用均为 0，费用保持未知。5 个用例的预期为检查通过率 1.0、实际任务完成率 3/5（另含预算中止与造假负例）。中断用例保留未完成记录与人工恢复要求，不自动重跑，缺失用量保持未知。
+
+完整独立启动、两轮重复验收、执行中取消及资源清理流程见 [端到端评测说明](benchmarks/README.md#durable-end-to-end-workflow-suite)。这是 CLI→持久化工作流→沙箱的工程评测，不是浏览器／HTTP 部署、真实模型或语义检索能力总验收。
+
+### 10F：受控执行路径消融
+
+新增显式 `--ablations` 入口。工作流套件将相同的正常、无效指标恢复、伪造准确率用例，分别运行 baseline、No Planner、No Reviewer、No Memory、No Replanning，共 15 条记录；每例仍使用独立 SQLite、源码和真实隔离训练／检查点 oracle。各变体保留相同输入、预算上限、模板和数据指纹。
+
+- No Planner：用经过同样 DAG 校验的固定计划替代根 Planner 模型调用；不移除子 Agent 的规划。
+- No Reviewer：只移除模型 Reviewer，保留确定性审核、Writer 重检及独立 oracle；不是“取消所有审核”。
+- No Memory：绕过真实项目 Memory 的读取与学习。基线由公开约束初始化 Memory，不伪造“已验证经验”；固定决策不衡量记忆带来的推理增益。
+- No Replanning：审核失败后明确停止，保留失败记录，不重跑训练、不发布最终报告。
+- No Reranker：在独立检索套件中比较真实本地 Qdrant 的 cosine／sparse／RRF 和移除重排后的结果；使用词项计数与 Jaccard 重排，无固定排序回放。两变体逐例核对相同有序候选池。仅为受控词项算法，不代表生产神经 Embedding／Cross-Encoder 或中文语义质量。
+
+项目级 Research 会要求本地文档证据，因此工作流基线与全部变体均加入同一份公开项目文档，实际走本地检索与第四条引用绑定。Reranker 套件单独统计文档/chunk Recall、MRR、NDCG，不与工作流任务完成率混合。回调、Memory 事件、规则审核历史和预算均核对真实执行记录；规则拒绝通过检查不计为任务完成。
+
+```powershell
+# 无 Docker、无下载、无外部 API 的真实本地词项检索对照
+.venv\Scripts\python.exe -m autoscholar.evaluation run --category rag --ablations --profile injected --repeats 2
+if ($LASTEXITCODE -ne 0) { throw 'Retrieval ablation checks failed' }
+# 工作流消融需先启动独立控制器；完整启动和清理流程见 benchmarks/README.md
+.venv\Scripts\python.exe -m autoscholar.evaluation run --category end_to_end --ablations --profile injected --sandbox-container $controller --timeout 360 --repeats 2
+if ($LASTEXITCODE -ne 0) { throw 'Workflow ablation checks failed' }
+```
+
+完成运行后额外生成 `ablation_comparison.json`，逐例匹配相同输入、种子、标准答案及资源摘要，给出“变体减基线”的描述性差值及有效配对/计划分母；缺失结果保持未知，不声称统计显著性或真实模型能力。恢复用例的 No Replanning 是预期非完成；伪造准确率在所有变体仍不得获任务成功分。
+
+10A–10G 受控工程评测与无 API 费用整包复验已完成；10H 真实缓存语义检索、10I 独立供应商能力、追加工具链和中文格式 v2 补验已具备通过证据。有界收尾验收覆盖 10/10；原 v1 失败与 7/10 分数保留，不伪造原套件全部通过。真实 LLM 自主端到端与模型能力统计消融尚未验证，不据此宣告完整 Phase 10 总验收或自动合并 `main`。
+
+2026-10-10 10F 验证：新增 **34 项消融测试**通过，与原端到端回归合计 **77 passed**；完整后端 **611 passed、3 skipped**，Ruff、mypy（206 文件）通过，另补测配对资源不一致、未知值及 Markdown 报告。干净代码版本 `f04a755` 下两轮真实 Docker 消融 **30/30 检查通过**，独立任务完成 **18/30**（含 10 条造假负例及 2 条禁用重规划的预期停止）；本地真实 Qdrant 对照 **20/20 检查通过**。五个工作流变体均具有完整 6/6 配对覆盖；Reranker 两组排序指标在此封闭夹具上相同，不据此声称重排有无科学增益。212 次脚本回调只产生 636 个模拟预算单位，真实供应商 Token／外部 API 请求为 0。运行记录保留在忽略的 `data/evaluation/`；本轮临时容器／卷清理为零，缓存镜像、公开数据集及报告保留，未重建正常部署或迁移应用数据库。跳过项仍为旧 Compose 开关及 Windows 符号链接权限限制。
+
+### 10G：工程整体验收与总报告
+
+新增固定八套件的 `pack` 入口，串行运行六类评测以及工作流／本地检索两组消融。默认一轮共 **155 条记录**：RAG 排序回放 80、Research 10、Tool 20、Coding 10、Experiment 5、端到端 5、工作流消融 15、本地词项检索消融 10；`--repeats 2` 为 310 条。训练与独立 oracle 仍只在显式独立 Docker 沙箱中执行，不启用付费供应商，也没有宿主机代码执行回退。
+
+入口要求干净的已提交版本，先验证全部公开输入及沙箱指纹，再新建 `data/evaluation/pack-<UUID>/`。输出 `pack_manifest.json`、`summary.json`、总 `evaluation_report.md`，各套件记录保存在其 `runs/` 下。总统计重新校验主记录的代码版本、输入／标准答案摘要、适配器／资源、种子、重复数和状态，不信任子报告的通过标签；完成时再次核对主文件字节摘要。重复、错绑、缺失、取消和未执行用例不能缩小分母或获得验收通过。基础设施错误即停止，不自动重跑；取消保存部分总报告并继续传播。
+
+```powershell
+# 先按 benchmarks/README.md 的完整隔离启动／清理流程创建独立控制器
+.venv\Scripts\python.exe -m autoscholar.evaluation pack --sandbox-container $controller --timeout 360
+if ($LASTEXITCODE -ne 0) { throw 'Engineering acceptance pack failed; inspect local reports' }
+```
+
+总报告保留各套件／变体的检查通过率、独立 E2E 任务完成率、指标计分覆盖、描述性配对差值和用量。不把不同粒度的成功率混成一个“整体任务成功率”，不把规则拒绝或造假检测视为任务完成，未知费用仍保持未知。退出码 0 仅表示**受控工程整包通过**，JSON 同时明确 `phase10_overall_acceptance=false`；真实神经语义和供应商／模型能力尚未验证，不能因此自动宣布 Phase 10 全部通过或合并 `main`。
+
+2026-10-10 10G 验证：新增 **37 项验收契约测试**通过，完整后端 **648 passed、3 skipped**；Ruff、mypy（208 文件）及本轮格式检查通过。在干净版本 `145af73` 上完整执行八套件 **155/155 检查通过**，端到端独立任务完成 3/5；工作流消融 baseline／No Planner／No Reviewer／No Memory 分别 2/3，No Replanning 为 1/3，造假和预期停止没有成功分。四个工作流对照各有 3/3 计分配对，检索对照为 5/5。总记录包含 209 次脚本／夹具调用，实际供应商 Token 和外部 API 调用为 0；预算只在 20/155 条工作流记录中计量（合计 411 个模拟单位），整包预算总值及无价格依据的费用仍为未知。真实执行中取消、人工恢复要求、无自动重跑，以及沙箱隔离／超时／取消清理补测通过。本轮临时子容器、卷、控制器和网络已清理，公开 MNIST、镜像、SQLite、产物与报告保留；未操作正常应用数据库或部署。总报告在本地 `data/evaluation/pack-660be828d0564c7d942fa019458eb1cd/evaluation_report.md`，不上传运行数据、`.env` 或设计文档。
+
+2026-10-09 10E 验证：新增 **43 项端到端测试**通过；完整后端 **577 passed、3 skipped**，Ruff、mypy（201 文件）通过。首轮 5 个真实 Docker 工作流达到预期（3 个任务完成、预算中止与造假负例各 1），原 10D 的 5 个 Experiment 用例回归通过。另在真实运行的训练容器中取消完整工作流，验证退出后无本轮临时容器／卷、SQLite 可重开、状态为 `recovery_required` 且没有自动重跑；共用沙箱隔离／超时／取消检查也通过。外部 API 请求为 0，未迁移应用数据库或合并 `main`；3 个跳过项仍为旧 Compose smoke 开关及 Windows 符号链接权限限制。
+
+2026-10-08 10D 验证：完整后端 **534 passed、3 skipped**，Ruff、mypy（196 文件）通过；真实 Docker 重复验收完成 **20 条 Coding、10 条 Experiment** 记录，均达到各自预期（含故障拒绝），另验证隔离、超时、取消及本轮临时资源清理。外部 API 调用为 0；跳过项仍为未启用的旧 Compose smoke 与 Windows 符号链接权限限制。未重启正常部署、迁移应用数据库或合并 `main`。
+
+2026-10-08 验证：新增 **58 项评测基础/RAG 测试**通过；完整后端 **455 passed、3 skipped**，Ruff、mypy（183 文件）通过。CLI 默认 80 条回放及 `--ks 1 5 10 --repeats 2` 的 160 条回放均通过，实际外部 API 调用为 0。覆盖标准答案隔离、错误/超时/取消收尾、重复计分、跨项目结果、非法配置拒绝、失败退出码、种子范围、高精度计时和报告汇总。跳过项仍是未启用的旧 Compose smoke 与 Windows 符号链接权限限制；本轮未重跑浏览器或 Docker 整栈，未切换正常部署、迁移现有数据库或调用真实模型。
+
+### 10H：默认缓存模型的真实语义检索验证
+
+新增独立 `neural` 入口，使用已缓存的多语言 MiniLM、BM25 和 BGE Cross-Encoder 实际推理，走真实 `RAGQueryService` 与本地 Qdrant 的 dense、sparse、hybrid、hybrid_rerank 四条路径。公开语料含 20 个自编段落，独立标签覆盖 8 条英文、8 条中文和 4 条跨语言问题；默认两轮共 160 条记录，重复查询不作为独立样本。两个 hybrid 变体使用同一有序 10 候选池，返回前 5 条，描述性差值不代表重排必然有效。
+
+```powershell
+# 必须已有缓存镜像/模型卷、Docker 已启动、代码已提交且工作树干净
+.venv\Scripts\python.exe -m autoscholar.evaluation neural --image autoscholar-api:phase9-acceptance --cache-volume autoscholar_model_cache --repeats 2 --timeout 60
+# 退出码 1 表示检索质量或工程条件未通过，须检查报告，不能直接当作程序错误
+```
+
+模型容器无网络、非 root、限制 CPU/内存，仅只读挂载源码和模型缓存，不挂载 `.env`、设计文档、正常数据库或 Docker socket；不下载、不自动重试、不调用供应商。记录真实镜像、模型快照/文件摘要与运行时版本，执行结束再次核对源码/模型并验证本轮容器清理。输出保存在忽略的 `data/evaluation/neural-<UUID>/eval-<UUID>/`。
+
+工程检查与真实相关性分别统计。运行前固定质量门槛：dense、hybrid、hybrid_rerank 总体 Hit@5 ≥ 0.85，英文/中文/跨语言各 ≥ 0.75；sparse 记录实测分数但不承诺中文/跨语言语义能力。缺失计分、取消、资源误绑或清理未验证不能通过。语料是预分块文本，不覆盖 PDF 摄取、答案生成/忠实度、通用语义能力或付费模型总验收；`phase10_overall_acceptance` 仍为 false。完整说明见 [真实语义验证](benchmarks/README.md#actual-cached-neural-retrieval-validation)。
+
+2026-10-12 10H 验证：新增 **41 项契约测试**及完整后端 **689 passed、3 skipped**，Ruff、mypy（213 文件）和本轮 33 个文件格式检查通过。干净源码 `7b52091` 的真实缓存模型运行完成 **160/160 工程检查**，dense／hybrid／hybrid_rerank 的总体及各语言组 Hit@5 均为 1.0，满足预先固定门槛；总体 MRR 分别为 0.975／0.9333／1.0。BM25 的总体 Hit@5 为 0.45，英文 1.0、中文 0、跨语言 0.25，明确不推荐仅靠 sparse 处理这组中文/跨语言问题。40/40 个同候选池重排配对完整，MRR 描述性差值 +0.0667，不推断通用效果或显著性。实际 FastEmbed 0.8.0、ONNX Runtime 1.29.0；执行前后模型文件及源码一致，本轮容器清理为零。另实际发送缓存模型请求，在等待响应时分别取消／超时，验证异常传播、清理完成及已关闭客户端不可复用。全程外部 API 请求／供应商 Token 为 0，保留缓存、正常应用数据及本地报告；未重建正常部署或迁移应用数据库。报告在 `data/evaluation/neural-1c60445a1d554ed08d7a0c9765df295d/eval-e8d1bf658c694d1ca62cfb3e6f0ef788/evaluation_report.md`；安全补测在 `data/validation/phase10h-9725d9b964fa4bffa6623269ff9918ee/acceptance.json`。跳过项仍为旧 Compose 开关及两个 Windows 符号链接权限限制。付费供应商能力未测，尚不宣布 Phase 10 全部验收通过或合并 `main`。
+
+### 10I：有界真实供应商能力联测
+
+新增显式 `providers` 入口，固定 10 个公开 LLM 用例：规划与公开 Memory 约束、原生计算器调用、工具结果读取、代码生成、代码修复、错误准确率审核、保留已批准计划的单步重规划、英文/中文带证据回答、仅使用最新已审核指标的总结；两条 Research 用例各调用一次真实 Tavily。每轮上限 **LLM 10 次、Tavily 2 次**，不自动重试、不自动重跑失败用例。生产 LLM/搜索适配器、Calculator 和 DAG/Review/Revision schema 实际参与验证；生成代码及未交给模型的 8 个检查仅在独立 Docker 沙箱执行，不在宿主机执行。
+
+```powershell
+# 先按 benchmarks/README.md 创建唯一的独立控制器；下列命令会产生 API 费用
+# approval-id 代表本轮单独授权，使用过的 ID 不允许重置或复用
+.venv\Scripts\python.exe -m autoscholar.evaluation providers --allow-paid --approval-id phase10-approved-one-shot --sandbox-container $controller
+```
+
+仅在明确授权后读取本地 `.env` 的 LLM 地址/模型/密钥和 Tavily 密钥，密钥只进入鉴权头；不发送配置文件、设计文档或应用数据库。每个实际 HTTP 请求在发送前持久化计数，同一授权 ID 不可再次运行；只允许配置的 HTTPS LLM 端点及 Tavily 的基本检索，不跟随重定向，关闭 SDK/HTTP/搜索重试。本轮短回答发送 `max_tokens=4096`，不切换当前模型或修改正常应用默认行为。供应商/基础设施异常停止并保留部分记录，缺失用量及无价格依据的费用保持未知。
+
+输出保留公开请求、回答、搜索证据、源码/标准答案/镜像摘要、逐例判分及实际请求/Token 记录，全部在忽略的 `data/evaluation/provider-<UUID>/`；授权台账在同样忽略的 `provider-approvals/`。引用检查包含原文片段绑定与封闭事实支持，不把正确引用格式等同于通用语义忠实度。本轮为每个固定公开能力合同的一次抽样，不代表真实模型驱动的完整自主 E2E、统计消融或通用模型能力。必须结合工程整包及语义检索证据单独审核 Phase 10，不自动合并 `main`。
+
+2026-10-12 10I 部分验证：初版新增 **35 项契约测试**通过，干净源码 `d45261b` 的完整后端 **724 passed、3 skipped**；Ruff、mypy（217 文件）和 37 个评测/改动文件格式检查通过。真实专属 Docker 中正确函数通过全部 8 个独立检查，排序错误函数被拒绝；两组预检均清理子容器/卷，未调用供应商。随后经本轮明确授权发出 **LLM 2 次、Tavily 0 次**：规划用例通过生产 DAG、依赖和公开 Memory 约束判分，返回模型名 `deepseek-flash`；原生工具用例在强制指定计算器时收到 HTTP 400，联测立即停止，没有重试。成功响应计量 **1387 个 Token**，失败请求未返回用量，因此总 Token 和费用仍为未知，不填为零。8 个未执行用例仍在计划分母中，整体能力验收未通过。
+
+定位：初版验收入口使用 named tool choice，而生产 Agent 使用 `auto`。[DeepSeek 官方说明](https://api-docs.deepseek.com/api/create-chat-completion/)明确默认思考模式下不支持 named/required 工具选择并返回 400，与本次现象一致；原始错误正文未导出，不能据此证明生产的 `auto` 工具调用失败。入口已改为生产一致的 `auto`，仍需观察真实工具调用及独立计算结果才能得分，不换模型、不关闭思考模式、不降低判分门槛。补充 HTTP 400 安全收尾后，新入口测试共 36 项，与 LLM/搜索/Research 相关回归合计 **61 passed**，Ruff/mypy 通过；修正后的真实复测尚未执行。既有授权不可复用或自动追加调用。
+
+部分报告保留在 `data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439/evaluation_report.md`，同目录包含原始公开请求、规划响应、逐例记录和台账；不改写首次失败。临时控制器/网络及子资源已清理，缓存、公开 MNIST、应用数据和报告保留，没有重建正常部署、迁移应用数据库或合并 `main`。后续若人工复测失败工具用例并执行其余未测内容，不重跑已通过的规划，最多还需 **LLM 9 次、Tavily 2 次**；累计上限会从原 12 增至 13，必须重新明确授权。
+
+经单独明确授权后，可使用 `--prior-run` 做人工补测，不复用旧授权、不重跑规划：
+
+```powershell
+# 需新的单次授权 ID，最多新发 LLM 9 次 + Tavily 2 次，累计最多 13 次
+.venv\Scripts\python.exe -m autoscholar.evaluation providers --allow-paid --approval-id phase10-manual-followup --prior-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --sandbox-container $controller
+```
+
+入口重新验证上轮实际请求/回答、原始台账、源码与独立判分摘要、同一模型/端点，逐项重判规划后标记为“复用旧证据”，不会记为本轮新调用。补测额度收紧到 9/2；网络层禁止再次发送规划。上轮运行绑定独占补测声明，换一个授权 ID 也不能自动重置累计额度。原始 HTTP 400 和未知用量保留；本轮与累计请求/Token 分开统计，执行后再次检查旧证据未改变。未授权时不自动补测，单轮能力通过仍不代表真实自主 E2E 或通用模型能力。
+
+当人工补测已发送请求但客户端处理中止时，只有未尝试的独立用例可显式继续；继续入口保留同一授权内已耗用的计数，不扩大额度、不重发规划或失败的工具请求。丢失的原生工具回答不能仅凭 HTTP 200 推断为通过，其依赖的工具结果读取也不能编造。响应读取已处理 HTTP 压缩体与头部的一致性；成功响应保存安全、限长的原始 JSON 快照，避免解析问题丢失已返回的公开证据。
+
+```powershell
+# 仍需处于已明确授权的未用额度内；示例停留在已有 9/2 上限
+.venv\Scripts\python.exe -m autoscholar.evaluation providers --allow-paid --approval-id phase10-manual-followup-20261012-11 --prior-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --continue-unattempted data/evaluation/provider-001af831d0024f189706436ee4ad233f --sandbox-container $controller
+```
+
+Windows 本地回归应使用较短的独立 `--basetemp` 路径，例如忽略的 `data/validation/p10-<短随机 ID>/`；长阶段名称与深层整包报告路径可能超过本机文件路径限制。不要用已有用户数据目录作为测试临时目录，也不需要因此更改系统注册表或删除原始报告。
+
+2026-10-12 人工补测记录：原规划依据请求、回答、台账、Git 与独立判分重新核验后复用，未再调用。首个补测工具请求返回 **HTTP 200、483 个 Token**，但本地响应包装保留了解压前的压缩头，可能触发重复解码并被 SDK 映射为连接失败；成功回答未保存，不能仅凭 HTTP 200 赋工具能力通过。响应处理已免费修正，并补充成功原始 JSON 快照；不自动重发该请求。显式继续入口随后只调用剩余 7 个独立 LLM 用例和 2 次 Tavily，保留同一授权中已耗用计数，不重置额度。
+
+完整免费后端 **740 passed、3 skipped**，Ruff、mypy（218 文件）通过；51 项供应商契约及 37 项整包测试合计 **88 passed**。首次完整回归的 7 个整包失败由深层报告路径超过本机 Windows 限制导致，短独立测试目录下全部复验通过；未改注册表或删除旧记录。干净源码 `a3aea04` 的独立联测完成：代码生成/修复各通过静态检查与 8 个未交给模型的 Docker oracle 检查，错误准确率审核、只重跑 experiment 的重规划、英文带真实引用回答、最新结果总结通过，两个 Tavily 请求均返回 200。
+
+累计实发 **LLM 10 次、Tavily 2 次，共 12 次**，未超出新授权的 13 次上限；本轮新增 10 次（含回答丢失的工具请求），没有重跑规划或自动重试失败。原格式判分为 **7/10**（含 1 条核验复用的规划、1 条工具错误、1 条依赖跳过、1 条中文格式失败），能力总门槛仍为 false。中文真实回答的事实、逐字原文引用和两项结论支持均通过零费用人工诊断；失败仅在冻结规则要求 JSON `null`、唯一来源 ID，而回答使用字符串 `"None"` 并从同一来源引用两段不同原文。不改原分数、不伪造通过，后续须明确格式合同再决定如何验收。累计已知 Token **11074**，本轮返回的用量 **9687**；首次 HTTP 400 未返回用量，因此累计总 Token 与无价格依据的费用仍为未知。
+
+新增报告保留在 `data/evaluation/provider-6db601fc4ca34752b256271c5bf80445/evaluation_report.md`，中文诊断在同目录的 `research_chinese_diagnostic.json`；回答丢失的工具请求仍保留于 `data/evaluation/provider-001af831d0024f189706436ee4ad233f/`。旧证据及源码在实际执行期间未变，本轮控制器、网络、子容器/卷已清理，缓存、公开 MNIST、应用数据和全部报告保留。Phase 10 尚未整体验收，不合并 `main`；原生工具与结果读取还需真实人工确认，追加调用须另外明确授权。
+
+经另外明确授权，可用 `--confirm-tools-from` 对已完成的独立联测记录做一次**仅工具链**补测：新授权硬限制 LLM 2 次、Tavily 0 次，累计最多 14 次；不会消耗或重置旧授权、重跑规划/检索/中文回答。入口核验并绑定旧源码、套件、模型、端点、历史请求、响应和授权计数，唯一声明防止换授权 ID 重跑。两步仍使用原题与生产 Calculator，第二步必须收到第一步实际产生的工具调用和执行结果（含思考元数据）。单独输出工具链验收结果，旧失败分数和中文格式缺口不变，不能据此声明整体通过或合并 main。
+
+```powershell
+# 仅在另外明确授权后运行一次；不要更换 ID 重试
+.venv\Scripts\python.exe -m autoscholar.evaluation providers --allow-paid --approval-id phase10-native-confirm-20261012-2 --prior-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --confirm-tools-from data/evaluation/provider-6db601fc4ca34752b256271c5bf80445 --sandbox-container $controller
+```
+
+2026-10-12 工具链补测已完成（上述授权 ID 已消耗，不可再次运行）：干净源码 `32ebe31` 发出 **LLM 2 次、Tavily 0 次**，均返回 HTTP 200，两个用例均通过。模型生成唯一原生 Calculator 调用，实际计算 `(17*23)+(9**2)` 得 `472`，第二次请求包含原始问题、真实调用 ID、思考元数据和实际工具结果，模型返回 `{"result":472}`。本轮用量 **692 Token**；累计 **LLM 12 次 + Tavily 2 次 = 14 次**，正好达到追加授权上限，未重跑其他用例或自动重试。累计已知 Token **11766**，原 HTTP 400 的用量仍未知，总 Token 与费用仍不填为零。
+
+完整免费后端 **752 passed、3 skipped**，63 项供应商契约通过；Ruff、mypy（219 文件）和评测格式检查通过。真实请求前控制器健康、固定缓存镜像摘要及公开 MNIST 检查通过；只移除本次临时控制器和隔离网络，正常应用容器、缓存镜像/卷、公开数据及历史报告保留。执行期间源码、历史证据与旧授权计数未变。新报告为 `data/evaluation/provider-13fc74e120364d2eba84f8f868f79a00/evaluation_report.md`，只宣告工具组件 **2/2**，不把原 **7/10** 失败记录改写为通过。中文格式合同缺口仍在，完整供应商及 Phase 10 验收仍为 false，不合并 main。
+
+### 中文格式 v2 与可追溯收尾汇总
+
+新增 `chinese` 入口，只在**新提示**中明确原判分器已有的规则：Python `None` 编码为 JSON 原生 `null`（不是字符串），每个来源 ID 最多引用一次，引用必须是原文连续子串并支持两项结论。输出 schema 由原 `ChineseAnswer` 自动生成，`provider_cases.py`、原题、原事实/引用判分器和旧分数均未修改。v2 不是把旧失败回答归一化为通过，也不计为原 v1 套件全部通过。
+
+默认仅做免费离线准备，不读取 `.env`、创建 HTTP 客户端或查询供应商。准备过程核验原规划、独立联测、工具链原始请求/响应与授权台账；复算 Calculator，并校验真实调用 ID、参数、思考元数据和工具结果。只复用已保存的真实公开 Python 文档片段，没有新检索。
+
+```powershell
+# 免费准备：不需要 Docker，不会发出供应商请求
+.venv\Scripts\python.exe -m autoscholar.evaluation chinese --original-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --independent-run data/evaluation/provider-6db601fc4ca34752b256271c5bf80445 --tool-run data/evaluation/provider-13fc74e120364d2eba84f8f868f79a00
+
+# 仅在另外明确授权后运行一次：最多 1 次 LLM、0 次 Tavily，累计最多 15 次
+.venv\Scripts\python.exe -m autoscholar.evaluation chinese --allow-paid --approval-id phase10-chinese-v2-20261012-1 --original-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --independent-run data/evaluation/provider-6db601fc4ca34752b256271c5bf80445 --tool-run data/evaluation/provider-13fc74e120364d2eba84f8f868f79a00
+```
+
+单次授权与针对历史工具联测的唯一声明共同防止重试/换 ID 重置；1 次请求失败后不自动重发。模型、端点、默认思考模式、正常应用与 `.env` 均不改；不要求新的 Tavily 密钥。新结果保存在忽略的 `data/evaluation/chinese-v2-<UUID>/`，未授权时状态为 `awaiting_approval`，不能作为真实模型通过证据。
+
+新增 `closure` 入口，只读复核历史工程套件的 manifest/JSONL、公开数据绑定、消融配对和语义检索原始记录/真实模型身份，重算指标；不运行适配器、推理、训练或供应商请求，不信任手改的汇总通过标记。工具参数 JSON 按结构比对，不因 SDK 重新序列化产生的空格差异误判为失败。报告保留各组件原始源码版本、SHA-256、旧失败、未知用量及独立分母。
+
+```powershell
+# chinese-run 可先传免费准备目录；缺省时中文仍为待验，不会自动补测
+.venv\Scripts\python.exe -m autoscholar.evaluation closure --engineering-run data/evaluation/pack-660be828d0564c7d942fa019458eb1cd --semantic-run data/evaluation/neural-1c60445a1d554ed08d7a0c9765df295d/eval-e8d1bf658c694d1ca62cfb3e6f0ef788 --original-run data/evaluation/provider-d44b278800bd4b4d9afbb6fc27b13439 --independent-run data/evaluation/provider-6db601fc4ca34752b256271c5bf80445 --tool-run data/evaluation/provider-13fc74e120364d2eba84f8f868f79a00 --chinese-run data/evaluation/chinese-v2-<替换为本轮输出UUID>
+```
+
+`closure` 退出码 0 仅表示 `engineering_and_bounded_capabilities_v1` 范围通过：工程、真实缓存语义检索、9 条已核验的 v1 能力与 1 条新提示 v2 中文回答全部具备有效证据。待验/失败返回 1，配置或证据无效返回 2。它不是一次新的整套供应商样本，也不覆盖真实 LLM 自主端到端或模型能力统计消融；`phase10_overall_acceptance` 和 `main_merge_authorized` 仍为 false，进一步验收范围及 main 合并由项目所有者单独决定。当前已用 14 次请求，不因构建入口或离线汇总获得新付费额度。
+
+免费回归另发现并修复评测路径误判：SQLite 两版计划可能同秒写入，按时间/随机 UUID 排序不保证初始版本在前。消融检查现在以最小计划版本识别初始计划，不更改应用数据库或历史记录；4 个同时间戳、反序及非静态初始计划测试确保不能误判。中文/汇总 27 项新增测试和供应商/消融相关回归合计 **128 passed**，原判分源码仍未改动。
+
+2026-10-12 免费收尾验证：完整后端 **783 passed、3 skipped**，Ruff、mypy（223 文件）及 42 个评测/相关测试文件格式检查通过。初次完整回归保留了上述同秒计划排序失败记录；修正后完整复验通过，没有删除记录或放宽判分。干净源码 `9c800c8` 实际执行免费准备与只读汇总：工程主记录 **155/155**、真实语义检索门槛通过、核验后的有界能力覆盖 **9/10**，原 v1 分数仍 **7/10**，中文 v2 状态 `pending`。本轮供应商新增调用 **0**，累计仍 **14**，没有建立新付费授权台账、启动 Docker、修改正常应用或上传私有文件。
+
+中文准备记录为 `data/evaluation/chinese-v2-e86621708b0f44dab62ffc1e463aa87a/`，汇总报告为 `data/evaluation/closure-122e7f62c1034131a172f7aa576a98be/evaluation_report.md`；旧证据与授权计数再次核验未变。下一步需要项目所有者单独授权最多 **1 次 LLM、0 次 Tavily** 才能补验新提示，将累计上限提高到 15 次；未获授权不自动调用或宣告阶段整体通过，main 仍不合并。
+
+2026-10-12 追加授权后的中文 v2 真实验证：干净源码 `cc537b5` 只发送 **1 次 LLM、0 次 Tavily**，HTTP 200，使用原配置模型/端点和已保存的公开文档片段，未重新检索或重跑其他用例。六项检查全部通过：JSON 原生 `null`、严格 schema、唯一来源 ID、独立事实正确、原文逐字引用绑定与结论支持。返回模型名 `deepseek-flash`，事实为原地排序并返回 Python `None`，用 E2 的一个原文片段支持两项结论；没有修改旧回答或判分器。
+
+本轮供应商用量 **1588 输入 + 648 输出 = 2236 Token**；累计 **LLM 13 次 + Tavily 2 次 = 15 次**，正好达到新上限，未自动重试。累计已知用量 **14002 Token**，首次 HTTP 400 未返回用量，因此累计总 Token 与无价格依据的费用仍未知。旧授权计数、失败记录、原判分源码及执行期间源码均未变；无需 Docker 或正常应用/数据库变更，`.env`、设计文档和运行记录不上传。
+
+新中文报告：`data/evaluation/chinese-v2-29ccb291b1e6441fbeabec76d259e54d/evaluation_report.md`。新的零 API 汇总：`data/evaluation/closure-51779bc514214d148fa4ec43eecfe425/evaluation_report.md`，`engineering_and_bounded_capabilities_v1` 的 **有界收尾验收通过，覆盖 10/10，剩余有界缺口为空**。其中 9 条使用核验后的旧提示证据，1 条是新提示 v2，不是一次新的整套联测。`phase10_overall_acceptance`、`main_merge_authorized` 仍为 false；真实自主端到端与模型统计消融的进一步范围及 main 合并须由所有者另行决定，当前 15 次授权已耗尽。
+
+追加后的免费复验：供应商与收尾相关 **90 passed**，Ruff、mypy（223 文件）通过；无新增代码改动，完整源码回归仍以此前 **783 passed、3 skipped** 的记录为准。新授权与请求 SHA-256、一请求零检索上限、旧失败/判分保留、有界覆盖与单独总验收/main 标记均核对通过，没有额外供应商请求。
+
+### 最终免费消融复核
+
+`ablation-audit` 只读核验历史工程整包和真实缓存模型记录，并对 hybrid 与 hybrid_rerank 做事后配对统计；不读取 `.env`，不重新推理、训练或请求供应商。入口要求已提交且干净的工作树，原始运行数据留在本地。
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation ablation-audit --engineering-run data/evaluation/pack-660be828d0564c7d942fa019458eb1cd --semantic-run data/evaluation/neural-1c60445a1d554ed08d7a0c9765df295d/eval-e8d1bf658c694d1ca62cfb3e6f0ef788
+if ($LASTEXITCODE -ne 0) { throw 'Ablation evidence/statistics review failed; inspect the report' }
+```
+
+40 个重复配对先归并为 20 个查询；共享标准答案文档的查询再合并为 16 个文档组。固定三项指标 MRR、Recall@5、NDCG@5，报告“有重排减无重排”的平均差值、文档组 bootstrap 95% 区间、双侧精确符号翻转检验及 Holm 校正。协议是对既有自编公开语料的事后分析，不是预注册实验；文档分组减少共享来源依赖，但不证明组间独立或通用效果。缺失记录不计为零，重复执行不增加独立样本数。
+
+退出码 0 表示原始证据与统计复核完整，不要求重排必须获益或达到显著性。Planner、Reviewer、Memory、Replanning 的旧消融仍是脚本决策驱动的工程验证；真实 LLM 工作流消融及自主端到端尚未验证。报告写入忽略的 `data/evaluation/ablation-audit-<UUID>/`，保留 `phase10_overall_acceptance=false` 和 `main_merge_authorized=false`。
+
+2026-10-13 免费最终复核已通过：干净源码 `490c4c8` 核验原始工程整包和缓存模型记录，40/40 检索配对完整；四项工作流工程对照各为 3/3，词项重排对照为 5/5。新增 22 项统计/证据测试通过，完整后端 **805 passed、3 skipped**，Ruff、mypy（225 文件）及格式检查通过；跳过项仍为未启用的旧 Compose smoke 和两个 Windows 符号链接权限限制。
+
+真实缓存重排的事后统计如下（20 查询、16 文档组）：
+
+| 指标 | 平均差值 | 文档组 bootstrap 95% 区间 | Holm 校正 p |
+|---|---:|---|---:|
+| MRR | +0.0667 | [0, 0.1449] | 1.0 |
+| Recall@5 | 0 | [0, 0] | 1.0 |
+| NDCG@5 | +0.0500 | [0, 0.1087] | 1.0 |
+
+这组固定语料尚无统计显著的重排增益，不能据此推断普遍有效或无效。报告：`data/evaluation/ablation-audit-0559a5e3e9994070b4931b1e2ef7598a/evaluation_report.md`。本轮新增 API 请求、推理运行、独立样本均为 0，历史证据未修改，累计付费请求仍为 15；未启动 Docker、迁移应用数据库或合并 `main`。免费复核通过不等于真实 LLM 工作流消融或完整 Phase 10 验收通过。
+
+### 真实 LLM 工作流消融小样本试验
+
+`live-ablations` 仅在新授权及 `--allow-paid` 下运行：正常、无效指标恢复、伪造准确率三个公开场景，分别执行 baseline、No Planner、No Reviewer、No Memory、No Replanning，共 15 个任务。每任务最多 12 次实际 LLM 请求，总上限 180 次，Tavily 为 0；不自动重跑整轮或失败任务，供应商/用量/隔离异常停止。生产流程内有限的 schema 修正仍占用同一任务额度，HTTP 重试关闭。
+
+```powershell
+# 先按 benchmarks/README.md 创建专属隔离控制器，确认已取得本轮授权。
+.venv\Scripts\python.exe -m autoscholar.evaluation live-ablations --allow-paid --approval-id phase10-live-ablation-20261013-180 --sandbox-container $controller
+```
+
+真实模型驱动现有 durable 工作流；仅故障注入由脚本控制。每任务独立 SQLite、公开项目 Memory 和工作区，复用固定 MNIST 模板与缓存数据。研究走自编公开范围说明的封闭词项检索（每查询最多一条来源），并保留固定本地项目文档检索；这不是实时互联网检索，也不是从空文件生成代码的实验。No Memory 只移除项目/经验 Memory 读写，项目文档 RAG 仍保留；No Reviewer 保留确定性规则与独立检查点复算。
+
+一次性声明文件防止更换授权 ID 重置试验；实际请求先落账再发送。每任务固定 600 秒、120000-token 工作流预算，最后一个响应可能越过 token 阈值；每次输出最多 4096 token，费用无价格依据时保持未知。保持现有配置模型，不发送 `.env`、密钥或设计文档；源码须干净已提交。全部输入、原始响应、检查与部分失败记录保留于忽略的 `data/evaluation/live-ablation-<UUID>/`。
+
+报告分别给出测量是否完成、任务成功、预期故障处置及实际组件路径。每项对照只有三个异质场景，二元成功差值和双侧配对精确检验/Holm 校正仅作探索性说明，不能证明通用模型效果。相同训练种子不代表供应商生成可重复；模板模型架构及独立 oracle 合同固定。测量完成不要求所有任务成功，也不自动表示完整 Phase 10 验收或批准合并 `main`。
+
+2026-10-13 已授权的真实试验部分执行：干净源码 `76b1271` 实发 **LLM 21 次、Tavily 0 次**，均为 HTTP 200，用量 **66113 Token**，无自动重试；尚余 159 次额度空间，但因响应保护停止而未继续消费。15 个计划任务中仅尝试 3 个，12 个未执行。原始报告：`data/evaluation/live-ablation-13c366dd5f574dd38d9c010a1e41318e/evaluation_report.md`；只读诊断见同目录 `diagnostic.md`。
+
+正常 baseline 因恢复主题检索覆盖不全而触发重规划，并耗尽五步预算；模型生成的步骤 ID 也未符合本轮固定 ID 合同。No Planner 实际完成了研究、代码检查、训练和独立检查点复算，但本地文档 E4 的 claim 使用改写而非原文，冻结的严格引用判分未通过。No Reviewer 在证据选择时用尽单次 4096 个输出 token，返回 `finish_reason=length`、无正文且无工具调用，入口随即停止。HTTP 成功不等于模型协议成功，改写引用不等于事实必然错误；旧分数保持不变。
+
+本轮 **真实消融未完成、Phase 10 未整体验收**，不合并 `main`。没有足够的三场景配对来解释组件效果。后续需先确定思考/输出预算、引用合同、封闭语料恢复主题覆盖及步骤 ID 判分，再做单独版本化复测；不能用剩余额度自动重跑失败任务或改分。免费验证已完成 **831 passed、3 skipped**、Ruff/mypy（228 文件）、26 项新增契约及四条真实 Docker 预检路径；预检模型是显式脚本，不能作为真实能力证据。本轮临时控制器/网络和子资源均已清理，缓存、公开数据及运行记录保留；`.env`、设计文档及原始运行数据不上传。
+
+### 消融 v2：在原剩余额度内复验
+
+2026-10-16 继续消融采用独立 v2 协议和结果目录。核验 v1 的原始请求、响应、用量及授权后，旧 21 次保持不变，v2 最多再发 **159 次 LLM、0 次 Tavily**，累计硬上限仍为 180。每任务最多 12 次，不自动重跑任务；一次性 v2 声明防止换授权 ID 重置额度。v1/v2 不混合计分，也不把旧失败改成通过。
+
+v2 保留严格原文引用检查，在证据选择/研究报告的系统提示中明确所有来源（含本地文档）须逐句引用；补充公开恢复说明，封闭检索优先返回尚未见过的来源，减少跨查询去重造成的主题遗漏。DAG 按研究→代码→实验的类型及依赖验证，允许合法的自定义步骤 ID。单次输出上限 8192 token，保留原模型、思考模式及每任务 120000-token 总预算，最后响应仍可能越过总 token 阈值。
+
+```powershell
+# 仅在本轮继续授权下运行一次；先创建专属隔离控制器。
+.venv\Scripts\python.exe -m autoscholar.evaluation live-ablations --allow-paid --protocol-version 2 --approval-id phase10-live-ablation-v2-20261016 --prior-run data/evaluation/live-ablation-13c366dd5f574dd38d9c010a1e41318e --sandbox-container $controller
+```
+
+已收到且可核算的无效模型响应计为该任务失败，不重复请求；其余独立任务可以继续。网络/鉴权异常、未知用量、历史证据变化、额度或隔离问题仍停止。测量完整与模型任务成功分别报告；三个场景只支持探索性对照，不能宣称通用组件增益或自动批准合并 `main`。
+
+### 2026-10-21 消融停止点复核
+
+v2 已在 2026-10-16 安全停止，实际调用 **64 次 LLM / 0 次 Tavily**，用量 **287304 token**；加上 v1 累计 **85/180 次、353417 token**，仍有 95 次未用额度。15 个任务中，7 个完成测量（3 成功、4 失败），1 个中断，7 个未执行。正常 baseline、No Reviewer、No Replanning 通过；恢复场景尚未通过，**真实消融及 Phase 10 整体验收仍未完成**。
+
+停止原因已离线定位：Replanner 的第 8 次响应耗尽 8192 输出 token，且没有正文或工具调用；用量已记录，但上层格式修正又记下了被拦截的第 9 次逻辑调用，导致逻辑/实际调用数不一致。没有第 9 次付费请求。已补充不可重试错误标记，让消融的停止策略在格式修正前生效，同时保留普通生产流程的有限修正。Planner、Reviewer、Replanner 三处故障回归及相关测试 **84 项通过**，Ruff/mypy 通过；这些免费测试不代表真实恢复能力通过。
+
+最终全量回归 **857 passed / 3 skipped**，跳过项为需手动启用的 Compose 集成测试及两项 Windows 符号链接权限测试。本次新增 API 调用为 **0**。审计核验了 190 个证据文件，旧评分、原始响应和一次性声明不改写；详见本地 `data/evaluation/live-ablation-v2-78345b3c7b834f82b2cfc960a2aa4b6f/diagnostic-20261021.md`。继续付费需单独审阅只允许未执行任务的续测清单；不能删除声明或换授权 ID 重跑整轮。`main` 未合并，`.env`、设计文档及原始数据不上传。
+
+已确认只补测后续 7 组（恢复 No Memory、恢复 No Replanning、五组伪造指标场景），最多新增 **84 次 LLM / 0 次 Tavily**，累计最多 169/180 次。新入口使用 `--continue-v2`，绑定原始记录和审计，禁止重跑旧 8 组；新报告单独标记续测是否完整，原中断结果仍保持未知。具体协议见 [benchmarks/README.md](benchmarks/README.md#approved-seven-task-continuation)。
+
+### 七组真实续测结果（2026-10-21）
+
+已完成授权的 **7/7 组测量**，新增 **48 次 LLM / 0 次 Tavily、224240 token**；本次消融授权下累计 **133/180 次、577657 token**，没有重跑旧任务。续测完成不等于能力通过：仅“伪造指标 / No Reviewer”达到预期，由独立检查点复算识别伪造准确率；其余六组存在工具参数 JSON 无效、研究覆盖不足或预算限制，未满足各自场景合同。
+
+合并查看的 v2 记录为 15 组已尝试、14 组完成测量、1 组原始中断结果仍未知，**完整消融与 Phase 10 整体验收仍未通过**。三组真实协议失败均验证了终止错误保护：调用数与用量一致，未产生虚假重试记账。301 个证据文件已核验，旧结果不改分；本地诊断为 `data/evaluation/live-ablation-v2-tail-1c16a9b4a88943f78ed63752057cdd48/diagnostic-close-20261021.md`。两轮专用临时控制器和网络已清理，可按 Compose 重建；镜像、数据缓存及全部运行记录保留。下一步应先版本化修复结构化工具参数可靠性、研究覆盖和仅重跑实验的恢复策略，不能直接合并 `main`。
+
+最终免费回归 **874 passed / 3 skipped**，Ruff/mypy（232 文件）通过；跳过项仍为手动启用的 Compose 集成测试及两项 Windows 符号链接权限测试。JUnit 结果保留在忽略的 `data/validation/tail-close-final-results.xml`。免费回归和收尾审计没有新增 API 调用，设计文档、`.env` 及原始运行数据不上传。
+
+### 真实联测问题修复与三组定向补验（v3）
+
+工具参数现在严格解析为唯一 JSON 对象，拒绝尾随内容、重复键和非有限数值，错误响应仍保留实际用量。协调器的纠正提示明确 JSON 错误类别；v3 评测中每个任务至多允许一次已收到且用量核对一致的非法参数纠正，计入原有 12 次调用上限。参数截断造成的无效响应、空响应、未知用量和网络异常停止任务。已停止的评测 Provider 在创建调用记录前被拦截。
+
+Research 的外部查询与平台自动检索的本地文档职责分开；同一来源在不同查询主题下分别保留候选记录，缺失主题的纠正消息列出可选候选 ID，来源和主题覆盖要求保留。首版计划中的实验指标无效或产物缺失时，重规划先核验已验证代码及实验交接的源码摘要，再约束为保留原计划、仅重跑受影响实验；不符合约束的修复计划最多纠正一次。
+
+免费准备下一轮清单，不读取 `.env`、不启动 Docker、不请求供应商，也不领取付费授权：
+
+```powershell
+.venv\Scripts\python.exe -m autoscholar.evaluation repairs
+```
+
+清单写入忽略的 `data/evaluation/repair-plan-<UUID>/`，绑定当前提交、公开夹具和判分规则。需提交后的干净源码才能用于真实补验。计划包括正常 baseline、故障恢复 baseline、故障恢复 No Replanning 三组，新增最多 **36 次 LLM / 0 次 Tavily**，每组最多 12 次、120000-token 停止阈值，最后一次返回可能越过阈值；每次最多输出 8192 token。已有七组续测授权与历史分数保留，新三组执行需单独授权。具体命令与通过标准见 [评测说明](benchmarks/README.md#targeted-repair-verification-v3)。
+
+2026-10-22 免费验收：完整回归 **910 passed / 3 skipped**，Ruff、mypy（238 文件）通过。模型替身 + 真实 Docker 的三组预检通过，包含拒绝无关代码重跑后的实验恢复、独立 checkpoint 复算及故障后的 No Replanning 停止；SDK + Mock HTTP 全入口测试核对三组调用用量并拦截重复执行。源码变化保护与旧计划约束的定向复验 19 项通过。旧超时测试改用持久化 SQLite，避免取消连接后内存库丢表；两个非法修复计划测试组按至多一次纠正检查调用数，未放松原目标、步骤类型或规格约束。
+
+最终 JUnit 保存在忽略的 `data/validation/phase10-repairs-complete-results.xml`，Docker 记录在 `data/validation/repairs-preflight-31045ae3/`。免费预检的供应商请求 **0**，原始 301 个证据文件摘要未变；已按所有权清理该预检专用控制器和隔离网络，镜像、数据卷及记录保留。以上为付费补验之前的验证结果。
+
+2026-10-22 按单独授权完成三组真实 LLM 补验：**24/36 次 LLM、0 次 Tavily、107607 token**，请求与持久化调用、原始用量一致。无重规划负对照按预期在注入故障后停止；正常组因审查信息不足引发不必要代码重跑而触及预算，恢复组因错误引用指摘及计划修订协议问题停止。**三组定向补验未通过，Phase 10 整体验收仍未通过**，不自动重试剩余额度或合并 `main`。零 API 事后复验确认正常组首次实验的 10 个产物与两份 checkpoints 均有效，但不改写原任务失败结果；本轮临时控制器/网络已清理，数据和历史证据保留。诊断、下一步修复边界见 [v3 补验报告](benchmarks/phase10-repairs-v3-20261022.md)；设计文档、`.env` 和原始记录不上传。
+
+### Reviewer 与恢复协议的免费修复
+
+针对 v3 缺口，新增 Reviewer 可核验事实与有限纠正、带逐字源码依据的缺陷诊断、
+服务端保留不可变 DAG 的实验重试窄接口，并将普通计划修订的完整语义检查纳入纠正流程。
+三组“保存的真实审查响应回放 + 显式模型替身 + 真实 Docker”验证通过，
+正常/恢复各只执行一次代码步骤，恢复仅重跑实验，负对照按预期停止；独立 checkpoint 复算通过。
+最终完整回归 **932 passed / 3 skipped**，Ruff、mypy（240 文件）及格式检查通过；
+Windows 深层临时路径的整包失败保留记录，使用全新短路径完整复验通过。
+新增付费调用 **0**；免费测试不替代新版本真实模型补验，Phase 10 与 main 门槛仍未通过。
+实现、测试过程和本地复验方式见 [免费修复报告](benchmarks/phase10-review-recovery-free-20261022.md)。
+
+三组真实模型补验新增独立 v4 入口：保留 v3 声明和账本，绑定经单独批准的提案、
+干净源码、公开夹具和旧记录摘要；仍最多新增 **36 次 LLM / 0 次 Tavily**，
+每组最多 12 次，不改变判分或重跑旧任务。执行方式与限制见
+[v4 验收说明](benchmarks/README.md#separately-approved-reviewerrecovery-acceptance-v4)。
+免费入口/SDK/请求上限与审查恢复相关回归 **123 passed**；旧完整业务回归仍为
+此前的 **932 passed / 3 skipped**，本次未修改 Agent 业务代码。
+此段仅记录新入口准备，不表示新的真实验收已通过，也不批准合并 main。
+
+2026-10-23 v4 真实验收已安全停止：**14 次 LLM / 0 次 Tavily，61738 token**。
+正常组真实端到端及独立 checkpoints 复算通过；恢复组在训练前因完整源码快照越过
+32 KiB 请求限制而中断，另有一次本地逻辑调用/日志误记，原任务结果仍保留未知；
+第三组未启动。零 API 回放重建请求为 33749 字节，复现本地拒绝，未改判分或重试整组。
+**三组验收未完成，Phase 10 仍未整体验收**。已清理本轮临时控制器/网络，保留镜像、
+数据与历史记录；下一步先处理输入体积预检和本地拒绝记账，详见
+[v4 真实验收报告](benchmarks/phase10-review-recovery-v4-20261023.md)。main 未改动。
+
+随后完成请求预检与源码增长的免费修复：超限请求在预算/日志登记前拒绝；
+已证实未发送的晚期本地拒绝只撤销自身预约，发送后结果未知仍需核对。
+完整源码模式预览文件创建/编辑，超限保留原文件并反馈，不截断源码、不跳过强制验证。
+完整回归 **967 passed / 3 skipped**；原失败现场只读重放、真实 Docker 静态检查/pytest、
+一次 MNIST 训练及 10 个产物和独立 checkpoints 复算通过，新增供应商请求 **0**。
+旧结果/授权未改，真实恢复与负对照仍待新版本单独补验，Phase 10 整体门槛仍未通过。
+实现与验证边界见 [请求预检免费修复报告](benchmarks/phase10-request-preflight-free-20261023.md)。
+
+v5 独立验收入口已准备：相关回归 **248 passed**，三组“保存的审查响应 + 显式模型脚本 +
+真实 Docker”免费预检通过，包含实验单步恢复及关闭重规划后按预期停止。
+新入口绑定干净源码和历史证据，保留 v3/v4 固定声明；本轮真实供应商请求 **0**。
+最多新增 36 次 LLM / 0 次 Tavily 的真实三组验收仍待单独批准，详见
+[v5 准备与通过标准](benchmarks/phase10-request-preflight-v5-preparation-20261023.md)。
+
+随后按单独确认完成 v5 三组真实测量：**29 次 LLM / 0 次 Tavily，168088 token**。
+正常组通过，关闭重规划的负对照按预期停止；恢复组的 Reviewer 将指标收集故障升级为
+代码验证问题，重规划未启用实验单步恢复约束，第二个 coding 步骤触及 `code_repairs=0`。
+三组调用/用量均可核对，无未闭合调用；旧 464 份证据摘要未变，临时资源已清理。
+**定向验收未通过，Phase 10 整体验收仍未通过**，未自动补跑或合并 main。
+具体原因与零 API 诊断见 [v5 真实验收报告](benchmarks/phase10-request-preflight-v5-20261023.md)。
+
+2026-10-26 已修复 v5 暴露的阶段职责越界、无依据的代码诊断、按问题名称判断重试资格，
+以及代码修复预算检查过晚的问题。同一源码和配置连续两次收集失败后会停止不变重试；
+有充分依据且预算允许的代码修改仍可执行。三组“旧 v5 响应回放 + 脚本模型 + 真实 Docker”
+免费验证符合预期，包含仅重跑实验恢复及关闭重规划后停止。新增供应商请求 **0**，
+最终完整后端 **1009 passed、3 skipped**，Ruff/mypy 通过；
+旧失败结果和授权记录保留，未合并 main。实现、测试及剩余真实验收边界见
+[恢复策略修复报告](benchmarks/phase10-recovery-authority-20261026.md)。
+
+2026-10-27 开始准备独立 v6 三组真实联测入口，绑定新版阶段职责和审查/恢复规则，
+保护 v3–v5 已消耗声明与原始证据。三组范围、调用预算及确认边界见
+[v6 联测准备](benchmarks/phase10-recovery-authority-v6-preparation-20261027.md)。
+准备过程新增供应商请求为 0，真实调用仍需对新的确切清单单独确认；完整消融另行安排。
+
+随后经单独允许执行 v6 真实三组联测：**29 次 LLM、0 次 Tavily、156516 Token**。
+正常组和故障恢复组通过；恢复组保留代码和计划，仅实验重试后完成。
+关闭重规划的负对照在 Coding 连续八次编辑后未交接，未执行训练或触发注入故障，
+因此三组定向验收仍未通过。详见 [v6 实测与收敛缺口](docs/releases/2026-10-27-v6-acceptance.md)。
+
+随后完成免费 Coding 收敛修复：dev 完整回归 **1043 passed、3 skipped**，独立 main 回归
+**483 passed、3 skipped**，Ruff/mypy 与四项免费 Docker 验证通过。修复已独立同步 main，
+源码在额度边界进入强制检查，真实需求仍由后续 Reviewer 审查。供应商请求为 0；
+v6 的历史负对照失败不改分，免费修复与后续真实验证分开记账。
+
+此前准备独立 v7 单组负对照入口，上限为新增 **12 次 LLM、0 次 Tavily**，
+只验证修复后的 Coding 能否完成检查、进入实际故障并按关闭重规划规则停止。
+118 项相关回归和该单组免费 Docker 预检通过；随后经单独授权执行。
+详见 [v7 单组准备](benchmarks/phase10-coding-control-v7-preparation-20261027.md)。
+
 2026-10-28 已完成 v7 单组真实负对照的收尾审计：实际 **7 次 LLM、0 次 Tavily、30605 Token**。
 Coding 检查及一次训练后触发指标故障，并按关闭重规划规则停止，没有第二次训练。
 单组定向验收通过；v6 历史结论保留，完整配对消融与 Phase 10 总验收未完成。
 详见 [v7 实测报告](docs/releases/2026-10-28-v7-control-acceptance.md)。
+
+完整配对消融现有独立 v8 准备入口，固定为 3 个场景 × 5 种配置；源码、夹具、资源、
+输入和模型身份一致才允许配对。保护 728 个历史文件，基线或账目/资源/身份检查失败即停止。
+经单独授权执行后，正常基线在第 7 次响应因 Coding 输出截断停止；后续 14 组未执行。
+实际使用 **7 次 LLM、0 次 Tavily、31399 Token**，配对测量未完成，不复用剩余额度。
+此前的免费准备包含 204 项回归和 15/15 组真实 Docker 脚本预检，均通过且供应商调用为 0。
+详见 [v8 实测停止记录](docs/releases/2026-10-28-v8-live-result.md)
+和 [v8 完整消融准备](benchmarks/phase10-paired-v8-preparation-20261028.md)。
 
 随后免费收紧 Snapshot Coding：只允许短小局部编辑，写入前校验参数大小；
 截断的原生工具响应明确停止，保持用量记账且不执行部分调用。
@@ -1048,7 +1466,8 @@ Coding 检查及一次训练后触发指标故障，并按关闭重规划规则�
 | Phase 7 | 持久化队列、Checkpoint、暂停恢复、人工审批、项目/经验 Memory |
 | Phase 8 | MCP 工具平台（无付费 CPU 验收、轻量真实 LLM/Tavily 补测通过） |
 | Phase 9 | 本地 Web 工作台（9A–9G 无付费 CPU 验收通过） |
-| Phase 10–11 | 全链路评测、安全加固、CI/CD 与部署 |
+| Phase 10 | AutoScholar-Eval：统一评测、基准数据、消融与报告（构建中） |
+| Phase 11 | 安全加固、CI/CD 与部署 |
 
 ## 分支与提交约定
 
