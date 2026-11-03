@@ -170,6 +170,7 @@ class GuardedTransport(httpx.AsyncBaseTransport):
             (11, "phase10_repaired_paired_v11"),
             (12, "phase10_repaired_retry_v12"),
             (13, "phase10_final_paired_v13"),
+            (14, "phase10_fixed_dag_paired_v14"),
         } and ledger.limits == {"llm": 180, "tavily": 0}
         output_baseline = (
             (ledger.data.get("protocol_version"), ledger.data.get("scope"))
