@@ -227,7 +227,21 @@ class RepairWorkflowProvider(LiveProvider):
                 " Frozen trial DAG: exactly one research step, then one coding step depending "
                 "only on research, then one experiment step depending only on coding. "
                 "knowledge cannot replace research; no extra steps. Step IDs remain arbitrary."
+                " Every step must explicitly include a dependencies array: [] for research, "
+                "[research_step_id] for coding, and [coding_step_id] for experiment."
             )
+            assert tools is not None
+            parameters = copy.deepcopy(tools[0].parameters)
+            parameters["properties"]["steps"].update(minItems=3, maxItems=3)
+            step_schema = parameters["$defs"]["PlanStep"]
+            step_schema["properties"]["type"]["enum"] = ["research", "coding", "experiment"]
+            if "dependencies" not in step_schema["required"]:
+                step_schema["required"].append("dependencies")
+            step_schema["properties"]["dependencies"]["description"] = (
+                "Required explicit array: [] for research; [research step ID] for coding; "
+                "[coding step ID] for experiment. Use actual IDs, not descriptive text."
+            )
+            tools = [replace(tools[0], parameters=parameters)]
         messages = [
             replace(item, content=item.content + rule)
             if isinstance(item, ChatMessage) and item.role == "system"

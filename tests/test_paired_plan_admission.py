@@ -22,7 +22,10 @@ from tests.test_live_ablation_v2 import fixture
 from tests.test_llm_provider import configured_settings
 
 
-@pytest.mark.parametrize("case", ["knowledge", "extra", "dependency", "repeat", "quota", "general"])
+@pytest.mark.parametrize(
+    "case",
+    ["knowledge", "extra", "dependency", "missing_dependencies", "repeat", "quota", "general"],
+)
 async def test_fixed_trial_plan_gets_one_metered_correction_before_any_child(
     tmp_path: Path, case: str
 ) -> None:
@@ -40,9 +43,16 @@ async def test_fixed_trial_plan_gets_one_metered_correction_before_any_child(
         )
     elif case == "dependency":
         bad["steps"][1]["dependencies"] = []
+    elif case == "missing_dependencies":
+        for step in bad["steps"]:
+            step.pop("dependencies")
     else:
         bad["steps"][0]["type"] = "knowledge"
-    TaskPlan.model_validate(bad)  # General platform validity is not the fixed trial contract.
+    if case == "missing_dependencies":
+        with pytest.raises(ValueError):
+            TaskPlan.model_validate(bad)
+    else:
+        TaskPlan.model_validate(bad)  # General validity is not the fixed trial contract.
     requests = []
     sandbox = FakeExperimentSandbox()
 
@@ -50,8 +60,20 @@ async def test_fixed_trial_plan_gets_one_metered_correction_before_any_child(
         body = json.loads(request.content)
         requests.append(body)
         assert not sandbox.requests
+        schema = body["tools"][0]["function"]["parameters"]
+        step_schema = schema["$defs"]["PlanStep"]
+        original = TaskPlan.model_json_schema()["$defs"]["PlanStep"]
+        assert "dependencies" not in original["required"]
+        if case != "general":
+            assert "dependencies" in step_schema["required"]
+            assert schema["properties"]["steps"]["minItems"] == 3
+            assert schema["properties"]["steps"]["maxItems"] == 3
+            assert step_schema["properties"]["type"]["enum"] == ["research", "coding", "experiment"]
+        else:
+            assert step_schema == original
         if len(requests) == 2:
             assert "required step types and dependencies" in body["messages"][-1]["content"]
+            assert "dependencies array" in body["messages"][-1]["content"]
         payload = bad if len(requests) == 1 or case == "repeat" else good
         return httpx.Response(200, json=completion([("submit_task_plan", payload)]))
 
