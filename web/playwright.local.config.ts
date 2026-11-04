@@ -13,8 +13,8 @@ export default defineConfig({
   use: { baseURL: 'http://127.0.0.1:5173', trace: 'retain-on-failure' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
-    { command: `"${python}" "${fixture}"`, url: 'http://127.0.0.1:18009/__fixture/status',
-      timeout: 30000, reuseExistingServer: false },
+    { command: `"${python}" "${fixture}"`, url: 'http://127.0.0.1:18009/health/live',
+      timeout: 60000, reuseExistingServer: false, stdout: 'pipe' },
     { command: 'npm run preview', url: 'http://127.0.0.1:5173', timeout: 30000,
       reuseExistingServer: false, env: { WORKBENCH_API_PORT: '18009' } },
   ],

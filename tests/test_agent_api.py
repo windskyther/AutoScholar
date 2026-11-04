@@ -20,6 +20,7 @@ from autoscholar.core.config import Settings
 from autoscholar.experiment.models import ExperimentSpecification
 from autoscholar.main import create_app
 from autoscholar.rag.models import RetrievalMode
+from tests.api_credentials import AUTH, TOKEN_SECRET
 from tests.test_chat import SuccessfulProvider
 from tests.test_health import FakeDependency
 
@@ -222,13 +223,14 @@ class FailingAgentBackend(FakeAgentBackend):
 def client_with_backend(backend: FakeAgentBackend) -> TestClient:
     return TestClient(
         create_app(
-            Settings(llm_api_key=None, llm_model=None),
+            Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
             database=FakeDependency(),
             redis=FakeDependency(),
             llm_provider=SuccessfulProvider(),
             agent_repository=backend,
             agent_runner=backend,
-        )
+        ),
+        headers=AUTH,
     )
 
 
@@ -317,6 +319,7 @@ def test_post_agent_run_requires_token_for_experiment_mode() -> None:
         invalid_mode = client.post(
             "/agent/run",
             json={**payload, "mode": "compute"},
+            headers={"Authorization": "Bearer long-test-token"},
         )
 
     assert unauthorized.status_code == 401
@@ -429,7 +432,7 @@ def test_coding_workspace_manifest_and_utf8_file_api(tmp_path: Path) -> None:
     manager.initialize(task.id)
     created = manager.write_text(task.id, "模型.py", "print('训练完成')\n")
     app = create_app(
-        Settings(llm_api_key=None, llm_model=None),
+        Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
         database=FakeDependency(),
         redis=FakeDependency(),
         llm_provider=SuccessfulProvider(),
@@ -438,14 +441,10 @@ def test_coding_workspace_manifest_and_utf8_file_api(tmp_path: Path) -> None:
         workspace_manager=manager,
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, headers=AUTH) as client:
         manifest = client.get(f"/agent/tasks/{task.id}/workspace")
-        content = client.get(
-            f"/agent/tasks/{task.id}/workspace/files/source/%E6%A8%A1%E5%9E%8B.py"
-        )
-        escaped = client.get(
-            f"/agent/tasks/{task.id}/workspace/files/source/%2E%2E/%2E%2E/.env"
-        )
+        content = client.get(f"/agent/tasks/{task.id}/workspace/files/source/%E6%A8%A1%E5%9E%8B.py")
+        escaped = client.get(f"/agent/tasks/{task.id}/workspace/files/source/%2E%2E/%2E%2E/.env")
 
     assert manifest.status_code == 200
     assert manifest.json()["files"][0]["sha256"] == created.sha256

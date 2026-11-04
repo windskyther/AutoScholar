@@ -278,6 +278,7 @@ async def test_autonomous_and_child_routes_require_token(tmp_path: Path) -> None
                     "mode": "auto",
                     "budget": {"replans": 1},
                 },
+                headers=auth,
             )
             assert rejected.status_code == 422
     finally:

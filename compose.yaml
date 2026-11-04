@@ -9,6 +9,8 @@ services:
       APP_HOST: 0.0.0.0
       APP_PORT: 8000
       LOG_LEVEL: INFO
+      API_ALLOWED_HOSTS: '${API_ALLOWED_HOSTS:-["*"]}'
+      API_ALLOWED_ORIGINS: '${API_ALLOWED_ORIGINS:-[]}'
       DATABASE_URL: postgresql+asyncpg://autoscholar:autoscholar@postgres:5432/autoscholar
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
@@ -84,7 +86,12 @@ services:
         - -c
         - >-
           import urllib.request;
-          urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)
+          from autoscholar.core.config import Settings;
+          settings = Settings();
+          token = settings.experiment_api_token;
+          probe = urllib.request.Request('http://localhost:8000/health/ready',
+          headers={'Authorization': 'Bearer ' + (token.get_secret_value() if token else '')});
+          urllib.request.urlopen(probe, timeout=3)
       interval: 10s
       timeout: 5s
       retries: 5

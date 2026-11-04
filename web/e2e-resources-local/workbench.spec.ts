@@ -29,7 +29,7 @@ test('evidence and report preview escape HTML; bearer export verifies real bytes
   const downloaded = page.waitForEvent('download'); await row.getByRole('button', { name: '导出报告' }).click();
   const download = await downloaded; expect(download.suggestedFilename()).toContain('report.md');
   const bytes = await readFile((await download.path())!); expect(bytes.toString('utf8')).toContain('# 中文公开报告');
-  const status = await request.get('http://127.0.0.1:18009/__fixture/status');
+  const status = await request.get('http://127.0.0.1:18009/__fixture/status', { headers: AUTH });
   expect(await status.json()).toMatchObject({ model_calls: 0, sandbox_calls: 0 });
 });
 test('experiment details show absent measurements honestly; mobile resources remain usable', async ({ page }) => {

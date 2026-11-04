@@ -17,11 +17,11 @@ async function advance(request: APIRequestContext, finish = false): Promise<numb
   expect(receipt.status()).toBe(200); return (await receipt.json()).sequence;
 }
 test.afterAll(async ({ request }) => {
-  const status = await request.get(fixtureURL + '/__fixture/status');
+  const status = await request.get(fixtureURL + '/__fixture/status', { headers });
   expect(await status.json()).toMatchObject({ model_calls: 0, sandbox_calls: 0, task_jobs: 1 });
   expect((await request.post(fixtureURL + '/__fixture/stop', { headers })).status()).toBe(200);
   await expect.poll(async () => {
-    try { await request.get(fixtureURL + '/__fixture/status', { timeout: 1000 }); return false; }
+    try { await request.get(fixtureURL + '/__fixture/status', { timeout: 1000, headers }); return false; }
     catch { return true; }
   }, { timeout: 10000 }).toBe(true);
 });

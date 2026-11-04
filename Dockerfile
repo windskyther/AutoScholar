@@ -19,7 +19,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 
-CMD ["uvicorn", "autoscholar.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "autoscholar.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
 
 FROM autoscholar-base AS git-mcp
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \

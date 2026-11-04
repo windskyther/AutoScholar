@@ -21,11 +21,11 @@ async function state(request: APIRequestContext, id: string) {
   return response.json();
 }
 test.afterAll(async ({ request }) => {
-  const response = await request.get(base + '/__fixture/status');
+  const response = await request.get(base + '/__fixture/status', { headers });
   expect(await response.json()).toMatchObject({ model_calls: 0, sandbox_calls: 0 });
   expect((await request.post(base + '/__fixture/stop', { headers })).status()).toBe(200);
   await expect.poll(async () => {
-    try { await request.get(base + '/__fixture/status', { timeout: 1000 }); return false; } catch { return true; }
+    try { await request.get(base + '/__fixture/status', { timeout: 1000, headers }); return false; } catch { return true; }
   }, { timeout: 10000 }).toBe(true);
 });
 
