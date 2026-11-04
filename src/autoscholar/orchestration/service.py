@@ -856,6 +856,11 @@ class AutonomousService:
                     "and research."
                 )
 
+        repair_constraints: dict[str, Any] = {
+            "experiment_only": bool(retry_steps),
+            "rerun_steps": sorted(retry_steps),
+            "preserve_entire_plan": bool(retry_steps),
+        }
         payload = {
             "objective": run.objective,
             "plan": run.plan.model_dump(),
@@ -865,16 +870,7 @@ class AutonomousService:
             "budget_limits": run.budget.limits.model_dump(),
             "memory_context_untrusted": run.memory_context,
             "experiment_contract": experiment_contract(),
-            "repair_constraints": {
-                "experiment_only": bool(retry_steps),
-                "rerun_steps": sorted(retry_steps),
-                "preserve_entire_plan": bool(retry_steps),
-                "code_repairs_remaining": max(
-                    0, run.budget.limits.code_repairs - run.budget.used.get("code_repairs", 0)
-                ),
-                "retain_goal_exactly": True,
-                "retained_step_types": {step.id: step.type for step in run.plan.steps},
-            },
+            "repair_constraints": repair_constraints,
         }
         if retry_steps:
 
@@ -906,6 +902,15 @@ class AutonomousService:
                 reason=retry.reason,
             )
         else:
+            repair_constraints.update(
+                {
+                    "code_repairs_remaining": max(
+                        0, run.budget.limits.code_repairs - run.budget.used.get("code_repairs", 0)
+                    ),
+                    "retain_goal_exactly": True,
+                    "retained_step_types": {step.id: step.type for step in run.plan.steps},
+                }
+            )
             revision = await self._structured(
                 "submit_plan_revision",
                 PlanRevision,

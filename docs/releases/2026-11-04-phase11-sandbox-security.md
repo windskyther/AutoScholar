@@ -27,6 +27,12 @@ compression cannot retain only one log file. Explicitly disabling compression fi
 it while preserving the size limit. Initial failures are retained separately from
 the successful rerun and ordinary-artifact check.
 
+Full regression also caught a compatibility issue in the existing experiment-only
+recovery contract. Generic replan diagnostics now apply only to the full revision
+path; immutable experiment-only retries retain their original constraint fields
+and explicit artifact-only correction category. Existing recovery assertions and
+historical outcomes are preserved.
+
 See [the sandbox operating guide](../security/sandbox.md) for the new credential and
 trusted-controller boundary. No normal application was deployed or restarted by this
 module. Phase 11E–11H remain: production images/ingress, release gates, backup/restore

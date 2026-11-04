@@ -35,6 +35,12 @@ def schema_feedback(schema: type[BaseModel], error: ValidationError) -> str:
 
 
 def revision_feedback(message: str) -> str:
+    if message.startswith("Artifact-only recovery"):
+        return (
+            "Artifact-only recovery must preserve the validated plan and rerun exactly "
+            "the experiment IDs in repair_constraints; never rerun code/research, alter "
+            "sources or submit a replacement plan"
+        )
     if "code_repairs" in message:
         return (
             "code_repair_budget_exhausted: repair_constraints.code_repairs_remaining is zero; "
