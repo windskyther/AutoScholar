@@ -72,17 +72,23 @@ flowchart LR
 Copy-Item .env.example .env
 ```
 
-在本地 `.env` 中填写 OpenAI-compatible 服务：
+在本地 `.env` 中填写 OpenAI-compatible 服务，并设置业务访问 Token：
 
 ```dotenv
 LLM_BASE_URL=https://your-provider.example/v1
 LLM_API_KEY=your-api-key
 LLM_MODEL=your-model
 
+# 必填：填写你在本机生成的随机访问 Token，不使用公开示例值。
+EXPERIMENT_API_TOKEN=
+
 TAVILY_API_KEY=your-tavily-api-key
 # 可选但推荐；匿名 Semantic Scholar API 也可使用
 SEMANTIC_SCHOLAR_API_KEY=your-semantic-scholar-api-key
 ```
+
+可以用 `uv run python -c "import secrets; print(secrets.token_urlsafe(32))"` 在本机生成访问 Token，再写入 `.env`。
+首次启动前需完成此项；未配置时业务接口和受保护的 readiness 返回 503，Docker 的 API 就绪检查也无法通过。
 
 `LLM_COMPATIBILITY_PROFILE=auto` 默认仅对官方 `api.deepseek.com` 启用 DeepSeek 兼容处理。
 DeepSeek 兼容网关可显式设置为 `deepseek`；其他兼容服务可用 `generic` 保留标准请求。
@@ -99,7 +105,8 @@ docker compose up -d --build
 docker compose ps -a
 ```
 
-`migrate` 服务会先执行 `alembic upgrade head`，成功后 API 才会启动。API 默认地址为 `http://localhost:8000`，交互式文档位于 `http://localhost:8000/docs`。
+`migrate` 服务会先执行 `alembic upgrade head`，成功后 API 才会启动。API 默认地址为 `http://localhost:8000`。
+开发环境的 `/docs` 和 `/openapi.json` 也需要携带 Bearer 请求头；生产环境关闭 API 文档。
 
 停止服务：
 
@@ -1493,7 +1500,7 @@ Coding 检查及一次训练后触发指标故障，并按关闭重规划规则�
 | Phase 8 | MCP 工具平台（无付费 CPU 验收、轻量真实 LLM/Tavily 补测通过） |
 | Phase 9 | 本地 Web 工作台（9A–9G 无付费 CPU 验收通过） |
 | Phase 10 | AutoScholar-Eval：既定工程验收通过，15/15 组同版本真实配对及最终审计完成 |
-| Phase 11 | 安全加固、CI/CD 与部署 |
+| Phase 11 | 11A/11B 首批 API 加固与基础 CI 已完成，后续安全及部署模块待验 |
 
 ## 分支与提交约定
 
