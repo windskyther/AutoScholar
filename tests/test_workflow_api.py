@@ -4,8 +4,8 @@ import httpx
 from pydantic import SecretStr
 
 from autoscholar.core.config import Settings
-from autoscholar.main import create_app
 from autoscholar.orchestration.durable import DurableService
+from tests.governance import offline_app
 from tests.test_agent_runner import ScriptedProvider
 from tests.test_autonomous import script, workflow
 from tests.test_experiment_service import FakeExperimentSandbox
@@ -15,7 +15,7 @@ from tests.test_health import FakeDependency
 async def test_durable_api_auth_idempotency_and_approval(tmp_path: Path) -> None:
     provider = ScriptedProvider(script())
     service, engine = await workflow(tmp_path, provider, FakeExperimentSandbox())
-    app = create_app(
+    app = offline_app(
         Settings(experiment_api_token=SecretStr("phase7-token"), workflow_approval_threshold=0),
         database=FakeDependency(),
         redis=FakeDependency(),

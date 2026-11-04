@@ -25,9 +25,9 @@ from autoscholar.core.budget import (
 from autoscholar.core.config import Settings
 from autoscholar.llm import LLMResult, ToolCall
 from autoscholar.llm.openai_compatible import OpenAICompatibleProvider
-from autoscholar.main import create_app
 from autoscholar.orchestration.smoke import run_smoke
 from autoscholar.research import SearchProviderError, TavilySearchProvider
+from tests.governance import offline_app
 from tests.test_agent_runner import ScriptedProvider, response
 from tests.test_autonomous import InvalidOnceSandbox, call, script, workflow
 from tests.test_experiment_service import FakeExperimentSandbox, _artifact
@@ -140,7 +140,7 @@ async def test_all_autonomous_routes_reject_wrong_tokens_and_cross_task_artifact
 ) -> None:
     provider = ScriptedProvider([*script(), *script()])
     service, engine = await workflow(tmp_path, provider, FakeExperimentSandbox())
-    app = create_app(
+    app = offline_app(
         Settings(experiment_api_token=SecretStr("resilience-token")),
         database=FakeDependency(),
         redis=FakeDependency(),

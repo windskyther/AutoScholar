@@ -1,5 +1,8 @@
+import asyncio
+import hashlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +18,7 @@ from autoscholar.agent.runner import (
 )
 from autoscholar.agent.tools import CalculatorTool, RestrictedPythonTool
 from autoscholar.api.access import APIAuthenticationMiddleware, APIBoundaryMiddleware
+from autoscholar.api.governance import RequestGovernance, RequestGovernanceMiddleware
 from autoscholar.api.routes.agent import router as agent_router
 from autoscholar.api.routes.chat import router as chat_router
 from autoscholar.api.routes.experiments import router as experiment_router
@@ -31,6 +35,8 @@ from autoscholar.coding import (
     SandboxExecutor,
     WorkspaceManager,
 )
+from autoscholar.core.admission import UnavailableAdmissionStore
+from autoscholar.core.audit import AuditEvent, DatabaseAuditSink, UnavailableAuditSink
 from autoscholar.core.budget import BudgetedLLM
 from autoscholar.core.config import Settings, get_settings
 from autoscholar.core.errors import register_exception_handlers
@@ -40,6 +46,7 @@ from autoscholar.core.responses import UTF8JSONResponse
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.service import ExperimentService
 from autoscholar.infrastructure import Database, Qdrant, RedisClient
+from autoscholar.infrastructure.admission import RedisAdmissionStore
 from autoscholar.infrastructure.base import ManagedDependency
 from autoscholar.llm import LLMProvider, create_llm_provider
 from autoscholar.orchestration.durable import DurableService
@@ -101,11 +108,20 @@ def create_app(
     coding_agent: CodingAgent | None = None,
     artifact_manager: ArtifactManager | None = None,
     experiment_service: ExperimentAgentService | None = None,
+    governance: RequestGovernance | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
-    configure_logging(resolved_settings.log_level)
+    configure_logging(resolved_settings.log_level, settings=resolved_settings)
     resolved_database = database or Database(resolved_settings.database_url)
     resolved_redis = redis or RedisClient(resolved_settings.redis_url)
+    resolved_governance = governance or RequestGovernance(
+        RedisAdmissionStore(resolved_redis.client)
+        if isinstance(resolved_redis, RedisClient)
+        else UnavailableAdmissionStore(),
+        DatabaseAuditSink(resolved_database.session_factory)
+        if isinstance(resolved_database, Database)
+        else UnavailableAuditSink(),
+    )
     qdrant_key = (
         resolved_settings.qdrant_api_key.get_secret_value()
         if resolved_settings.qdrant_api_key
@@ -388,20 +404,44 @@ def create_app(
         application.state.workspace_manager = resolved_workspace_manager
         application.state.artifact_manager = resolved_artifact_manager
         application.state.sandbox_executor = resolved_sandbox_executor
-        yield
-        for service in resolved_research_services:
-            await service.close()
-        await resolved_llm_provider.close()
-        if resolved_embedding_provider is not None:
-            await resolved_embedding_provider.close()
-        if resolved_sparse_embedding_provider is not None:
-            await resolved_sparse_embedding_provider.close()
-        if resolved_reranker is not None:
-            await resolved_reranker.close()
-        await resolved_sandbox_executor.close()
-        await resolved_redis.close()
-        await resolved_qdrant.close()
-        await resolved_database.close()
+        try:
+            async with asyncio.timeout(resolved_settings.api_control_timeout_seconds):
+                await resolved_governance.audit.write(
+                    AuditEvent(
+                        id=str(uuid4()),
+                        request_id=str(uuid4()),
+                        actor="service",
+                        category="config",
+                        method="START",
+                        phase="configured",
+                        outcome="policy_loaded",
+                        action="startup",
+                        operation_id=hashlib.sha256(
+                            resolved_settings.model_dump_json(
+                                include={
+                                    name
+                                    for name in Settings.model_fields
+                                    if name.startswith("api_")
+                                }
+                            ).encode()
+                        ).hexdigest(),
+                    )
+                )
+            yield
+        finally:
+            for service in resolved_research_services:
+                await service.close()
+            await resolved_llm_provider.close()
+            if resolved_embedding_provider is not None:
+                await resolved_embedding_provider.close()
+            if resolved_sparse_embedding_provider is not None:
+                await resolved_sparse_embedding_provider.close()
+            if resolved_reranker is not None:
+                await resolved_reranker.close()
+            await resolved_sandbox_executor.close()
+            await resolved_redis.close()
+            await resolved_qdrant.close()
+            await resolved_database.close()
 
     application = FastAPI(
         title="AutoScholar API",
@@ -414,6 +454,7 @@ def create_app(
         openapi_url=None if resolved_settings.app_env == "production" else "/openapi.json",
     )
     application.state.settings = resolved_settings
+    application.state.governance = resolved_governance
     application.state.mcp_research_gateway = mcp_gateway
     application.state.mcp_filesystem_gateway = filesystem_gateway
     application.state.mcp_git_gateway = git_gateway
@@ -424,6 +465,7 @@ def create_app(
             resolved_autonomous_service,
             lease_seconds=resolved_settings.workflow_job_lease_seconds,
             approval_threshold=resolved_settings.workflow_approval_threshold,
+            audit=resolved_governance.audit,
         )
         if resolved_autonomous_service is not None
         else None
@@ -445,6 +487,9 @@ def create_app(
     application.state.workspace_manager = resolved_workspace_manager
     application.state.artifact_manager = resolved_artifact_manager
     application.state.sandbox_executor = resolved_sandbox_executor
+    application.add_middleware(
+        RequestGovernanceMiddleware, settings=resolved_settings, governance=resolved_governance
+    )
     application.add_middleware(APIAuthenticationMiddleware, settings=resolved_settings)
     application.add_middleware(
         CORSMiddleware,
@@ -458,6 +503,7 @@ def create_app(
             "Last-Event-ID",
         ],
         allow_credentials=False,
+        expose_headers=["X-Request-ID", "Retry-After", "Location"],
     )
     application.add_middleware(APIBoundaryMiddleware, settings=resolved_settings)
     application.middleware("http")(request_context_middleware)

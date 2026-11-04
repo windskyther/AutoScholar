@@ -18,9 +18,9 @@ from autoscholar.agent.runner import AgentRunError, AgentRunResult
 from autoscholar.coding.workspace import WorkspaceManager
 from autoscholar.core.config import Settings
 from autoscholar.experiment.models import ExperimentSpecification
-from autoscholar.main import create_app
 from autoscholar.rag.models import RetrievalMode
 from tests.api_credentials import AUTH, TOKEN_SECRET
+from tests.governance import offline_app
 from tests.test_chat import SuccessfulProvider
 from tests.test_health import FakeDependency
 
@@ -222,7 +222,7 @@ class FailingAgentBackend(FakeAgentBackend):
 
 def client_with_backend(backend: FakeAgentBackend) -> TestClient:
     return TestClient(
-        create_app(
+        offline_app(
             Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
             database=FakeDependency(),
             redis=FakeDependency(),
@@ -291,7 +291,7 @@ def test_post_agent_run_accepts_coding_mode() -> None:
 
 def test_post_agent_run_requires_token_for_experiment_mode() -> None:
     backend = FakeAgentBackend(replace(completed_task(), mode="experiment"))
-    app = create_app(
+    app = offline_app(
         Settings(experiment_api_token=SecretStr("long-test-token")),
         database=FakeDependency(),
         redis=FakeDependency(),
@@ -431,7 +431,7 @@ def test_coding_workspace_manifest_and_utf8_file_api(tmp_path: Path) -> None:
     manager = WorkspaceManager(tmp_path)
     manager.initialize(task.id)
     created = manager.write_text(task.id, "模型.py", "print('训练完成')\n")
-    app = create_app(
+    app = offline_app(
         Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
         database=FakeDependency(),
         redis=FakeDependency(),

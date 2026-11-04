@@ -32,6 +32,7 @@ def _origin(value: str) -> tuple[str, str, int | None]:
 
 
 async def _reject(request: Request, exc: AppError, receive: Receive, send: Send) -> None:
+    await request.app.state.governance.denial(request, exc.code, exc.status_code)
     await UTF8JSONResponse(
         status_code=exc.status_code,
         content={

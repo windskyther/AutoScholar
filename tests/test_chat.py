@@ -12,8 +12,8 @@ from autoscholar.llm.models import (
     ToolChoice,
     ToolDefinition,
 )
-from autoscholar.main import create_app
 from tests.api_credentials import AUTH, TOKEN_SECRET
+from tests.governance import offline_app
 from tests.test_health import FakeDependency
 
 
@@ -63,7 +63,7 @@ def client_with_provider(
     provider: SuccessfulProvider | FailingProvider | UnconfiguredLLMProvider,
 ) -> TestClient:
     return TestClient(
-        create_app(
+        offline_app(
             Settings(experiment_api_token=TOKEN_SECRET),
             database=FakeDependency(),
             redis=FakeDependency(),

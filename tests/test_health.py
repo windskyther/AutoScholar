@@ -11,8 +11,8 @@ from autoscholar.llm.models import (
     ToolChoice,
     ToolDefinition,
 )
-from autoscholar.main import create_app
 from tests.api_credentials import AUTH, TOKEN_SECRET
+from tests.governance import offline_app
 
 
 class FakeDependency:
@@ -74,7 +74,7 @@ def create_test_client(
     qdrant_healthy: bool = True,
 ) -> TestClient:
     return TestClient(
-        create_app(
+        offline_app(
             Settings(experiment_api_token=TOKEN_SECRET),
             database=FakeDependency(healthy=database_healthy),
             redis=FakeDependency(healthy=redis_healthy),
@@ -156,7 +156,7 @@ def test_readiness_when_a_dependency_is_unavailable() -> None:
 
 
 def test_readiness_reports_unconfigured_llm_without_failing_infrastructure() -> None:
-    app = create_app(
+    app = offline_app(
         Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
         database=FakeDependency(),
         redis=FakeDependency(),
@@ -175,7 +175,7 @@ def test_mcp_outage_only_degrades_research_and_never_constructs_native_provider(
     with patch(
         "autoscholar.main.TavilySearchProvider", side_effect=AssertionError("Native fallback")
     ):
-        app = create_app(
+        app = offline_app(
             Settings(
                 research_tool_backend="mcp",
                 filesystem_tool_backend="mcp",

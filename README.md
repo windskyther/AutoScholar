@@ -1478,12 +1478,14 @@ Coding 检查及一次训练后触发指标故障，并按关闭重规划规则�
 原始截断响应离线回放通过。本轮新增供应商调用 **0**；新版真实确认尚未执行，v8 原结果保留。
 详见 [Coding 输出边界修复](docs/releases/2026-10-28-coding-output-bounds.md)。
 
-## Phase 11：生产加固（首批 API 与 CI）
+## Phase 11：生产加固（API、CI 与请求治理）
 
 11A/11B 首批实现包括：业务接口统一 Bearer 鉴权、Host/Origin/CORS 边界、production 配置校验、可选只读密钥文件和最小权限基础 CI。
 开发环境的现有请求也需携带 `EXPERIMENT_API_TOKEN`；本页 API 示例已更新，详见[访问与生产配置说明](docs/security/access.md)。
 基础 Checks 覆盖 Linux 后端、Windows 文件/鉴权兼容及前端检查，使用公开夹具和固定 Action 提交，不读取供应商凭据，也不自动部署。
-后续仍需完成限流与审计、沙箱控制面加固、生产 Nginx/镜像、完整发布与备份恢复验收；本批不宣告 Phase 11 整体验收。
+11C 已加入 Redis 共享限流与并发租约、请求/响应大小及期限、持久化安全审计和日志脱敏。LLM 与检索供应商默认不做 HTTP 自动重试，未知结果沿用 Journal 保护。升级前先运行 `uv run alembic upgrade head`；启动与关键写操作要求审计可持久化。默认额度、429/503 和恢复规则见 [请求治理说明](docs/security/governance.md)。
+
+后续仍需完成 11D–11H：沙箱控制面加固、生产 Nginx/镜像、完整发布与备份恢复验收；本批不宣告 Phase 11 整体验收。
 
 ## 开发路线
 
@@ -1500,7 +1502,7 @@ Coding 检查及一次训练后触发指标故障，并按关闭重规划规则�
 | Phase 8 | MCP 工具平台（无付费 CPU 验收、轻量真实 LLM/Tavily 补测通过） |
 | Phase 9 | 本地 Web 工作台（9A–9G 无付费 CPU 验收通过） |
 | Phase 10 | AutoScholar-Eval：既定工程验收通过，15/15 组同版本真实配对及最终审计完成 |
-| Phase 11 | 11A/11B 首批 API 加固与基础 CI 已完成，后续安全及部署模块待验 |
+| Phase 11 | 11A–11C API、CI 与请求治理已实现，11D–11H 后续安全及部署模块待验 |
 
 ## 分支与提交约定
 

@@ -3,10 +3,15 @@ import logging.config
 
 import structlog
 
+from autoscholar.core.config import Settings
+from autoscholar.core.redaction import configure_redaction, safe_log_event
 
-def configure_logging(log_level: str) -> None:
+
+def configure_logging(log_level: str, *, settings: Settings | None = None) -> None:
     """Configure standard logging and structlog for JSON output."""
 
+    if settings is not None:
+        configure_redaction(settings)
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
@@ -20,7 +25,9 @@ def configure_logging(log_level: str) -> None:
             "formatters": {
                 "json": {
                     "()": structlog.stdlib.ProcessorFormatter,
-                    "processor": structlog.processors.JSONRenderer(),
+                    "processors": [safe_log_event, structlog.processors.JSONRenderer()],
+                    "keep_exc_info": False,
+                    "keep_stack_info": False,
                     "foreign_pre_chain": shared_processors,
                 }
             },
@@ -33,8 +40,10 @@ def configure_logging(log_level: str) -> None:
             },
             "root": {"handlers": ["default"], "level": log_level},
             "loggers": {
-                "uvicorn.access": {"handlers": [], "propagate": True},
                 "uvicorn.error": {"handlers": [], "propagate": True},
+                "uvicorn.access": {"handlers": [], "propagate": False},
+                "httpx": {"level": "WARNING", "handlers": [], "propagate": True},
+                "httpcore": {"level": "WARNING", "handlers": [], "propagate": True},
             },
         }
     )
@@ -42,8 +51,7 @@ def configure_logging(log_level: str) -> None:
     structlog.configure(
         processors=[
             *shared_processors,
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
+            safe_log_event,
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         wrapper_class=structlog.stdlib.BoundLogger,

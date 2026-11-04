@@ -136,7 +136,7 @@ async def fixture_app(
     )
     # main also constructs a module-level app: prevent that import from loading .env.
     with patch("autoscholar.core.config.get_settings", return_value=settings):
-        from autoscholar.main import create_app
+        from tests.governance import offline_app
 
     # Concurrent polling/SSE and write transactions must not share the one
     # StaticPool connection of in-memory SQLite: a reader rollback can undo a
@@ -197,7 +197,7 @@ async def fixture_app(
         parse_timeout_seconds=5,
         max_pages=10,
     )
-    application = create_app(
+    application = offline_app(
         settings,
         database=InertDependency(),
         redis=InertDependency(),

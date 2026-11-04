@@ -21,12 +21,12 @@ from autoscholar.llm import (
     ToolChoice,
     ToolDefinition,
 )
-from autoscholar.main import create_app
 from autoscholar.rag.embeddings import SparseVectorData
 from autoscholar.rag.models import DocumentChunkRecord, DocumentRecord, RetrievedChunk
 from autoscholar.rag.repository import KnowledgeRepository
 from autoscholar.rag.service import RAGQueryResult, RAGQueryService
 from tests.api_credentials import AUTH, TOKEN_SECRET
+from tests.governance import offline_app
 from tests.test_chat import SuccessfulProvider
 from tests.test_health import FakeDependency
 
@@ -484,7 +484,7 @@ class FakeRAGService:
 
 def test_rag_query_api_exposes_document_page_and_citations() -> None:
     client = TestClient(
-        create_app(
+        offline_app(
             Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
             database=FakeDependency(),
             redis=FakeDependency(),

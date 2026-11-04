@@ -4,6 +4,7 @@ import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 
+from autoscholar.core.redaction import redact
 from autoscholar.core.responses import UTF8JSONResponse
 
 logger = structlog.get_logger(__name__)
@@ -35,7 +36,7 @@ def _payload(
         error["task_id"] = task_id
     if details is not None:
         error["details"] = details
-    return {"error": error, "request_id": _request_id(request)}
+    return {"error": redact(error), "request_id": _request_id(request)}
 
 
 def register_exception_handlers(app: FastAPI) -> None:

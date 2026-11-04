@@ -11,8 +11,8 @@ from autoscholar.core.budget import current_parent
 from autoscholar.core.config import Settings
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.models import ExperimentSpecification
-from autoscholar.main import create_app
 from autoscholar.rag.repository import KnowledgeRepository
+from tests.governance import offline_app
 from tests.test_agent_runner import ScriptedProvider
 from tests.test_autonomous import workflow
 from tests.test_experiment_service import FakeExperimentSandbox
@@ -78,7 +78,7 @@ async def resources(tmp_path: Path) -> AsyncIterator[tuple[httpx.AsyncClient, An
                 "cnn_minus_mlp_accuracy": 0.1,
             }
             await session.commit()
-    app = create_app(
+    app = offline_app(
         Settings(_env_file=None, experiment_api_token=SecretStr("public-resource-test-token")),  # type: ignore[call-arg]
         database=FakeDependency(),
         redis=FakeDependency(),

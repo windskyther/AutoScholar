@@ -8,7 +8,6 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from autoscholar.core.config import Settings
-from autoscholar.main import create_app
 from autoscholar.rag import DuplicateDocumentError, LocalDocumentStorage
 from autoscholar.rag.models import (
     DocumentJobKind,
@@ -17,6 +16,7 @@ from autoscholar.rag.models import (
     ProjectRecord,
 )
 from tests.api_credentials import AUTH, TOKEN_SECRET
+from tests.governance import offline_app
 from tests.test_chat import SuccessfulProvider
 from tests.test_health import FakeDependency
 
@@ -124,7 +124,7 @@ class FakeKnowledgeStore:
 def create_client(tmp_path: Path) -> tuple[TestClient, FakeKnowledgeStore]:
     store = FakeKnowledgeStore()
     client = TestClient(
-        create_app(
+        offline_app(
             Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
             database=FakeDependency(),
             redis=FakeDependency(),

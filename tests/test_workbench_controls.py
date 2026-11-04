@@ -14,12 +14,12 @@ from autoscholar.agent.database_models import AgentTaskRow
 from autoscholar.api.workbench_repository import WorkbenchRepository
 from autoscholar.core.config import Settings
 from autoscholar.core.errors import AppError
-from autoscholar.main import create_app
 from autoscholar.orchestration.approvals import ApprovalDecision
 from autoscholar.orchestration.durable import DurableService
 from autoscholar.orchestration.durable_models import WorkflowApprovalRow, WorkflowJobRow
 from autoscholar.orchestration.sandbox import BudgetedSandbox
 from autoscholar.rag.repository import KnowledgeRepository
+from tests.governance import offline_app
 from tests.test_agent_runner import ScriptedProvider
 from tests.test_autonomous import script, workflow
 from tests.test_durable_workflow import drain
@@ -52,7 +52,7 @@ async def context(tmp_path: Path) -> AsyncIterator[tuple[httpx.AsyncClient, Dura
             )
         )
         await session.commit()
-    app = create_app(
+    app = offline_app(
         Settings(_env_file=None, experiment_api_token=SecretStr("public-control-test-token")),  # type: ignore[call-arg]
         database=FakeDependency(),
         redis=FakeDependency(),

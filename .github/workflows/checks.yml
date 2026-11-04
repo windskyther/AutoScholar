@@ -24,6 +24,28 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: public-fixture-only
+          POSTGRES_DB: phase11c
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      PHASE11C_REDIS_URL: redis://127.0.0.1:6379/0
+      PHASE11C_DATABASE_URL: postgresql+asyncpg://postgres:public-fixture-only@127.0.0.1:5432/phase11c
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -53,6 +75,7 @@ jobs:
       - run: >-
           uv run --no-sync pytest -q --tb=short --show-capture=no
           tests/test_config.py tests/test_experiment_auth.py tests/test_api_access.py
+          tests/test_request_governance.py tests/test_security_redaction.py
           tests/test_coding_workspace.py tests/test_filesystem_mcp.py
           --basetemp=data/ci-tmp
 

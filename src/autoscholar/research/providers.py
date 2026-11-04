@@ -28,9 +28,11 @@ class BaseHTTPResearchProvider:
         *,
         client: httpx.AsyncClient | None = None,
         timeout_seconds: float = 20.0,
-        retry_delays: tuple[float, ...] = (0.5, 1.0),
+        retry_delays: tuple[float, ...] = (),
         sleep: Sleep = asyncio.sleep,
     ) -> None:
+        if len(retry_delays) > 2 or any(delay < 0 or delay > 10 for delay in retry_delays):
+            raise ValueError("Search retries require at most two bounded delays")
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
         self._timeout_seconds = timeout_seconds
@@ -49,6 +51,17 @@ class BaseHTTPResearchProvider:
             await self._client.aclose()
 
     async def _request_json(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
+        try:
+            async with asyncio.timeout(self._timeout_seconds):
+                return await self._request_with_policy(method, url, **kwargs)
+        except TimeoutError:
+            raise SearchProviderError(
+                code=f"{self.name}_unavailable",
+                message=f"{self.name} search deadline exceeded",
+                retryable=True,
+            ) from None
+
+    async def _request_with_policy(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
         attempts = len(self._retry_delays) + 1
         for attempt in range(attempts):
             try:
@@ -209,9 +222,7 @@ class SemanticScholarSearchProvider(BaseHTTPResearchProvider):
                         # Semantic Scholar documents that hyphenated terms do not match.
                         "query": query.replace("-", " "),
                         "limit": limit,
-                        "fields": (
-                            "title,url,abstract,authors,year,externalIds,openAccessPdf"
-                        ),
+                        "fields": ("title,url,abstract,authors,year,externalIds,openAccessPdf"),
                     },
                 )
             finally:
@@ -233,11 +244,15 @@ class SemanticScholarSearchProvider(BaseHTTPResearchProvider):
             doi = external_ids.get("DOI") if isinstance(external_ids, dict) else None
             url = f"https://doi.org/{doi}" if doi else str(item.get("url") or "").strip()
             authors_payload = item.get("authors")
-            authors = tuple(
-                str(author.get("name")).strip()
-                for author in authors_payload
-                if isinstance(author, dict) and author.get("name")
-            ) if isinstance(authors_payload, list) else ()
+            authors = (
+                tuple(
+                    str(author.get("name")).strip()
+                    for author in authors_payload
+                    if isinstance(author, dict) and author.get("name")
+                )
+                if isinstance(authors_payload, list)
+                else ()
+            )
             if not title or not url or not content:
                 continue
             year = item.get("year")

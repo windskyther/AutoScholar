@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr, ValidationError
 
 from autoscholar.core.config import Settings
-from autoscholar.main import create_app
 from tests.api_credentials import AUTH, TOKEN, TOKEN_SECRET
+from tests.governance import offline_app
 from tests.test_chat import SuccessfulProvider
 from tests.test_health import FakeDependency, FakeSandbox
 from tests.test_projects_api import FakeKnowledgeStore
@@ -21,7 +21,7 @@ def client_for(
     *, token: SecretStr | None = TOKEN_SECRET, **config: object
 ) -> tuple[TestClient, SuccessfulProvider, FakeKnowledgeStore]:
     provider, knowledge = SuccessfulProvider(), FakeKnowledgeStore()
-    app = create_app(
+    app = offline_app(
         Settings(experiment_api_token=token, **config),  # type: ignore[arg-type]
         database=FakeDependency(),
         redis=FakeDependency(),

@@ -20,7 +20,6 @@ from autoscholar.core.budget import BudgetedLLM, BudgetLimits
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.service import ExperimentService
 from autoscholar.llm import LLMProvider, LLMResult, ToolCall
-from autoscholar.main import create_app
 from autoscholar.orchestration.models import ReviewResult, TaskPlan
 from autoscholar.orchestration.repository import WorkflowRepository
 from autoscholar.orchestration.sandbox import BudgetedSandbox
@@ -29,6 +28,7 @@ from autoscholar.orchestration.service import (
     dependency_context,
     experiment_contract,
 )
+from tests.governance import offline_app
 from tests.test_agent_runner import ScriptedProvider, repository, response
 from tests.test_experiment_service import FakeExperimentSandbox, _artifact
 from tests.test_workflow_foundation import plan
@@ -233,7 +233,7 @@ async def test_autonomous_and_child_routes_require_token(tmp_path: Path) -> None
 
     provider = ScriptedProvider(script())
     service, engine = await workflow(tmp_path, provider, FakeExperimentSandbox())
-    app = create_app(
+    app = offline_app(
         Settings(experiment_api_token=SecretStr("workflow-test-token")),
         database=FakeDependency(),
         redis=FakeDependency(),

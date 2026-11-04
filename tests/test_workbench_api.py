@@ -8,9 +8,9 @@ from pydantic import SecretStr
 from autoscholar.agent.database_models import AgentTaskRow
 from autoscholar.core.budget import current_parent
 from autoscholar.core.config import Settings
-from autoscholar.main import create_app
 from autoscholar.orchestration.durable import DurableService
 from autoscholar.rag.repository import KnowledgeRepository
+from tests.governance import offline_app
 from tests.test_agent_runner import ScriptedProvider
 from tests.test_autonomous import script, workflow
 from tests.test_experiment_service import FakeExperimentSandbox
@@ -83,7 +83,7 @@ async def api(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
         assert child is not None
         child.metrics = {"total_tokens": 12}
         await session.commit()
-    app = create_app(
+    app = offline_app(
         Settings(
             experiment_api_token=SecretStr(TOKEN),
             llm_api_key=SecretStr("hidden-llm-key"),
@@ -223,7 +223,7 @@ async def test_facade_existing_projects_and_durable_routes(tmp_path: Path) -> No
     sandbox = FakeExperimentSandbox()
     service, engine = await workflow(tmp_path, provider, sandbox)
     knowledge = KnowledgeRepository(service.tasks.session_factory)
-    app = create_app(
+    app = offline_app(
         Settings(experiment_api_token=SecretStr(TOKEN)),
         database=FakeDependency(),
         redis=FakeDependency(),

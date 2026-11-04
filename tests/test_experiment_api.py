@@ -9,8 +9,8 @@ from autoscholar.agent.repository import AgentTaskRepository
 from autoscholar.coding.workspace import WorkspaceManager
 from autoscholar.core.config import Settings
 from autoscholar.experiment.artifacts import ArtifactManager
-from autoscholar.main import create_app
 from autoscholar.rag import database_models as rag_database_models  # noqa: F401
+from tests.governance import offline_app
 from tests.test_health import FakeDependency, FakeLLMProvider, FakeSandbox
 
 
@@ -42,7 +42,7 @@ async def test_experiment_artifact_api_requires_token_and_task_scope(tmp_path: P
     artifact = await artifact_manager.save(
         "task-a", experiment.id, "reports/report.md", b"# Result\n"
     )
-    app = create_app(
+    app = offline_app(
         Settings(experiment_api_token=SecretStr("long-test-token")),
         database=FakeDependency(),
         redis=FakeDependency(),

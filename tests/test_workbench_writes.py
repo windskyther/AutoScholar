@@ -8,10 +8,10 @@ from sqlalchemy import func, select
 
 from autoscholar.core.budget import BudgetLimits
 from autoscholar.core.config import Settings
-from autoscholar.main import create_app
 from autoscholar.rag.database_models import DocumentJobRow, DocumentRow
 from autoscholar.rag.repository import KnowledgeRepository
 from autoscholar.rag.storage import LocalDocumentStorage
+from tests.governance import offline_app
 from tests.test_agent_runner import ScriptedProvider
 from tests.test_autonomous import workflow
 from tests.test_experiment_service import FakeExperimentSandbox
@@ -48,7 +48,7 @@ async def api(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
             assert row is not None
             row.status = state
             await session.commit()
-    app = create_app(
+    app = offline_app(
         Settings(
             _env_file=None,  # type: ignore[call-arg]
             experiment_api_token=SecretStr("public-workbench-write-test"),

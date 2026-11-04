@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
+from autoscholar.core.admission import RequestLimit, default_request_limits
 from autoscholar.core.budget import BudgetLimits
 
 
@@ -29,6 +30,28 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     api_allowed_hosts: list[str] = Field(default_factory=lambda: ["*"])
     api_allowed_origins: list[str] = Field(default_factory=list)
+    api_request_limits: dict[str, RequestLimit] = Field(default_factory=default_request_limits)
+    api_json_max_bytes: int = Field(default=1_048_576, ge=1024, le=16_777_216)
+    api_multipart_overhead_bytes: int = Field(default=1_048_576, ge=1024, le=4_194_304)
+    api_response_max_bytes: int = Field(default=8_388_608, ge=1024, le=134_217_728)
+    api_body_timeout_seconds: float = Field(default=120, gt=0, le=600)
+    api_body_idle_seconds: float = Field(default=15, gt=0, le=60)
+    api_send_timeout_seconds: float = Field(default=15, gt=0, le=60)
+    api_sse_idle_seconds: float = Field(default=45, gt=0, le=120)
+    api_lease_seconds: float = Field(default=30, ge=3, le=120)
+    api_control_timeout_seconds: float = Field(default=3, gt=0, le=10)
+
+    @field_validator("api_request_limits", mode="before")
+    @classmethod
+    def default_admission_limits(cls, value: object) -> object:
+        return default_request_limits() if value is None else value
+
+    @field_validator("api_request_limits")
+    @classmethod
+    def complete_admission_limits(cls, limits: dict[str, RequestLimit]) -> dict[str, RequestLimit]:
+        if limits.keys() != default_request_limits().keys():
+            raise ValueError("API_REQUEST_LIMITS must specify every documented category")
+        return limits
 
     database_url: str = Field(
         default="postgresql+asyncpg://autoscholar:autoscholar@localhost:5432/autoscholar",

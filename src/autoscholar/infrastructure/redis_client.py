@@ -15,6 +15,10 @@ class RedisClient:
         ping_result = await cast(Awaitable[bool], self._client.ping())
         return bool(ping_result)
 
+    @property
+    def client(self) -> Redis:
+        return self._client
+
     async def get_json(self, key: str) -> Any | None:
         value = await self._client.get(key)
         if value is None:

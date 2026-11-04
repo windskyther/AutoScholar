@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from uuid import uuid4
 
+from autoscholar.core.audit import current_security_audit
 from autoscholar.core.rejections import LocalRequestRejected
 
 JournalHook = Callable[[str, str, bool], Awaitable[None]]
@@ -27,6 +28,9 @@ async def record_local_llm_rejection() -> None:
 async def external_operation(kind: str, *, operation_id: str | None = None) -> AsyncIterator[None]:
     hook = current_journal.get()
     operation_id = operation_id or str(uuid4())
+    audit = current_security_audit.get()
+    if audit is not None:
+        await audit(operation_id, kind, True)
     if hook is not None:
         await hook(operation_id, kind, True)
     try:
@@ -38,3 +42,5 @@ async def external_operation(kind: str, *, operation_id: str | None = None) -> A
     # An interrupted/failed request stays pending: its result cannot be assumed absent.
     if hook is not None:
         await hook(operation_id, kind, False)
+    if audit is not None:
+        await audit(operation_id, kind, False)

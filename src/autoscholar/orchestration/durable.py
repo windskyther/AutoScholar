@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from autoscholar.core.audit import AuditEvent, AuditSink
 from autoscholar.core.budget import BudgetExceeded, BudgetLimits, current_budget
 from autoscholar.core.errors import AppError
 from autoscholar.core.journal import current_journal, persist_budget
@@ -27,6 +28,7 @@ class DurableService:
         *,
         lease_seconds: int = 30,
         approval_threshold: int = 20000,
+        audit: AuditSink | None = None,
     ) -> None:
         self.service = service
         self.repository = DurableRepository(service.tasks.session_factory)
@@ -35,6 +37,7 @@ class DurableService:
         self.lease_seconds = lease_seconds
         self.approval_threshold = approval_threshold
         self.owner = str(uuid4())
+        self.audit = audit
 
     async def submit(self, payload: dict[str, Any], key: str) -> tuple[str, bool]:
         request = dict(payload)
@@ -130,6 +133,22 @@ class DurableService:
         run.budget.limits = run.budget.limits.bounded_by(self.service.limits)
 
         async def journal(call_id: str, kind: str, starting: bool) -> None:
+            if self.audit is not None and starting:
+                await self.audit.write(
+                    AuditEvent(
+                        id=str(uuid4()),
+                        request_id=self.owner,
+                        actor="workflow_worker",
+                        category="worker",
+                        method="EXECUTE",
+                        phase="tool_dispatch",
+                        outcome="pending",
+                        task_id=task_id,
+                        operation_id=call_id,
+                        action="external_tool",
+                        usage=dict(run.budget.used),
+                    )
+                )
             await self.repository.journal(
                 task_id,
                 self.owner,
