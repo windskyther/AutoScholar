@@ -30,6 +30,11 @@ attempts are retained separately; successful stacks remove their own containers 
 volumes. Application/static-image checks compare local secrets in memory and exclude
 environment files, private designs and runtime data from packaged project material.
 
+Main-based regression also exposed a pre-existing 40 ms wall-clock dependency in
+the SQL/SSE rotation test. Its stream clock is now controlled independently of SQL
+and asyncio, preserving heartbeat, newly committed event, rotation and disconnect
+assertions without requiring a fast disk. Production streaming behavior is unchanged.
+
 See [the production operating guide](../operations/production.md) for configuration,
 builds and repeatable isolated checks. This module does not deploy the normal app,
 alter historical evaluation outcomes, or accept Phase 11 as a whole. Full supply-chain

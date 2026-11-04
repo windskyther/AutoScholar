@@ -6,6 +6,7 @@ import io
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, patch
 
@@ -279,7 +280,14 @@ class Connection:
 
 async def test_live_stream_heartbeat_new_commits_rotation_and_disconnect(
     context: tuple[httpx.AsyncClient, DurableService],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    clock = [0.0]
+    # Database commits can exceed 40 ms on a busy host. Control only this stream's
+    # clock, leaving asyncio and the real SQL transaction timings untouched.
+    monkeypatch.setattr(
+        "autoscholar.api.workbench_events.time", SimpleNamespace(monotonic=lambda: clock[0])
+    )
     client, durable = context
     task = client.headers["X-Fixture-Task"]
     repository = WorkbenchRepository(durable.repository.sessions)
@@ -297,7 +305,11 @@ async def test_live_stream_heartbeat_new_commits_rotation_and_disconnect(
     async with durable.repository.sessions() as session:
         await durable.repository.event(session, task, "budget_saved")
         await session.commit()
-    output = "".join([chunk async for chunk in stream])
+    output = await anext(stream)
+    output += await anext(stream)
+    clock[0] = 1
+    async with asyncio.timeout(5):
+        output += "".join([chunk async for chunk in stream])
     assert ": heartbeat" in output and "id: 6\n" in output and '"reason":"rotate"' in output
     connection.disconnected = True
     disconnected = event_stream(repository, cast(Request, connection), first)
