@@ -42,6 +42,7 @@ from autoscholar.orchestration.models import (
     ReviewResult,
     TaskPlan,
 )
+from autoscholar.orchestration.protocol_feedback import revision_feedback, schema_feedback
 from autoscholar.orchestration.repository import WorkflowRepository
 from autoscholar.orchestration.review_facts import (
     contradicted_issue,
@@ -332,7 +333,10 @@ class AutonomousService:
                     "non_finite_number",
                     "not_object",
                 }:
-                    reason = f"invalid argument JSON: {exc.validation_reason}"
+                    reason = (
+                        f"invalid argument JSON: {exc.validation_reason}; resend exactly one "
+                        "JSON object without trailing text, duplicate keys, wrappers or tags"
+                    )
                 elif exc.validation_reason == "workflow_plan_contract":
                     reason = (
                         "plan must follow the caller's required step types and dependencies; "
@@ -348,14 +352,13 @@ class AutonomousService:
                         return parsed
                     except ValidationError as exc:
                         # Explain fields/types without replaying arbitrary model input.
-                        reason = "schema errors: " + json.dumps(
-                            [
-                                {"location": error["loc"], "type": error["type"]}
-                                for error in exc.errors(include_input=False)[:5]
-                            ]
-                        )
+                        reason = schema_feedback(schema, exc)
                     except WorkflowError as exc:
-                        reason = exc.message
+                        reason = (
+                            revision_feedback(exc.message)
+                            if name == "submit_plan_revision"
+                            else exc.message
+                        )
                 else:
                     reason = "exactly one native call to the supplied function was required"
             messages.append(
@@ -866,6 +869,11 @@ class AutonomousService:
                 "experiment_only": bool(retry_steps),
                 "rerun_steps": sorted(retry_steps),
                 "preserve_entire_plan": bool(retry_steps),
+                "code_repairs_remaining": max(
+                    0, run.budget.limits.code_repairs - run.budget.used.get("code_repairs", 0)
+                ),
+                "retain_goal_exactly": True,
+                "retained_step_types": {step.id: step.type for step in run.plan.steps},
             },
         }
         if retry_steps:

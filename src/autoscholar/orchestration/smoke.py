@@ -144,6 +144,7 @@ async def run_smoke(
     settings = settings.model_copy(update={"experiment_api_token": SecretStr(token)})
     client = SandboxClient(
         settings.sandbox_manager_url,
+        token=settings.sandbox_manager_token,
         timeout_seconds=settings.experiment_timeout_seconds + 10,
     )
     fault = (

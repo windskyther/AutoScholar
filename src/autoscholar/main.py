@@ -176,6 +176,7 @@ def create_app(
         sandbox_executor
         or SandboxClient(
             resolved_settings.sandbox_manager_url,
+            token=resolved_settings.sandbox_manager_token,
             timeout_seconds=max(
                 resolved_settings.sandbox_timeout_seconds,
                 resolved_settings.experiment_timeout_seconds,

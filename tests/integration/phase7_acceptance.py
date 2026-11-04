@@ -34,7 +34,9 @@ async def main(prepare: bool, task_id: str | None) -> None:
         }
     )
     sandbox = SandboxClient(
-        settings.sandbox_manager_url, timeout_seconds=settings.experiment_timeout_seconds + 10
+        settings.sandbox_manager_url,
+        timeout_seconds=settings.experiment_timeout_seconds + 10,
+        token=settings.sandbox_manager_token,
     )
     fault = FaultOnceSandbox(sandbox)
     app = create_app(settings, llm_provider=OfflineCoordinator(), sandbox_executor=fault)

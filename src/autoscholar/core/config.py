@@ -11,6 +11,7 @@ from sqlalchemy.exc import ArgumentError
 
 from autoscholar.core.admission import RequestLimit, default_request_limits
 from autoscholar.core.budget import BudgetLimits
+from autoscholar.core.service_credentials import sandbox_credential
 
 
 class Settings(BaseSettings):
@@ -222,6 +223,35 @@ class Settings(BaseSettings):
     workspace_max_artifact_file_bytes: int = Field(default=16_777_216, ge=1, le=104_857_600)
     workspace_max_artifact_bytes: int = Field(default=67_108_864, ge=1, le=1_073_741_824)
     sandbox_manager_url: str = "http://sandbox-manager:8090"
+    sandbox_manager_token: SecretStr | None = None
+    sandbox_manager_token_file: Path | None = None
+
+    @field_validator("sandbox_manager_token_file", mode="before")
+    @classmethod
+    def empty_sandbox_secret_file(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @model_validator(mode="after")
+    def validate_sandbox_credential(self) -> "Settings":
+        self.sandbox_manager_token = sandbox_credential(
+            self.sandbox_manager_token, self.sandbox_manager_token_file
+        )
+        if self.sandbox_manager_token is not None:
+            value = self.sandbox_manager_token.get_secret_value()
+            for name in (
+                "experiment_api_token",
+                "llm_api_key",
+                "embedding_api_key",
+                "tavily_api_key",
+                "semantic_scholar_api_key",
+                "qdrant_api_key",
+                "mcp_service_token",
+            ):
+                other = getattr(self, name)
+                if other and other.get_secret_value() == value:
+                    raise ValueError("Sandbox credentials must be distinct from other credentials")
+        return self
+
     sandbox_timeout_seconds: int = Field(default=300, ge=1, le=600)
     sandbox_max_repairs: int = Field(default=3, ge=0, le=10)
     experiment_timeout_seconds: int = Field(default=600, ge=30, le=600)

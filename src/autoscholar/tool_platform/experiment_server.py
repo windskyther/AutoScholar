@@ -8,7 +8,7 @@ from typing import Any
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -17,6 +17,7 @@ from starlette.routing import Route
 
 from autoscholar.coding.sandbox import SandboxClient
 from autoscholar.coding.workspace import WorkspaceManager
+from autoscholar.core.service_credentials import sandbox_credential
 from autoscholar.infrastructure import Database
 from autoscholar.tool_platform.artifact_spool import ArtifactSpool
 from autoscholar.tool_platform.experiment_contracts import EXECUTE_INPUT
@@ -27,14 +28,30 @@ from autoscholar.tool_platform.research_server import ServiceAuthentication, inv
 
 
 class ExperimentServerSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=None, extra="ignore")
-    database_url: str
+    model_config = SettingsConfigDict(env_file=None, extra="ignore", hide_input_in_errors=True)
+    database_url: str = Field(repr=False)
     mcp_service_token: SecretStr
     workspace_root: Path = Path("/data/workspaces")
     mcp_artifact_root: Path = Path("/data/mcp-artifacts")
     sandbox_manager_url: str = "http://sandbox-manager:8090"
+    sandbox_manager_token: SecretStr | None = None
+    sandbox_manager_token_file: Path | None = None
     workflow_approval_threshold: int = Field(default=20000, ge=0)
     mcp_allowed_hosts: list[str] = ["experiment-mcp:8094", "localhost:*", "127.0.0.1:*"]
+
+    @field_validator("sandbox_manager_token_file", mode="before")
+    @classmethod
+    def empty_manager_file(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @model_validator(mode="after")
+    def manager_credential(self) -> "ExperimentServerSettings":
+        self.sandbox_manager_token = sandbox_credential(
+            self.sandbox_manager_token, self.sandbox_manager_token_file
+        )
+        if self.sandbox_manager_token == self.mcp_service_token:
+            raise ValueError("Sandbox manager and MCP credentials must be distinct")
+        return self
 
 
 def create_experiment_app(
@@ -143,7 +160,11 @@ def create_app() -> Starlette:
         ExperimentExecutionService(
             OperationStore(database.session_factory, "experiment"),
             WorkspaceManager(settings.workspace_root),
-            SandboxClient(settings.sandbox_manager_url, timeout_seconds=620),
+            SandboxClient(
+                settings.sandbox_manager_url,
+                timeout_seconds=620,
+                token=settings.sandbox_manager_token,
+            ),
             ArtifactSpool(settings.mcp_artifact_root),
             approval_threshold=settings.workflow_approval_threshold,
         ),

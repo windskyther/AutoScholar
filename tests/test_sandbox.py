@@ -10,7 +10,9 @@ from autoscholar.coding.sandbox import (
     SandboxRunRequest,
     SandboxRunResult,
 )
+from autoscholar.sandbox.access import ManagerSettings
 from autoscholar.sandbox.manager import create_manager_app
+from tests.sandbox_credentials import AUTH, TOKEN_SECRET
 
 
 class FakeSandbox:
@@ -48,9 +50,7 @@ def test_sandbox_request_rejects_paths_and_shell_injection() -> None:
             raise AssertionError(f"unsafe path accepted: {path}")
 
     try:
-        SandboxRunRequest(
-            task_id="task-1", action="run_shell", path="sh", files={"main.py": ""}
-        )
+        SandboxRunRequest(task_id="task-1", action="run_shell", path="sh", files={"main.py": ""})
     except ValueError:
         pass
     else:
@@ -71,7 +71,10 @@ def test_sandbox_request_rejects_paths_and_shell_injection() -> None:
 
 def test_manager_exposes_only_validated_internal_execution() -> None:
     fake = FakeSandbox()
-    with TestClient(create_manager_app(fake)) as client:
+    with TestClient(
+        create_manager_app(fake, settings=ManagerSettings(sandbox_manager_token=TOKEN_SECRET)),
+        headers=AUTH,
+    ) as client:
         health = client.get("/internal/health")
         result = client.post(
             "/internal/v1/run",
@@ -136,9 +139,7 @@ def test_container_config_has_required_isolation_controls() -> None:
 
 def test_source_archive_contains_only_workspace_source(tmp_path: Path) -> None:
     del tmp_path
-    archive = DockerSandboxExecutor._source_archive(
-        {"pkg/model.py": "class Model:\n    pass\n"}
-    )
+    archive = DockerSandboxExecutor._source_archive({"pkg/model.py": "class Model:\n    pass\n"})
     assert b".env" not in archive
     assert b".autoscholar-source-ready" not in archive
     assert b"source/pkg/model.py" in archive
@@ -152,6 +153,7 @@ def test_artifact_archive_requires_one_regular_file() -> None:
         info.size = len(data)
         archive.addfile(info, io.BytesIO(data))
 
-    assert DockerSandboxExecutor._read_archive_file(
-        buffer.getvalue(), "metrics.json"
-    ) == b'{"accuracy": 0.9}\n'
+    assert (
+        DockerSandboxExecutor._read_archive_file(buffer.getvalue(), "metrics.json")
+        == b'{"accuracy": 0.9}\n'
+    )

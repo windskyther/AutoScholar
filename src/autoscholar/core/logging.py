@@ -2,12 +2,12 @@ import logging
 import logging.config
 
 import structlog
+from pydantic_settings import BaseSettings
 
-from autoscholar.core.config import Settings
 from autoscholar.core.redaction import configure_redaction, safe_log_event
 
 
-def configure_logging(log_level: str, *, settings: Settings | None = None) -> None:
+def configure_logging(log_level: str, *, settings: BaseSettings | None = None) -> None:
     """Configure standard logging and structlog for JSON output."""
 
     if settings is not None:

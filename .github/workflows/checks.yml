@@ -76,6 +76,7 @@ jobs:
           uv run --no-sync pytest -q --tb=short --show-capture=no
           tests/test_config.py tests/test_experiment_auth.py tests/test_api_access.py
           tests/test_request_governance.py tests/test_security_redaction.py
+          tests/test_sandbox.py tests/test_sandbox_security.py tests/test_phase11_replan_security.py
           tests/test_coding_workspace.py tests/test_filesystem_mcp.py
           --basetemp=data/ci-tmp
 

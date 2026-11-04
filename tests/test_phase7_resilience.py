@@ -97,7 +97,10 @@ async def test_manager_disconnect_cancels_execution_and_waits_for_cleanup() -> N
                 self.cleaned.set()
 
     sandbox = HeldSandbox()
-    app = create_manager_app(sandbox)
+    from autoscholar.sandbox.access import ManagerSettings
+    from tests.sandbox_credentials import TOKEN, TOKEN_SECRET
+
+    app = create_manager_app(sandbox, settings=ManagerSettings(sandbox_manager_token=TOKEN_SECRET))
     request_body = b'{"task_id":"disconnect","action":"run_pytest","files":{}}'
     sent_body = False
     messages: list[dict[str, Any]] = []
@@ -124,7 +127,10 @@ async def test_manager_disconnect_cancels_execution_and_waits_for_cleanup() -> N
                 "path": "/internal/v1/run",
                 "raw_path": b"/internal/v1/run",
                 "query_string": b"",
-                "headers": [(b"content-type", b"application/json")],
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"authorization", ("Bearer " + TOKEN).encode()),
+                ],
                 "client": ("127.0.0.1", 1234),
                 "server": ("test", 80),
                 "root_path": "",

@@ -3,18 +3,21 @@ import base64
 import hashlib
 import io
 import json
+import re
 import struct
 import tarfile
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
-from pydantic import BaseModel, Field, field_validator, model_validator
+import structlog
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 SandboxAction = Literal["static_check", "run_python", "run_pytest", "run_shell"]
+logger = structlog.get_logger(__name__)
 
 
 class SandboxError(RuntimeError):
@@ -25,6 +28,7 @@ class SandboxError(RuntimeError):
 
 
 class SandboxRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     task_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
     action: SandboxAction
     path: str | None = Field(default=None, max_length=500)
@@ -83,6 +87,7 @@ class SandboxRunRequest(BaseModel):
         pure = PurePosixPath(normalized)
         if (
             not normalized
+            or any(ord(character) < 32 or ord(character) == 127 for character in path)
             or pure.is_absolute()
             or normalized.startswith("./")
             or ":" in pure.parts[0]
@@ -127,10 +132,47 @@ class SandboxExecutor(Protocol):
 
 
 class SandboxClient:
-    def __init__(self, base_url: str, *, timeout_seconds: float = 310) -> None:
-        self._client = httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=timeout_seconds)
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        token: SecretStr | None = None,
+        timeout_seconds: float = 310,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        parsed = urlsplit(base_url)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+            or any(character.isspace() or character == "\\" for character in base_url)
+        ):
+            raise ValueError("Sandbox manager requires a service HTTP(S) origin")
+        self._token = token.get_secret_value() if token else ""
+        if self._token and (
+            not 32 <= len(self._token) <= 4096
+            or not self._token.isascii()
+            or any(not 33 <= ord(char) <= 126 for char in self._token)
+        ):
+            raise ValueError("Sandbox manager requires a bounded service credential")
+        self._client = httpx.AsyncClient(
+            base_url=base_url.rstrip("/"),
+            timeout=timeout_seconds,
+            trust_env=False,
+            follow_redirects=False,
+            transport=transport,
+            headers={"Authorization": "Bearer " + self._token} if self._token else {},
+        )
 
     async def run(self, request: SandboxRunRequest) -> SandboxRunResult:
+        if not self._token:
+            raise SandboxError(
+                "sandbox_auth_not_configured", "Sandbox service authentication is required"
+            )
         try:
             response = await self._client.post("/internal/v1/run", json=request.model_dump())
             response.raise_for_status()
@@ -141,6 +183,8 @@ class SandboxClient:
             ) from exc
 
     async def health(self) -> SandboxHealth:
+        if not self._token:
+            return SandboxHealth(status="error", engine=False, image=False, mnist_dataset=False)
         try:
             response = await self._client.get("/internal/health", timeout=3)
             response.raise_for_status()
@@ -183,32 +227,46 @@ class DockerSandboxExecutor:
         self._dataset_volume = dataset_volume
         self._dataset_ready_file = dataset_ready_file
         self._limits = limits or DockerLimits()
-        self._resource_labels = (
-            {"autoscholar.evaluation": evaluation_owner} if evaluation_owner else {}
-        )
+        self._resource_labels = {
+            "autoscholar.sandbox": "true",
+            "autoscholar.instance": uuid4().hex,
+        } | ({"autoscholar.evaluation": evaluation_owner} if evaluation_owner else {})
 
     async def run(self, request: SandboxRunRequest) -> SandboxRunResult:
         started = asyncio.get_running_loop().time()
         container_id: str | None = None
         loader_id: str | None = None
         volume_name = f"autoscholar-workspace-{uuid4().hex}"
+        loader_name = f"autoscholar-loader-{uuid4().hex[:16]}"
+        runner_name = f"autoscholar-{request.task_id[:24]}-{uuid4().hex[:16]}"
+        labels = {**self._resource_labels, "autoscholar.operation": uuid4().hex}
+        loader_ref: str | None = None
+        runner_ref: str | None = None
         timed_out = False
         try:
             volume_response = await self._client.post(
                 "/volumes/create",
                 json={
                     "Name": volume_name,
-                    "Labels": {"autoscholar.temporary": "true", **self._resource_labels},
+                    "Labels": {"autoscholar.temporary": "true", **labels},
                 },
             )
             self._raise_engine_error(volume_response)
+            if not await self._owned("volume", volume_name, labels):
+                raise SandboxError(
+                    "sandbox_ownership_missing", "Workspace ownership was not verified"
+                )
+            loader_ref = loader_name
             loader_response = await self._client.post(
                 "/containers/create",
-                params={"name": f"autoscholar-loader-{uuid4().hex[:12]}"},
-                json=self._loader_config(volume_name),
+                params={"name": loader_name},
+                json={**self._loader_config(volume_name), "Labels": labels},
             )
             self._raise_engine_error(loader_response)
-            loader_id = str(loader_response.json()["Id"])
+            loader_id = self._container_id(loader_response.json()["Id"])
+            loader_ref = loader_id
+            if not await self._owned("container", loader_id, labels):
+                raise SandboxError("sandbox_ownership_missing", "Loader ownership was not verified")
             loader_start = await self._client.post(f"/containers/{loader_id}/start")
             self._raise_engine_error(loader_start)
             archive = self._source_archive(request.files)
@@ -219,18 +277,20 @@ class DockerSandboxExecutor:
                 headers={"Content-Type": "application/x-tar"},
             )
             self._raise_engine_error(archive_response)
-            loader_delete = await self._client.delete(
-                f"/containers/{loader_id}", params={"force": "true", "v": "false"}
-            )
-            self._raise_engine_error(loader_delete)
+            await self._remove_owned("container", loader_id, labels)
             loader_id = None
+            loader_ref = None
+            runner_ref = runner_name
             response = await self._client.post(
                 "/containers/create",
-                params={"name": f"autoscholar-{request.task_id[:24]}-{uuid4().hex[:8]}"},
-                json=self._container_config(request, volume_name),
+                params={"name": runner_name},
+                json={**self._container_config(request, volume_name), "Labels": labels},
             )
             self._raise_engine_error(response)
-            container_id = str(response.json()["Id"])
+            container_id = self._container_id(response.json()["Id"])
+            runner_ref = container_id
+            if not await self._owned("container", container_id, labels):
+                raise SandboxError("sandbox_ownership_missing", "Runner ownership was not verified")
             start_response = await self._client.post(f"/containers/{container_id}/start")
             self._raise_engine_error(start_response)
             try:
@@ -275,19 +335,73 @@ class DockerSandboxExecutor:
                 "sandbox_execution_failed", "The Docker sandbox could not execute the task"
             ) from exc
         finally:
-            if loader_id is not None:
-                with suppress(httpx.HTTPError):
-                    await self._client.delete(
-                        f"/containers/{loader_id}",
-                        params={"force": "true", "v": "false"},
-                    )
-            if container_id is not None:
-                with suppress(httpx.HTTPError):
-                    await self._client.delete(
-                        f"/containers/{container_id}", params={"force": "true", "v": "true"}
-                    )
-            with suppress(httpx.HTTPError):
-                await self._client.delete(f"/volumes/{volume_name}", params={"force": "true"})
+            cleanup = asyncio.create_task(
+                self._cleanup(loader_ref, runner_ref, volume_name, labels)
+            )
+            cancelled = False
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    cancelled = True
+            await cleanup
+            if cancelled:
+                raise asyncio.CancelledError
+
+    @staticmethod
+    def _container_id(value: object) -> str:
+        if not isinstance(value, str) or re.fullmatch(r"[a-f0-9]{64}", value) is None:
+            raise SandboxError("sandbox_object_invalid", "Invalid Docker object identity")
+        return value
+
+    async def _owned(self, kind: str, name: str, labels: dict[str, str]) -> bool:
+        path = f"/containers/{name}/json" if kind == "container" else f"/volumes/{name}"
+        response = await self._client.get(path, timeout=3)
+        if response.status_code == 404:
+            return False
+        self._raise_engine_error(response)
+        record = response.json()
+        if not isinstance(record, dict):
+            raise SandboxError("sandbox_ownership_mismatch", "Invalid Docker ownership record")
+        config = record.get("Config")
+        observed = (
+            config.get("Labels")
+            if kind == "container" and isinstance(config, dict)
+            else (record.get("Labels") if kind == "volume" else None)
+        )
+        if not isinstance(observed, dict) or any(
+            observed.get(key) != value for key, value in labels.items()
+        ):
+            raise SandboxError(
+                "sandbox_ownership_mismatch", "Docker object ownership was not verified"
+            )
+        return True
+
+    async def _remove_owned(self, kind: str, name: str, labels: dict[str, str]) -> None:
+        if not await self._owned(kind, name, labels):
+            return
+        path = f"/containers/{name}" if kind == "container" else f"/volumes/{name}"
+        response = await self._client.delete(
+            path, params={"force": "true", "v": "false"} if kind == "container" else {}, timeout=3
+        )
+        if response.status_code != 404:
+            self._raise_engine_error(response)
+
+    async def _cleanup(
+        self, loader: str | None, runner: str | None, volume: str, labels: dict[str, str]
+    ) -> None:
+        for kind, name in (("container", loader), ("container", runner), ("volume", volume)):
+            if name is None:
+                continue
+            try:
+                async with asyncio.timeout(7):
+                    await self._remove_owned(kind, name, labels)
+            except (httpx.HTTPError, SandboxError, TimeoutError, ValueError):
+                logger.error(
+                    "sandbox_cleanup_incomplete",
+                    resource_type=kind,
+                    operation_id=labels["autoscholar.operation"],
+                )
 
     async def health(self) -> SandboxHealth:
         engine = image = False
@@ -357,6 +471,11 @@ class DockerSandboxExecutor:
             ],
             "NetworkDisabled": True,
             "HostConfig": {
+                "NetworkMode": "none",
+                "LogConfig": {
+                    "Type": "local",
+                    "Config": {"max-size": "1m", "max-file": "1", "compress": "false"},
+                },
                 "ReadonlyRootfs": True,
                 "CapDrop": ["ALL"],
                 "SecurityOpt": ["no-new-privileges"],
@@ -393,6 +512,11 @@ class DockerSandboxExecutor:
             "Env": ["HOME=/tmp", "PYTHONIOENCODING=utf-8"],
             "NetworkDisabled": True,
             "HostConfig": {
+                "NetworkMode": "none",
+                "LogConfig": {
+                    "Type": "local",
+                    "Config": {"max-size": "1m", "max-file": "1", "compress": "false"},
+                },
                 "ReadonlyRootfs": False,
                 "CapDrop": ["ALL"],
                 "SecurityOpt": ["no-new-privileges"],
@@ -429,6 +553,8 @@ class DockerSandboxExecutor:
 
     @staticmethod
     def _source_archive(files: dict[str, str]) -> bytes:
+        for path in files:
+            SandboxRunRequest._validate_relative_path(path)
         buffer = io.BytesIO()
         directories: set[PurePosixPath] = {PurePosixPath("source")}
         for path in files:
@@ -453,14 +579,24 @@ class DockerSandboxExecutor:
         return buffer.getvalue()
 
     async def _logs(self, container_id: str) -> tuple[str, str, bool]:
-        response = await self._client.get(
+        maximum = self._limits.max_output_bytes
+        raw_limit = 2 * maximum + 65_536
+        data = bytearray()
+        capped = False
+        async with self._client.stream(
+            "GET",
             f"/containers/{container_id}/logs",
             params={"stdout": "true", "stderr": "true"},
-        )
-        self._raise_engine_error(response)
-        stdout, stderr = self._decode_docker_stream(response.content)
-        maximum = self._limits.max_output_bytes
-        truncated = len(stdout) > maximum or len(stderr) > maximum
+        ) as response:
+            self._raise_engine_error(response)
+            async for chunk in response.aiter_bytes(chunk_size=65_536):
+                available = raw_limit - len(data)
+                data.extend(chunk[:available])
+                if len(chunk) >= available:
+                    capped = True
+                    break
+        stdout, stderr = self._decode_docker_stream(bytes(data))
+        truncated = capped or len(stdout) > maximum or len(stderr) > maximum
         return (
             stdout[:maximum].decode("utf-8", errors="replace"),
             stderr[:maximum].decode("utf-8", errors="replace"),
@@ -489,7 +625,7 @@ class DockerSandboxExecutor:
                     )
                 archive_buffer = bytearray()
                 archive_limit = self._limits.max_artifact_file_bytes + 1_048_576
-                async for chunk in response.aiter_bytes():
+                async for chunk in response.aiter_bytes(chunk_size=65_536):
                     archive_buffer.extend(chunk)
                     if len(archive_buffer) > archive_limit:
                         raise SandboxError(
@@ -523,14 +659,26 @@ class DockerSandboxExecutor:
         archive_data: bytes, expected_path: str, max_bytes: int = 16_777_216
     ) -> bytes:
         try:
-            with tarfile.open(fileobj=io.BytesIO(archive_data), mode="r:*") as archive:
-                members = archive.getmembers()
+            if len(archive_data) > max_bytes + 1_048_576:
+                raise SandboxError(
+                    "sandbox_artifact_too_large", "Artifact archive exceeds size limit"
+                )
+            with tarfile.open(fileobj=io.BytesIO(archive_data), mode="r:") as archive:
+                members: list[tarfile.TarInfo] = []
+                for member in archive:
+                    if len(members) >= 32:
+                        raise SandboxError("sandbox_artifact_invalid", "Excessive archive members")
+                    name = member.name.rstrip("/")
+                    SandboxRunRequest._validate_relative_path(name)
+                    if not (member.isdir() or member.isfile()) or member.sparse is not None:
+                        raise SandboxError("sandbox_artifact_invalid", "Unsupported archive member")
+                    members.append(member)
                 regular = [member for member in members if member.isfile()]
                 if len(regular) != 1 or any(member.issym() or member.islnk() for member in members):
                     raise SandboxError(
                         "sandbox_artifact_invalid", f"Invalid artifact archive: {expected_path}"
                     )
-                if PurePosixPath(regular[0].name).name != PurePosixPath(expected_path).name:
+                if regular[0].name not in {expected_path, PurePosixPath(expected_path).name}:
                     raise SandboxError(
                         "sandbox_artifact_invalid",
                         f"Artifact archive path mismatch: {expected_path}",
@@ -546,7 +694,7 @@ class DockerSandboxExecutor:
                         "sandbox_artifact_invalid", f"Artifact could not be read: {expected_path}"
                     )
                 return extracted.read(max_bytes + 1)
-        except tarfile.TarError as exc:
+        except (tarfile.TarError, ValueError) as exc:
             raise SandboxError(
                 "sandbox_artifact_invalid", f"Invalid artifact archive: {expected_path}"
             ) from exc
@@ -570,8 +718,4 @@ class DockerSandboxExecutor:
     @staticmethod
     def _raise_engine_error(response: httpx.Response) -> None:
         if response.status_code >= 400:
-            try:
-                detail = str(response.json().get("message") or "Docker Engine request failed")
-            except (ValueError, AttributeError):
-                detail = "Docker Engine request failed"
-            raise SandboxError("sandbox_engine_error", detail[:500])
+            raise SandboxError("sandbox_engine_error", "Docker Engine request failed")

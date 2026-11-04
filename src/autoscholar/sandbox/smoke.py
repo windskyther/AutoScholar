@@ -4,10 +4,13 @@ import hashlib
 from uuid import uuid4
 
 from autoscholar.coding.sandbox import SandboxClient, SandboxRunRequest
+from autoscholar.core.config import get_settings
 
 
 async def main() -> None:
-    client = SandboxClient("http://127.0.0.1:8090", timeout_seconds=30)
+    client = SandboxClient(
+        "http://127.0.0.1:8090", timeout_seconds=30, token=get_settings().sandbox_manager_token
+    )
     task_id = f"smoke-{uuid4().hex[:12]}"
     try:
         isolation = await client.run(

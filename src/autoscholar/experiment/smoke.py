@@ -20,6 +20,7 @@ async def run_smoke() -> None:
     database = Database(settings.database_url)
     sandbox = SandboxClient(
         settings.sandbox_manager_url,
+        token=settings.sandbox_manager_token,
         timeout_seconds=settings.experiment_timeout_seconds + 10,
     )
     task_id = str(uuid4())
@@ -45,9 +46,7 @@ async def run_smoke() -> None:
         repair=None,
     )
     try:
-        await repository.create_task(
-            task_id=task_id, objective=objective, mode="experiment"
-        )
+        await repository.create_task(task_id=task_id, objective=objective, mode="experiment")
         try:
             result = await service.run(
                 task_id=task_id,
@@ -95,8 +94,7 @@ async def run_smoke() -> None:
                     "status": experiment.status,
                     "winner": experiment.metrics["winner"],
                     "test_accuracy": {
-                        run["model"]: run["test_accuracy"]
-                        for run in experiment.metrics["runs"]
+                        run["model"]: run["test_accuracy"] for run in experiment.metrics["runs"]
                     },
                     "sandbox_runs": result.sandbox_runs,
                     "artifacts": len(saved),

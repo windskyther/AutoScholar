@@ -34,6 +34,7 @@ services:
       WORKSPACE_ROOT: /data/workspaces
       MCP_ARTIFACT_ROOT: /data/mcp-artifacts
       SANDBOX_MANAGER_URL: http://sandbox-manager:8090
+      SANDBOX_MANAGER_TOKEN: ${SANDBOX_MANAGER_TOKEN:-}
       WORKFLOW_APPROVAL_THRESHOLD: ${WORKFLOW_APPROVAL_THRESHOLD:-20000}
     volumes:
       - workspace_data:/data/workspaces:ro

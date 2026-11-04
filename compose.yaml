@@ -61,6 +61,7 @@ services:
       WORKSPACE_MAX_ARTIFACT_FILE_BYTES: ${WORKSPACE_MAX_ARTIFACT_FILE_BYTES:-16777216}
       WORKSPACE_MAX_ARTIFACT_BYTES: ${WORKSPACE_MAX_ARTIFACT_BYTES:-67108864}
       SANDBOX_MANAGER_URL: http://sandbox-manager:8090
+      SANDBOX_MANAGER_TOKEN: ${SANDBOX_MANAGER_TOKEN:-}
       SANDBOX_TIMEOUT_SECONDS: ${SANDBOX_TIMEOUT_SECONDS:-300}
       SANDBOX_MAX_REPAIRS: ${SANDBOX_MAX_REPAIRS:-3}
       EXPERIMENT_TIMEOUT_SECONDS: ${EXPERIMENT_TIMEOUT_SECONDS:-600}
@@ -201,6 +202,10 @@ services:
       - "8090"
     environment:
       SANDBOX_IMAGE: autoscholar-python-sandbox:phase4
+      SANDBOX_MANAGER_TOKEN: ${SANDBOX_MANAGER_TOKEN:-}
+      SANDBOX_MANAGER_MAX_CONCURRENT: ${SANDBOX_MANAGER_MAX_CONCURRENT:-2}
+      SANDBOX_MANAGER_MAX_BODY_BYTES: ${SANDBOX_MANAGER_MAX_BODY_BYTES:-16777216}
+      SANDBOX_ALLOWED_ACTIONS: '${SANDBOX_ALLOWED_ACTIONS:-["static_check","run_python","run_pytest","run_shell"]}'
       SANDBOX_DATASET_VOLUME: autoscholar_mnist_data
       SANDBOX_DATASET_READY_FILE: /datasets/mnist/.autoscholar-ready
       SANDBOX_MEMORY_BYTES: ${SANDBOX_MEMORY_BYTES:-4294967296}
@@ -224,7 +229,7 @@ services:
         - -c
         - >-
           import urllib.request;
-          urllib.request.urlopen('http://localhost:8090/internal/health', timeout=3)
+          urllib.request.urlopen('http://localhost:8090/health/live', timeout=3)
       interval: 10s
       timeout: 5s
       retries: 10

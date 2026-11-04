@@ -6,9 +6,8 @@ from typing import Any
 from urllib.parse import quote
 
 from pydantic import SecretStr
+from pydantic_settings import BaseSettings
 from sqlalchemy.engine import make_url
-
-from autoscholar.core.config import Settings
 
 _secrets: tuple[str, ...] = ()
 _sensitive = re.compile(
@@ -18,11 +17,11 @@ _url = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s\"'<>]+")
 _bearer = re.compile(r"\bBearer\s+[^\s,;\"']+", re.I)
 
 
-def configure_redaction(settings: Settings) -> None:
+def configure_redaction(settings: BaseSettings) -> None:
     global _secrets
     values = [
         value.get_secret_value()
-        for name in Settings.model_fields
+        for name in type(settings).model_fields
         if isinstance(value := getattr(settings, name), SecretStr)
     ]
     for field in ("database_url", "redis_url"):
