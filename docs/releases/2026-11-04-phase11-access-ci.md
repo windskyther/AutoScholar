@@ -37,6 +37,15 @@ initial fixture startup is retained; the final fixture probe uses public
 liveness with a bounded cold-start allowance. No normal services, real secrets,
 runtime records or design documents were changed or published.
 
+The first hosted Checks run passed Windows, but exposed Linux-only mypy issues
+in Git process cleanup and the evaluation worker's mixed asynchronous result
+types, plus a browser test with a hardcoded Windows drive. Platform-aware
+narrowing, explicit waiter/result types and a real test-file-relative path fix
+these without weakening checks. Local Linux-target mypy and 60 focused Git/eval
+tests pass, along with the corrected filesystem-denial browser case. The original
+[failed hosted run](https://github.com/windskyther/AutoScholar/actions/runs/41769557139)
+is retained separately from subsequent checks.
+
 This batch is independently integrable API hardening and a CI foundation.
 Phase 11 still requires request limits/audit, sandbox control-plane hardening,
 production ingress/images, complete release gates, backup/restore and final

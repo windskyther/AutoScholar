@@ -5,7 +5,13 @@ import os
 import re
 import sys
 
-from autoscholar.coding.sandbox import DockerLimits, DockerSandboxExecutor, SandboxRunRequest
+from autoscholar.coding.sandbox import (
+    DockerLimits,
+    DockerSandboxExecutor,
+    SandboxHealth,
+    SandboxRunRequest,
+    SandboxRunResult,
+)
 from autoscholar.evaluation.datasets import decode_json
 
 MAX_REQUEST_BYTES = 12 * 1024 * 1024
@@ -53,6 +59,7 @@ async def serve() -> int:
 
     loop.add_reader(sys.stdin.fileno(), eof)
     try:
+        execution: asyncio.Task[SandboxHealth | SandboxRunResult]
         if payload.keys() == {"operation"} and payload["operation"] == "health":
             execution = asyncio.create_task(executor.health())
         elif payload.keys() == {"operation", "request"} and payload["operation"] == "run":
@@ -62,9 +69,11 @@ async def serve() -> int:
         else:
             raise ValueError("Unsupported worker operation")
         try:
-            done, _ = await asyncio.wait(
-                {execution, disconnected}, return_when=asyncio.FIRST_COMPLETED
-            )
+            waiting: set[asyncio.Task[SandboxHealth | SandboxRunResult] | asyncio.Future[None]] = {
+                execution,
+                disconnected,
+            }
+            done, _ = await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
             if execution not in done:
                 execution.cancel()
                 await asyncio.gather(execution, return_exceptions=True)
