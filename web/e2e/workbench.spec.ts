@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
+import { dirname, resolve } from 'node:path';
 
 const TOKEN = 'public-test-fixture-token';
 const time = '2026-10-06T00:00:00Z';
@@ -96,7 +97,8 @@ test('connection page fits mobile and dev server refuses repository file access'
   await expect(page.getByRole('button', { name: '连接本地 API' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   // Probe a harmless tracked file, not the actual .env or design document.
-  const forbidden = await request.get('/@fs/D:/98281/deepscholar/README.md');
+  const readme = resolve(dirname(test.info().file), '..', '..', 'README.md').replaceAll('\\', '/');
+  const forbidden = await request.get('/@fs/' + encodeURI(readme));
   expect(forbidden.status()).toBe(403);
   await page.screenshot({ path: 'test-results/workbench-mobile.png', fullPage: true });
 });

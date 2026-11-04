@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import socket
+import sys
 import tempfile
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -189,9 +190,9 @@ class GitManager:
                 return readers[0].result()
         finally:
             if process.returncode is None:
-                if os.name == "posix":
+                if sys.platform != "win32":
                     with suppress(ProcessLookupError):
-                        os.killpg(process.pid, 9)  # type: ignore[attr-defined]
+                        os.killpg(process.pid, 9)
                 else:
                     process.kill()
             await process.wait()
