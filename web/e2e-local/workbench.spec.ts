@@ -21,7 +21,7 @@ test('browser connects through the real Vite proxy to authenticated FastAPI and 
   expect(api.headers()['cache-control']).toBe('private, no-store');
   const unauthenticated = await request.get('/api/workbench/projects');
   expect(unauthenticated.status()).toBe(401);
-  const state = await request.get('http://127.0.0.1:18009/__fixture/status');
+  const state = await request.get('http://127.0.0.1:18009/__fixture/status', { headers: { Authorization: 'Bearer ' + TOKEN } });
   expect(await state.json()).toMatchObject({ model_calls: 0, sandbox_calls: 0 });
   expect((await state.json()).api_requests).toBeGreaterThanOrEqual(7);
   expect(methods.length).toBeGreaterThanOrEqual(5);

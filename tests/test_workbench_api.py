@@ -277,7 +277,8 @@ async def test_facade_existing_projects_and_durable_routes(tmp_path: Path) -> No
                 "owner" not in overview["execution"]
                 and "pending_calls" not in overview["execution"]
             )
-            # Existing callers remain compatible; no implicit global auth migration.
-            assert (await client.get("/projects")).status_code == 200
+            # Phase 11 protects legacy routes with the same explicit credentials.
+            assert (await client.get("/projects")).status_code == 401
+            assert (await client.get("/projects", headers=AUTH)).status_code == 200
     finally:
         await engine.dispose()

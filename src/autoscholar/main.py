@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from autoscholar import __version__
 from autoscholar.agent.repository import AgentTaskRepository
@@ -13,6 +14,7 @@ from autoscholar.agent.runner import (
     TaskStore,
 )
 from autoscholar.agent.tools import CalculatorTool, RestrictedPythonTool
+from autoscholar.api.access import APIAuthenticationMiddleware, APIBoundaryMiddleware
 from autoscholar.api.routes.agent import router as agent_router
 from autoscholar.api.routes.chat import router as chat_router
 from autoscholar.api.routes.experiments import router as experiment_router
@@ -407,6 +409,9 @@ def create_app(
         version=__version__,
         lifespan=lifespan,
         default_response_class=UTF8JSONResponse,
+        docs_url=None if resolved_settings.app_env == "production" else "/docs",
+        redoc_url=None if resolved_settings.app_env == "production" else "/redoc",
+        openapi_url=None if resolved_settings.app_env == "production" else "/openapi.json",
     )
     application.state.settings = resolved_settings
     application.state.mcp_research_gateway = mcp_gateway
@@ -440,6 +445,21 @@ def create_app(
     application.state.workspace_manager = resolved_workspace_manager
     application.state.artifact_manager = resolved_artifact_manager
     application.state.sandbox_executor = resolved_sandbox_executor
+    application.add_middleware(APIAuthenticationMiddleware, settings=resolved_settings)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=resolved_settings.api_allowed_origins,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Request-ID",
+            "Idempotency-Key",
+            "Last-Event-ID",
+        ],
+        allow_credentials=False,
+    )
+    application.add_middleware(APIBoundaryMiddleware, settings=resolved_settings)
     application.middleware("http")(request_context_middleware)
     register_exception_handlers(application)
     application.include_router(health_router)

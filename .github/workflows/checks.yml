@@ -1,0 +1,77 @@
+name: Checks
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.12.10"
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "24"
+  PYTHONUTF8: "1"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - run: uv sync --frozen --python $PYTHON_VERSION
+      - run: uv run --no-sync ruff check src tests
+      - run: uv run --no-sync mypy --no-incremental
+      - run: uv run --no-sync pytest -q --tb=short --show-capture=no --basetemp=data/ci-tmp
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - run: uv sync --frozen --python $env:PYTHON_VERSION
+      - run: >-
+          uv run --no-sync pytest -q --tb=short --show-capture=no
+          tests/test_config.py tests/test_experiment_auth.py tests/test_api_access.py
+          tests/test_coding_workspace.py tests/test_filesystem_mcp.py
+          --basetemp=data/ci-tmp
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: node scripts/browser.mjs install --with-deps chromium
+      - run: npm run test:browser

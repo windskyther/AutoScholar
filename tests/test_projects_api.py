@@ -16,6 +16,7 @@ from autoscholar.rag.models import (
     DocumentStatus,
     ProjectRecord,
 )
+from tests.api_credentials import AUTH, TOKEN_SECRET
 from tests.test_chat import SuccessfulProvider
 from tests.test_health import FakeDependency
 
@@ -124,14 +125,15 @@ def create_client(tmp_path: Path) -> tuple[TestClient, FakeKnowledgeStore]:
     store = FakeKnowledgeStore()
     client = TestClient(
         create_app(
-            Settings(llm_api_key=None, llm_model=None),
+            Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
             database=FakeDependency(),
             redis=FakeDependency(),
             qdrant=FakeDependency(),
             llm_provider=SuccessfulProvider(),
             knowledge_repository=store,
             document_storage=LocalDocumentStorage(tmp_path),
-        )
+        ),
+        headers=AUTH,
     )
     return client, store
 

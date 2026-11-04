@@ -36,7 +36,7 @@ async def request_context_middleware(
         raise
 
     response.headers["X-Request-ID"] = request_id
-    if request.url.path.startswith("/workbench/"):
+    if request.url.path != "/health/live":
         response.headers["Cache-Control"] = "private, no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"

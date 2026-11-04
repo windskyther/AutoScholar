@@ -12,6 +12,7 @@ from autoscholar.llm.models import (
     ToolDefinition,
 )
 from autoscholar.main import create_app
+from tests.api_credentials import AUTH, TOKEN_SECRET
 
 
 class FakeDependency:
@@ -74,13 +75,14 @@ def create_test_client(
 ) -> TestClient:
     return TestClient(
         create_app(
-            Settings(),
+            Settings(experiment_api_token=TOKEN_SECRET),
             database=FakeDependency(healthy=database_healthy),
             redis=FakeDependency(healthy=redis_healthy),
             qdrant=FakeDependency(healthy=qdrant_healthy),
             llm_provider=FakeLLMProvider(),
             sandbox_executor=FakeSandbox(),
-        )
+        ),
+        headers=AUTH,
     )
 
 
@@ -155,14 +157,14 @@ def test_readiness_when_a_dependency_is_unavailable() -> None:
 
 def test_readiness_reports_unconfigured_llm_without_failing_infrastructure() -> None:
     app = create_app(
-        Settings(llm_api_key=None, llm_model=None),
+        Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
         database=FakeDependency(),
         redis=FakeDependency(),
         qdrant=FakeDependency(),
         sandbox_executor=FakeSandbox(),
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, headers=AUTH) as client:
         response = client.get("/health/ready")
 
     assert response.status_code == 200
@@ -178,6 +180,7 @@ def test_mcp_outage_only_degrades_research_and_never_constructs_native_provider(
                 research_tool_backend="mcp",
                 filesystem_tool_backend="mcp",
                 mcp_service_token=SecretStr("x" * 32),
+                experiment_api_token=TOKEN_SECRET,
             ),
             database=FakeDependency(),
             redis=FakeDependency(),
@@ -187,7 +190,7 @@ def test_mcp_outage_only_degrades_research_and_never_constructs_native_provider(
         )
     app.state.mcp_research_gateway.available = AsyncMock(return_value=False)
     app.state.mcp_filesystem_gateway.available = AsyncMock(return_value=False)
-    with TestClient(app) as client:
+    with TestClient(app, headers=AUTH) as client:
         assert client.get("/health/live").status_code == 200
         response = client.get("/health/ready")
     assert response.status_code == 200

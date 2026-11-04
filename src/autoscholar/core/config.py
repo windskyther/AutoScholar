@@ -1,9 +1,13 @@
 from functools import lru_cache
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 from autoscholar.core.budget import BudgetLimits
 
@@ -16,15 +20,21 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        hide_input_in_errors=True,
     )
 
     app_env: Literal["development", "test", "production"] = "development"
     app_host: str = "0.0.0.0"
     app_port: int = Field(default=8000, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    api_allowed_hosts: list[str] = Field(default_factory=lambda: ["*"])
+    api_allowed_origins: list[str] = Field(default_factory=list)
 
-    database_url: str = "postgresql+asyncpg://autoscholar:autoscholar@localhost:5432/autoscholar"
-    redis_url: str = "redis://localhost:6379/0"
+    database_url: str = Field(
+        default="postgresql+asyncpg://autoscholar:autoscholar@localhost:5432/autoscholar",
+        repr=False,
+    )
+    redis_url: str = Field(default="redis://localhost:6379/0", repr=False)
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: SecretStr | None = None
     qdrant_collection: str = "autoscholar_chunks_v1"
@@ -50,6 +60,101 @@ class Settings(BaseSettings):
     mcp_research_url: str = "http://research-mcp:8091/mcp"
     mcp_service_token: SecretStr | None = None
     mcp_timeout_seconds: float = Field(default=25, gt=0, le=120)
+    experiment_api_token_file: Path | None = None
+    llm_api_key_file: Path | None = None
+    embedding_api_key_file: Path | None = None
+    tavily_api_key_file: Path | None = None
+    semantic_scholar_api_key_file: Path | None = None
+    qdrant_api_key_file: Path | None = None
+    mcp_service_token_file: Path | None = None
+
+    @field_validator(
+        "experiment_api_token_file",
+        "llm_api_key_file",
+        "embedding_api_key_file",
+        "tavily_api_key_file",
+        "semantic_scholar_api_key_file",
+        "qdrant_api_key_file",
+        "mcp_service_token_file",
+        mode="before",
+    )
+    @classmethod
+    def empty_secret_file_is_unconfigured(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @model_validator(mode="after")
+    def load_secret_files(self) -> "Settings":
+        for name in (
+            "experiment_api_token",
+            "llm_api_key",
+            "embedding_api_key",
+            "tavily_api_key",
+            "semantic_scholar_api_key",
+            "qdrant_api_key",
+            "mcp_service_token",
+        ):
+            path = getattr(self, name + "_file")
+            if path is None:
+                continue
+            direct = getattr(self, name)
+            if direct is not None and direct.get_secret_value():
+                raise ValueError(f"Configure only {name.upper()} or {name.upper()}_FILE")
+            try:
+                with path.open("rb") as stream:
+                    raw = stream.read(4097)
+                if len(raw) > 4096:
+                    raise ValueError
+                value = raw.decode("utf-8").rstrip("\r\n")
+                if not value or any(character.isspace() for character in value):
+                    raise ValueError
+            except (OSError, UnicodeError, ValueError):
+                raise ValueError(
+                    f"{name.upper()}_FILE must be a readable bounded secret file"
+                ) from None
+            setattr(self, name, SecretStr(value))
+        return self
+
+    @field_validator("api_allowed_hosts")
+    @classmethod
+    def validate_api_hosts(cls, hosts: list[str]) -> list[str]:
+        if not hosts or any(
+            not host
+            or any(char in host for char in "/@?#\\ \t\r\n")
+            or ("*" in host and host != "*")
+            for host in hosts
+        ):
+            raise ValueError("API_ALLOWED_HOSTS must contain exact hostnames or a development '*'")
+        normalized = [host.lower().strip("[]") for host in hosts]
+        for host in normalized:
+            if ":" in host:
+                try:
+                    ip_address(host)
+                except ValueError:
+                    raise ValueError("API_ALLOWED_HOSTS cannot include ports") from None
+        return normalized
+
+    @field_validator("api_allowed_origins")
+    @classmethod
+    def validate_api_origins(cls, origins: list[str]) -> list[str]:
+        for origin in origins:
+            try:
+                parsed = urlsplit(origin)
+                _ = parsed.port
+                if (
+                    parsed.scheme not in {"http", "https"}
+                    or not parsed.hostname
+                    or parsed.username
+                    or parsed.password
+                    or parsed.path
+                    or parsed.query
+                    or parsed.fragment
+                    or "*" in origin
+                    or any(char.isspace() or char == "\\" for char in origin)
+                ):
+                    raise ValueError
+            except ValueError:
+                raise ValueError("API_ALLOWED_ORIGINS must contain exact HTTP(S) origins") from None
+        return origins
 
     @model_validator(mode="after")
     def validate_mcp_configuration(self) -> "Settings":
@@ -102,6 +207,61 @@ class Settings(BaseSettings):
     workflow_worker_poll_seconds: float = Field(default=2, gt=0, le=60)
     workflow_job_lease_seconds: int = Field(default=30, ge=6, le=300)
     workflow_approval_threshold: int = Field(default=20000, ge=0, le=1200000)
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "Settings":
+        if self.app_env != "production":
+            return self
+        token = self.experiment_api_token.get_secret_value() if self.experiment_api_token else ""
+        if (
+            len(token) < 32
+            or len(set(token)) < 8
+            or any(char.isspace() for char in token)
+            or any(word in token.casefold() for word in ("changeme", "placeholder", "replace-me"))
+        ):
+            raise ValueError("Production requires a strong EXPERIMENT_API_TOKEN (32+ characters)")
+        if "*" in self.api_allowed_hosts:
+            raise ValueError("Production requires explicit API_ALLOWED_HOSTS")
+        try:
+            database = make_url(self.database_url)
+            password = database.password or ""
+            if (
+                database.get_backend_name() != "postgresql"
+                or not database.host
+                or len(password) < 16
+                or len(set(password)) < 8
+                or password.casefold() in {"autoscholar", "password", "changeme"}
+                or any(
+                    word in password.casefold() for word in ("password", "changeme", "placeholder")
+                )
+            ):
+                raise ValueError
+        except (ValueError, ArgumentError):
+            raise ValueError(
+                "Production requires PostgreSQL with a non-default strong password"
+            ) from None
+        if password == token:
+            raise ValueError("The API access token must be distinct from database credentials")
+        for origin in self.api_allowed_origins:
+            parsed = urlsplit(origin)
+            if parsed.scheme != "https" and parsed.hostname not in {
+                "localhost",
+                "127.0.0.1",
+                "::1",
+            }:
+                raise ValueError("Production remote origins require HTTPS")
+        for name in (
+            "llm_api_key",
+            "embedding_api_key",
+            "tavily_api_key",
+            "semantic_scholar_api_key",
+            "qdrant_api_key",
+            "mcp_service_token",
+        ):
+            secret = getattr(self, name)
+            if secret is not None and secret.get_secret_value() == token:
+                raise ValueError("The API access token must be distinct from service credentials")
+        return self
 
     @property
     def experiment_api_configured(self) -> bool:

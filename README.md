@@ -124,10 +124,23 @@ docker compose up -d --build
 ```powershell
 uv sync --all-groups
 uv run alembic upgrade head
-uv run uvicorn autoscholar.main:app --reload
+uv run uvicorn autoscholar.main:app --reload --no-proxy-headers
 ```
 
 ## API
+
+Phase 11A/11B 已将所有业务接口统一为 Bearer 鉴权；`/health/live` 保留公开，`/health/ready` 也需要 Token。
+继续使用 `.env` 中的 `EXPERIMENT_API_TOKEN`，不需要新建另一套业务访问密钥。未配置时业务接口返回 503，错误或缺失凭据返回 401。
+生产模式另要求强访问 Token、明确的 Host 白名单和非开发数据库口令；密钥文件、Origin/CORS 和兼容说明见[访问与生产配置说明](docs/security/access.md)。
+
+在每个新的 PowerShell 测试窗口先建立请求头，输入与服务端配置一致的访问 Token：
+
+```powershell
+$secureToken = Read-Host 'EXPERIMENT_API_TOKEN' -AsSecureString
+$apiHeaders = @{ Authorization = 'Bearer ' + ([System.Net.NetworkCredential]::new('', $secureToken)).Password }
+```
+
+下方普通 API 示例使用 `$apiHeaders`；已有实验/审批示例使用各自显式的 `$headers`。访问 Token 仅发给你指定的本地 API。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -159,7 +172,7 @@ $body = @{
 
 $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
 
-$result = Invoke-RestMethod `
+$result = Invoke-RestMethod -Headers $apiHeaders `
   -Method Post `
   -Uri "http://127.0.0.1:8000/agent/run" `
   -ContentType "application/json; charset=utf-8" `
@@ -172,7 +185,7 @@ $result | ConvertTo-Json -Depth 10
 回查已持久化任务：
 
 ```powershell
-Invoke-RestMethod `
+Invoke-RestMethod -Headers $apiHeaders `
   -Uri "http://127.0.0.1:8000/agent/tasks/$($result.task_id)" |
   ConvertTo-Json -Depth 10
 ```
@@ -180,7 +193,7 @@ Invoke-RestMethod `
 查询 Evidence：
 
 ```powershell
-Invoke-RestMethod `
+Invoke-RestMethod -Headers $apiHeaders `
   -Uri "http://127.0.0.1:8000/agent/tasks/$($result.task_id)/evidence?limit=50&offset=0" |
   ConvertTo-Json -Depth 10
 ```
@@ -233,7 +246,7 @@ uv run pytest tests/integration -m integration
 ```powershell
 docker compose up -d --build
 docker compose ps -a
-Invoke-RestMethod http://127.0.0.1:8000/health/ready |
+Invoke-RestMethod -Headers $apiHeaders http://127.0.0.1:8000/health/ready |
   ConvertTo-Json -Depth 5
 ```
 
@@ -242,7 +255,7 @@ Invoke-RestMethod http://127.0.0.1:8000/health/ready |
 ```powershell
 $projectBody = @{ name = "Phase 3 验收"; description = "本地论文知识库" } |
   ConvertTo-Json -Compress
-$project = Invoke-RestMethod `
+$project = Invoke-RestMethod -Headers $apiHeaders `
   -Method Post `
   -Uri "http://127.0.0.1:8000/projects" `
   -ContentType "application/json; charset=utf-8" `
@@ -267,7 +280,7 @@ $documentId = $document.id
 ```powershell
 do {
   Start-Sleep -Seconds 2
-  $document = Invoke-RestMethod `
+  $document = Invoke-RestMethod -Headers $apiHeaders `
     "http://127.0.0.1:8000/projects/$projectId/documents/$documentId"
   $document | Select-Object status,page_count,chunk_count,index_version,error_code,error_message
 } while ($document.status -in @("queued", "processing"))
@@ -285,7 +298,7 @@ $ragBody = @{
   top_k = 5
 } | ConvertTo-Json -Depth 5 -Compress
 
-$rag = Invoke-RestMethod `
+$rag = Invoke-RestMethod -Headers $apiHeaders `
   -Method Post `
   -Uri "http://127.0.0.1:8000/projects/$projectId/rag/query" `
   -ContentType "application/json; charset=utf-8" `
@@ -310,7 +323,7 @@ $agentBody = @{
   retrieval_mode = "hybrid_rerank"
 } | ConvertTo-Json -Depth 5 -Compress
 
-$agent = Invoke-RestMethod `
+$agent = Invoke-RestMethod -Headers $apiHeaders `
   -Method Post `
   -Uri "http://127.0.0.1:8000/agent/run" `
   -ContentType "application/json; charset=utf-8" `
@@ -318,7 +331,7 @@ $agent = Invoke-RestMethod `
   -TimeoutSec 300
 
 $agent | ConvertTo-Json -Depth 10
-Invoke-RestMethod "http://127.0.0.1:8000/agent/tasks/$($agent.task_id)" |
+Invoke-RestMethod -Headers $apiHeaders "http://127.0.0.1:8000/agent/tasks/$($agent.task_id)" |
   ConvertTo-Json -Depth 10
 ```
 
@@ -334,7 +347,7 @@ $mixedBody = @{
   research_sources = @("web")
 } | ConvertTo-Json -Depth 6 -Compress
 
-$mixed = Invoke-RestMethod `
+$mixed = Invoke-RestMethod -Headers $apiHeaders `
   -Method Post `
   -Uri "http://127.0.0.1:8000/agent/run" `
   -ContentType "application/json; charset=utf-8" `
@@ -387,7 +400,7 @@ $docker = "D:\Applications\Docker\resources\bin\docker.exe"
 & $docker compose up -d --build
 & $docker compose ps -a
 
-$health = Invoke-RestMethod "http://127.0.0.1:8000/health/ready"
+$health = Invoke-RestMethod -Headers $apiHeaders "http://127.0.0.1:8000/health/ready"
 $health.capabilities | Format-List
 if ($health.capabilities.sandbox.status -ne "ok") { throw "Sandbox is not ready" }
 if ($health.capabilities.mnist_dataset.status -ne "ok") { throw "MNIST is not ready" }
@@ -407,7 +420,7 @@ $codingBody = @{
   mode = "coding"
 } | ConvertTo-Json -Compress
 
-$coding = Invoke-RestMethod `
+$coding = Invoke-RestMethod -Headers $apiHeaders `
   -Method Post `
   -Uri "http://127.0.0.1:8000/agent/run" `
   -ContentType "application/json; charset=utf-8" `
@@ -428,7 +441,7 @@ if (-not ($coding.tool_calls | Where-Object { $_.tool_name -eq "run_pytest" -and
 查看生成文件、校验值和持久化执行日志：
 
 ```powershell
-$workspace = Invoke-RestMethod `
+$workspace = Invoke-RestMethod -Headers $apiHeaders `
   "http://127.0.0.1:8000/agent/tasks/$($coding.task_id)/workspace"
 $workspace.files | Format-Table path,size_bytes,sha256
 
@@ -437,7 +450,7 @@ $sourcePath = ($workspace.files | Where-Object { $_.path -like "source/*.py" } |
 $encodedPath = ($sourcePath -split "/" | ForEach-Object {
   [System.Uri]::EscapeDataString($_)
 }) -join "/"
-Invoke-RestMethod `
+Invoke-RestMethod -Headers $apiHeaders `
   "http://127.0.0.1:8000/agent/tasks/$($coding.task_id)/workspace/files/$encodedPath" |
   Select-Object path,content
 ```
@@ -728,7 +741,7 @@ Agent 负责消耗预算，网关只记录一次调用边界，避免跨进程�
 
 ```powershell
 docker compose -f compose.yaml -f compose.mcp.yaml up -d --build
-Invoke-RestMethod http://localhost:8000/health/ready
+Invoke-RestMethod -Headers $apiHeaders http://localhost:8000/health/ready
 ```
 
 `capabilities.mcp_research` 表示 MCP 服务及工具目录可用性，不代表已经验证上游搜索账号。停止 Research 容器后 Core 的 `/health/live` 仍应为 200，基础设施正常时 `/health/ready` 仍为 ready，但研究能力显示 error。存在本地证据时研究结果可为 partial；证据不足则明确失败，不伪造完整答案。调用已经发出但结果未知时，持久化工作流仍进入 recovery_required，不会因“降级”而绕过不明调用保护。
@@ -1023,7 +1036,7 @@ Coding 收敛控制已补充：显示剩余额度，在编辑或调用预留边�
 四项免费 Docker 验证符合预期，新增供应商请求为 0。v6 原失败结果保持原值，
 详见 [Coding 收敛修复](docs/releases/2026-10-27-coding-convergence.md)。
 
-## Phase 10：AutoScholar-Eval（评测工程已验证，真实配对待验）
+## Phase 10：AutoScholar-Eval（既定工程验收通过）
 
 Phase 10 建立统一的 RAG、Research、Tool、Coding、Experiment 与端到端评测，及 Planner、Reranker、Reviewer、Memory、Replanning 消融。工程夹具、本地真实组件与真实供应商能力结果必须分开；付费联测仅在单独授权并显式开启时执行，不把固定模型响应的成功率当成真实模型能力。
 
@@ -1457,6 +1470,13 @@ Coding 检查及一次训练后触发指标故障，并按关闭重规划规则�
 独立 main 完整回归 **494 passed、3 skipped**，核心复测 47 项、真实 Docker 控制流程和
 原始截断响应离线回放通过。本轮新增供应商调用 **0**；新版真实确认尚未执行，v8 原结果保留。
 详见 [Coding 输出边界修复](docs/releases/2026-10-28-coding-output-bounds.md)。
+
+## Phase 11：生产加固（首批 API 与 CI）
+
+11A/11B 首批实现包括：业务接口统一 Bearer 鉴权、Host/Origin/CORS 边界、production 配置校验、可选只读密钥文件和最小权限基础 CI。
+开发环境的现有请求也需携带 `EXPERIMENT_API_TOKEN`；本页 API 示例已更新，详见[访问与生产配置说明](docs/security/access.md)。
+基础 Checks 覆盖 Linux 后端、Windows 文件/鉴权兼容及前端检查，使用公开夹具和固定 Action 提交，不读取供应商凭据，也不自动部署。
+后续仍需完成限流与审计、沙箱控制面加固、生产 Nginx/镜像、完整发布与备份恢复验收；本批不宣告 Phase 11 整体验收。
 
 ## 开发路线
 
