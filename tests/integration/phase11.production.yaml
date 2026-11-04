@@ -1,0 +1,26 @@
+# Merge only onto compose.production.yaml, using a fresh phase11e-* project.
+services:
+  api:
+    command: [uvicorn, 'fixture:create_app', --factory, --app-dir, /acceptance, --host, 0.0.0.0, --port, '8000', --no-proxy-headers, --no-access-log]
+    environment:
+      EMBEDDING_DIMENSIONS: '8'
+      LLM_API_KEY_FILE: ''
+      EMBEDDING_API_KEY_FILE: ''
+      TAVILY_API_KEY_FILE: ''
+      SEMANTIC_SCHOLAR_API_KEY_FILE: ''
+    volumes:
+      - ./tests/integration/phase11_production_fixture.py:/acceptance/fixture.py:ro
+  workflow-worker:
+    command: [python, /acceptance/fixture.py, hold]
+    volumes:
+      - ./tests/integration/phase11_production_fixture.py:/acceptance/fixture.py:ro
+  document-worker:
+    command: [python, /acceptance/fixture.py, documents]
+    environment:
+      EMBEDDING_DIMENSIONS: '8'
+    volumes:
+      - ./tests/integration/phase11_production_fixture.py:/acceptance/fixture.py:ro
+  web:
+    ports: !override ['127.0.0.1::8080']
+networks:
+  egress: {internal: true}

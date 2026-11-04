@@ -1,0 +1,219 @@
+name: autoscholar-prod
+
+x-app: &app
+  image: ${AUTOSCHOLAR_API_IMAGE:-autoscholar-api:prod-local}
+  build:
+    context: .
+    target: production
+    args:
+      SOURCE_REVISION: ${AUTOSCHOLAR_REVISION:-working-tree}
+      LOCK_SHA256: ${AUTOSCHOLAR_LOCK_SHA256:?Set UV lock hash with scripts/build_production.py}
+  user: '10001:10001'
+  read_only: true
+  init: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ['/tmp:rw,noexec,nosuid,size=268435456,mode=1777']
+  stop_grace_period: 45s
+  pids_limit: 256
+  cpus: 2
+  mem_limit: 3g
+  restart: unless-stopped
+  environment: &environment
+    APP_ENV: production
+    API_ALLOWED_HOSTS: '${API_ALLOWED_HOSTS:-["localhost","127.0.0.1"]}'
+    API_ALLOWED_ORIGINS: '${API_ALLOWED_ORIGINS:-[]}'
+    API_REQUEST_LIMITS: '${API_REQUEST_LIMITS:-null}'
+    DATABASE_URL_FILE: /run/secrets/database_url
+    REDIS_URL_FILE: /run/secrets/redis_url
+    EXPERIMENT_API_TOKEN_FILE: /run/secrets/api_token
+    QDRANT_URL: http://qdrant:6333
+    QDRANT_API_KEY_FILE: /run/secrets/qdrant_key
+    DOCUMENT_STORAGE_PATH: /data/documents
+    WORKSPACE_ROOT: /data/workspaces
+    MODEL_CACHE_PATH: /models
+    SANDBOX_MANAGER_URL: http://sandbox-manager:8090
+    SANDBOX_MANAGER_TOKEN_FILE: /run/secrets/sandbox_token
+    LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+    LLM_MODEL: ${LLM_MODEL:-}
+    LLM_API_KEY_FILE: ${LLM_API_KEY_FILE:-}
+    EMBEDDING_API_KEY_FILE: ${EMBEDDING_API_KEY_FILE:-}
+    TAVILY_API_KEY_FILE: ${TAVILY_API_KEY_FILE:-}
+    SEMANTIC_SCHOLAR_API_KEY_FILE: ${SEMANTIC_SCHOLAR_API_KEY_FILE:-}
+    WORKFLOW_APPROVAL_THRESHOLD: ${WORKFLOW_APPROVAL_THRESHOLD:-20000}
+  secrets: &app-secrets
+    - database_url
+    - redis_url
+    - api_token
+    - qdrant_key
+    - sandbox_token
+    - llm_api_key
+    - embedding_api_key
+    - tavily_api_key
+    - semantic_scholar_api_key
+  volumes: &app-volumes
+    - documents:/data/documents
+    - workspaces:/data/workspaces
+    - models:/models
+  networks: [backend, egress, sandbox_control]
+
+services:
+  web:
+    image: ${AUTOSCHOLAR_WEB_IMAGE:-autoscholar-web:prod-local}
+    build:
+      context: .
+      dockerfile: docker/web/Dockerfile
+      args:
+        SOURCE_REVISION: ${AUTOSCHOLAR_REVISION:-working-tree}
+        NODE_BUILD_IMAGE: ${NODE_BUILD_IMAGE:-node:24-alpine}
+        NGINX_RUNTIME_IMAGE: ${NGINX_RUNTIME_IMAGE:-nginx:1.30.6-alpine}
+    user: '101:101'
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=134217728,mode=1777']
+    ports: ['127.0.0.1:${PROD_PORT:-8080}:8080']
+    networks: [ingress, edge]
+    depends_on: {api: {condition: service_healthy}}
+    stop_grace_period: 15s
+    pids_limit: 64
+    cpus: 1
+    mem_limit: 256m
+    restart: unless-stopped
+
+  volume-init:
+    <<: *app
+    user: '0:0'
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
+    command: [python, -m, autoscholar.deployment.volumes]
+    environment: {}
+    secrets: []
+    networks: [backend]
+    restart: 'no'
+    healthcheck: {disable: true}
+
+  migrate:
+    <<: *app
+    command: [alembic, upgrade, head]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+    secrets: [database_url]
+    volumes: []
+    networks: [backend]
+    depends_on: {postgres: {condition: service_healthy}}
+    restart: 'no'
+    healthcheck: {disable: true}
+
+  api:
+    <<: *app
+    command: [uvicorn, 'autoscholar.main:app', --host, 0.0.0.0, --port, '8000', --no-proxy-headers, --no-access-log]
+    networks: [edge, backend, egress, sandbox_control]
+    depends_on: &dependencies
+      volume-init: {condition: service_completed_successfully}
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      qdrant: {condition: service_started}
+      sandbox-manager: {condition: service_healthy}
+
+  workflow-worker:
+    <<: *app
+    command: [python, -m, autoscholar.orchestration.worker]
+    depends_on: *dependencies
+    healthcheck: {test: [CMD, python, -m, autoscholar.deployment.worker_health], interval: 30s, timeout: 3s, start_period: 60s}
+
+  document-worker:
+    <<: *app
+    environment:
+      <<: *environment
+      SANDBOX_MANAGER_TOKEN_FILE: ''
+      LLM_API_KEY_FILE: ''
+      TAVILY_API_KEY_FILE: ''
+      SEMANTIC_SCHOLAR_API_KEY_FILE: ''
+    secrets: [database_url, redis_url, api_token, qdrant_key, embedding_api_key]
+    command: [python, -m, autoscholar.rag.worker]
+    depends_on: *dependencies
+    healthcheck: {test: [CMD, python, -m, autoscholar.deployment.worker_health], interval: 30s, timeout: 3s, start_period: 120s}
+
+  sandbox-manager:
+    <<: *app
+    user: '0:0'
+    command: [uvicorn, 'autoscholar.sandbox.manager:app', --host, 0.0.0.0, --port, '8090', --no-proxy-headers, --no-access-log]
+    environment:
+      SANDBOX_MANAGER_TOKEN_FILE: /run/secrets/sandbox_token
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-autoscholar-python-sandbox:phase4}
+      SANDBOX_DATASET_VOLUME: '${COMPOSE_PROJECT_NAME:-autoscholar-prod}_mnist'
+    secrets: [sandbox_token]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - mnist:/datasets/mnist:ro
+    networks: [sandbox_control]
+    healthcheck: {test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health/live',timeout=3)"], interval: 10s, timeout: 4s}
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: autoscholar
+      POSTGRES_USER: autoscholar
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [postgres:/var/lib/postgresql/data]
+    networks: [backend]
+    healthcheck: {test: [CMD-SHELL, 'pg_isready -U autoscholar -d autoscholar'], interval: 5s, timeout: 3s, retries: 20}
+    restart: unless-stopped
+    mem_limit: 1g
+    pids_limit: 128
+    stop_grace_period: 45s
+
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, /run/secrets/redis_config]
+    secrets: [redis_config]
+    volumes: [redis:/data]
+    networks: [backend]
+    healthcheck: {test: [CMD-SHELL, "redis-cli ping 2>&1 | grep -q 'NOAUTH'"], interval: 5s, timeout: 3s, retries: 20}
+    restart: unless-stopped
+    mem_limit: 768m
+    pids_limit: 64
+
+  qdrant:
+    image: qdrant/qdrant:v1.19.0
+    environment: {QDRANT__TELEMETRY_DISABLED: 'true'}
+    command: [./qdrant, --config-path, /run/secrets/qdrant.yaml]
+    secrets: [{source: qdrant_config, target: qdrant.yaml}]
+    volumes: [qdrant:/qdrant/storage]
+    networks: [backend]
+    restart: unless-stopped
+    mem_limit: 2g
+    pids_limit: 128
+
+secrets:
+  database_url: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/database_url'}
+  redis_url: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/redis_url'}
+  api_token: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/api_token'}
+  sandbox_token: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/sandbox_token'}
+  postgres_password: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/postgres_password'}
+  qdrant_key: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/qdrant_key'}
+  qdrant_config: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/qdrant_config'}
+  redis_config: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/redis_config'}
+  llm_api_key: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/llm_api_key'}
+  embedding_api_key: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/embedding_api_key'}
+  tavily_api_key: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/tavily_api_key'}
+  semantic_scholar_api_key: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/semantic_scholar_api_key'}
+
+volumes:
+  documents:
+  workspaces:
+  models:
+  postgres:
+  redis:
+  qdrant:
+  mnist:
+
+networks:
+  ingress:
+  edge: {internal: true}
+  backend: {internal: true}
+  sandbox_control: {internal: true}
+  egress:

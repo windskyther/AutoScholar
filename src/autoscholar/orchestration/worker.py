@@ -7,6 +7,7 @@ from contextlib import suppress
 import structlog
 
 from autoscholar.core.config import get_settings
+from autoscholar.deployment.worker_health import heartbeat
 from autoscholar.main import create_app
 from autoscholar.orchestration.durable import DurableService
 
@@ -21,7 +22,7 @@ async def run_worker() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop.set)
-    async with app.router.lifespan_context(app):
+    async with app.router.lifespan_context(app), heartbeat():
         durable: DurableService | None = app.state.durable_service
         if durable is None:
             raise RuntimeError("Workflow worker dependencies unavailable")

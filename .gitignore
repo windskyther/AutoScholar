@@ -5,6 +5,7 @@ AutoScholar_总体设计文档_V1.0.md
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # Python
 .venv/

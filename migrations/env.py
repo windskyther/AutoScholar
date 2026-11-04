@@ -1,6 +1,7 @@
 import asyncio
 from logging.config import fileConfig
 from os import getenv
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import pool
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from autoscholar.agent.database_models import Base
 from autoscholar.core import audit  # noqa: F401
+from autoscholar.core.service_credentials import connection_file
 from autoscholar.orchestration import durable_models  # noqa: F401
 from autoscholar.rag import database_models as rag_database_models  # noqa: F401
 from autoscholar.tool_platform import operation_models  # noqa: F401
@@ -17,8 +19,13 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 database_url = getenv("DATABASE_URL")
+database_file = getenv("DATABASE_URL_FILE")
+if database_file:
+    if database_url:
+        raise ValueError("Configure DATABASE_URL or DATABASE_URL_FILE")
+    database_url = connection_file(Path(database_file), "DATABASE_URL")
 if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 

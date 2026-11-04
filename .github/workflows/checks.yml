@@ -55,7 +55,7 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
       - run: uv sync --frozen --python $PYTHON_VERSION
-      - run: uv run --no-sync ruff check src tests
+      - run: uv run --no-sync ruff check src tests scripts migrations
       - run: uv run --no-sync mypy --no-incremental
       - run: uv run --no-sync pytest -q --tb=short --show-capture=no --basetemp=data/ci-tmp
 
@@ -78,6 +78,7 @@ jobs:
           tests/test_request_governance.py tests/test_security_redaction.py
           tests/test_sandbox.py tests/test_sandbox_security.py tests/test_phase11_replan_security.py
           tests/test_coding_workspace.py tests/test_filesystem_mcp.py
+          tests/test_production_package.py
           --basetemp=data/ci-tmp
 
   frontend:

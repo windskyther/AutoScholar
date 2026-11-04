@@ -11,7 +11,7 @@ from sqlalchemy.exc import ArgumentError
 
 from autoscholar.core.admission import RequestLimit, default_request_limits
 from autoscholar.core.budget import BudgetLimits
-from autoscholar.core.service_credentials import sandbox_credential
+from autoscholar.core.service_credentials import connection_file, sandbox_credential
 
 
 class Settings(BaseSettings):
@@ -59,6 +59,26 @@ class Settings(BaseSettings):
         repr=False,
     )
     redis_url: str = Field(default="redis://localhost:6379/0", repr=False)
+    database_url_file: Path | None = None
+    redis_url_file: Path | None = None
+
+    @field_validator("database_url_file", "redis_url_file", mode="before")
+    @classmethod
+    def empty_connection_file(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @model_validator(mode="after")
+    def load_connection_files(self) -> "Settings":
+        for name in ("database_url", "redis_url"):
+            path = getattr(self, name + "_file")
+            if path is None:
+                continue
+            if name in self.model_fields_set:
+                raise ValueError(f"Configure only {name.upper()} or {name.upper()}_FILE")
+            value = connection_file(path, name.upper())
+            object.__setattr__(self, name, value)
+        return self
+
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: SecretStr | None = None
     qdrant_collection: str = "autoscholar_chunks_v1"

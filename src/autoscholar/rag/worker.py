@@ -207,7 +207,10 @@ async def _main() -> None:
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(signame, stop.set)
 
-    await run_worker(get_settings(), stop=stop)
+    from autoscholar.deployment.worker_health import heartbeat
+
+    async with heartbeat():
+        await run_worker(get_settings(), stop=stop)
 
 
 if __name__ == "__main__":
