@@ -10,8 +10,9 @@ RUN npm run build
 RUN node --input-type=module -e "import fs from 'node:fs'; import crypto from 'node:crypto'; const r=process.env.SOURCE_REVISION; if(!/^(?:[a-f0-9]{40}|working-tree)$/.test(r)) throw new Error('Invalid revision'); fs.writeFileSync('dist/build-info.json',JSON.stringify({revision:r,release_source:r!=='working-tree',package_lock_sha256:crypto.createHash('sha256').update(fs.readFileSync('package-lock.json')).digest('hex')}))"
 
 FROM ${NGINX_RUNTIME_IMAGE}
+ARG OS_UPDATE_GENERATION=cached
 # Refresh signed Alpine packages rather than retaining stale libraries in the base layer.
-RUN apk upgrade --no-cache
+RUN test -n "$OS_UPDATE_GENERATION" && apk upgrade --no-cache
 ARG SOURCE_REVISION=working-tree
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION \
     org.opencontainers.image.title=AutoScholar-Web \

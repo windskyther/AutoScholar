@@ -143,3 +143,18 @@ TLS 测试需要本机 OpenSSL；不在 PATH 时用 `--openssl "D:/path/to/opens
 `scripts/build_production.py --sandbox` 一起构建。依赖在镜像构建时按独立哈希锁安装，
 运行容器不保留 pip；需要额外依赖时先更新锁文件并重建。当前扫描与未修复上游项见
 [容器漏洞处理记录](../security/container-vulnerabilities.md)，镜像发布仍受这些阻断项限制。
+## Refreshing image security updates
+
+From a clean checkout, use the following to refresh base images and signed OS updates:
+
+```powershell
+python scripts/build_production.py --sandbox --pull --refresh-system
+```
+
+The refresh token
+invalidates each OS-update layer, retaining unrelated dependency caches where
+possible. `--no-cache` additionally rebuilds every layer. These options neither
+publish images nor restart services; run the image audit and isolated acceptance
+again before approving a release. A source revision change alone is not an OS
+security refresh.
+

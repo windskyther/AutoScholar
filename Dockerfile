@@ -1,8 +1,10 @@
 ARG PYTHON_RUNTIME_IMAGE=python:3.12.16-slim-trixie@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30
 FROM ghcr.io/astral-sh/uv:0.12.10@sha256:2bb3ebca0a796a155094a27773d290c4b074572e6107f171d88d086682fd2500 AS uv-tool
 FROM ${PYTHON_RUNTIME_IMAGE} AS runtime-base
+ARG OS_UPDATE_GENERATION=cached
 # Apply current signed distro security fixes over HTTPS, including the build stage.
-RUN python -c "from pathlib import Path; p=Path('/etc/apt/sources.list.d/debian.sources'); p.write_text(p.read_text().replace('http://deb.debian.org','https://deb.debian.org'))" \
+RUN test -n "$OS_UPDATE_GENERATION" \
+    && python -c "from pathlib import Path; p=Path('/etc/apt/sources.list.d/debian.sources'); p.write_text(p.read_text().replace('http://deb.debian.org','https://deb.debian.org'))" \
     && apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends libstdc++6 \
     && rm -rf /var/lib/apt/lists/*

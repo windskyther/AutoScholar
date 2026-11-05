@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -13,6 +14,13 @@ def main() -> None:
     parser.add_argument("--env-file", default=".env.production.example")
     parser.add_argument("--development", action="store_true")
     parser.add_argument("--sandbox", action="store_true", help="Also build the locked CPU image")
+    parser.add_argument("--no-cache", action="store_true", help="Rebuild all image layers")
+    parser.add_argument("--pull", action="store_true", help="Refresh configured base images")
+    parser.add_argument(
+        "--refresh-system",
+        action="store_true",
+        help="Refresh signed OS updates without discarding dependency caches",
+    )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
 
@@ -32,6 +40,8 @@ def main() -> None:
         "AUTOSCHOLAR_REVISION": revision,
         "AUTOSCHOLAR_LOCK_SHA256": hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
     }
+    flags = (["--no-cache"] if args.no_cache else []) + (["--pull"] if args.pull else [])
+    refresh = datetime.now(UTC).isoformat() if args.refresh_system else "cached"
     subprocess.run(
         [
             "docker",
@@ -41,6 +51,9 @@ def main() -> None:
             "-f",
             "compose.production.yaml",
             "build",
+            *flags,
+            "--build-arg",
+            "OS_UPDATE_GENERATION=" + refresh,
             "api",
             "web",
         ],
@@ -73,10 +86,13 @@ def main() -> None:
             [
                 "docker",
                 "build",
+                *flags,
                 "--platform",
                 "linux/amd64",
                 "--build-arg",
                 "SOURCE_REVISION=" + revision,
+                "--build-arg",
+                "OS_UPDATE_GENERATION=" + refresh,
                 "--build-arg",
                 "PYTHON_RUNTIME_IMAGE="
                 + config["services"]["api"]["build"]["args"]["PYTHON_RUNTIME_IMAGE"],
