@@ -21,6 +21,27 @@ env:
   PYTHONUTF8: "1"
 
 jobs:
+  supply-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - run: uv sync --frozen --group security --python $PYTHON_VERSION
+      - run: uv run --no-sync python scripts/install_security_tools.py gitleaks
+      - run: uv run --no-sync python scripts/check_repository.py --gitleaks data/tooling/gitleaks/8.30.1/gitleaks
+      - run: uv run --no-sync python scripts/check_scanner.py --gitleaks data/tooling/gitleaks/8.30.1/gitleaks
+      - run: uv run --no-sync python scripts/audit_dependencies.py --output data/validation/ci-audit
+
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 35

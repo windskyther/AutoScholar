@@ -342,7 +342,7 @@ async def test_full_cli_contract_with_explicit_mock_transport(
         validation,
         "dotenv_values",
         lambda *args, **kwargs: {
-            "LLM_API_KEY": "llm-fixture-key-123",
+            "LLM_API_KEY": "llm-fixture-key-123",  # gitleaks:allow -- public offline fixture
             "LLM_MODEL": "explicit-test-stub",
             "LLM_BASE_URL": "https://test.invalid",
             "TAVILY_API_KEY": "search-fixture-key-123",
