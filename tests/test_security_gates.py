@@ -77,3 +77,44 @@ def test_npm_transitive_findings_retain_individual_advisory_ids() -> None:
         },
     }
     assert findings("npm", report) == {("parent", "GHSA-public"), ("child", "GHSA-public")}
+
+
+def test_image_review_cannot_waive_another_profile_or_another_installed_version() -> None:
+    one = {
+        "PkgName": "public-lib",
+        "VulnerabilityID": "CVE-public",
+        "Severity": "HIGH",
+        "InstalledVersion": "1.0",
+    }
+    vulnerabilities = [one]
+    report = {
+        "SchemaVersion": 2,
+        "Metadata": {"OS": "public"},
+        "Results": [{"Class": "os-pkgs", "Vulnerabilities": vulnerabilities}],
+    }
+    exception = {
+        "kind": "image",
+        "package": "public-lib",
+        "id": "CVE-public",
+        "version": "1.0",
+        "image_profile": "production-api",
+        "owner": "reviewer",
+        "source": "https://security-tracker.debian.org/tracker/CVE-public",
+        "expires": "2026-11-06",
+        "reason": "Public test of a narrowly scoped and version-bound review record.",
+    }
+    today = date(2026, 11, 5)
+    assert not evaluate("image", report, [exception], today=today, image_profile="production-api")
+    expected = {("public-lib", "CVE-public")}
+    assert (
+        evaluate("image", report, [exception], today=today, image_profile="cpu-sandbox") == expected
+    )
+    assert evaluate("image", report, [exception], today=today) == expected
+    vulnerabilities.append({**one, "InstalledVersion": "2.0"})
+    assert (
+        evaluate("image", report, [exception], today=today, image_profile="production-api")
+        == expected
+    )
+    for field in ("version", "image_profile", "source"):
+        with pytest.raises(ValueError):
+            evaluate("image", report, [{**exception, field: ""}], today=today)

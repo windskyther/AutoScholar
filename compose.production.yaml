@@ -8,6 +8,7 @@ x-app: &app
     args:
       SOURCE_REVISION: ${AUTOSCHOLAR_REVISION:-working-tree}
       LOCK_SHA256: ${AUTOSCHOLAR_LOCK_SHA256:?Set UV lock hash with scripts/build_production.py}
+      PYTHON_RUNTIME_IMAGE: ${PYTHON_RUNTIME_IMAGE:-python:3.12.16-slim-trixie@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30}
   user: '10001:10001'
   read_only: true
   init: true
@@ -142,7 +143,7 @@ services:
     command: [uvicorn, 'autoscholar.sandbox.manager:app', --host, 0.0.0.0, --port, '8090', --no-proxy-headers, --no-access-log]
     environment:
       SANDBOX_MANAGER_TOKEN_FILE: /run/secrets/sandbox_token
-      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-autoscholar-python-sandbox:phase4}
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-autoscholar-python-sandbox:phase11}
       SANDBOX_DATASET_VOLUME: '${COMPOSE_PROJECT_NAME:-autoscholar-prod}_mnist'
     secrets: [sandbox_token]
     volumes:

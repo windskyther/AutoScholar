@@ -138,3 +138,8 @@ TLS 测试需要本机 OpenSSL；不在 PATH 时用 `--openssl "D:/path/to/opens
 停写和完整备份后复制到新卷，核对数据库、文件摘要与向量维度，并在副本演练后切换。
 完整跨存储备份恢复、受控升级回退、供应链发布门槛与最终 CPU 整栈验收仍属后续模块。
 普通 `down` 保留数据卷；`down --volumes` 仅用于明确拥有的临时验收项目。
+
+生产 CPU 镜像现使用 `autoscholar-python-sandbox:phase11`，可用
+`scripts/build_production.py --sandbox` 一起构建。依赖在镜像构建时按独立哈希锁安装，
+运行容器不保留 pip；需要额外依赖时先更新锁文件并重建。当前扫描与未修复上游项见
+[容器漏洞处理记录](../security/container-vulnerabilities.md)，镜像发布仍受这些阻断项限制。

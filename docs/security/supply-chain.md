@@ -38,7 +38,8 @@ See [pip-audit](https://github.com/pypa/pip-audit) and
 
 `security/exceptions.json` is initially empty. A future exception must name an
 individual package/advisory, a responsible owner, a concrete reason and an expiry
-within 90 days. Wildcard or expired exceptions fail. Do not add bulk exclusions or
+within 90 days. Image exceptions also require an exact image profile, installed
+version and HTTPS source; other images/versions stay blocked. Wildcard or expired exceptions fail. Do not add bulk exclusions or
 use `--ignore-unfixed` to turn unresolved vulnerabilities into a passing release.
 
 Initial Phase 11F audits found seven affected Python packages and a Vite development
@@ -46,6 +47,7 @@ server advisory. The lockfiles now select fixed versions, with lower bounds prev
 an accidental downgrade. Existing workflow, document-processing and frontend tests
 must still pass after these updates.
 
-This first module supplies source/dependency gates. Container remediation, portable
-CPU stack integration and a manually gated image-publication workflow remain pending;
+Available container fixes and the remaining upstream blockers are documented in
+[the container remediation report](container-vulnerabilities.md). Portable CPU
+stack integration and a manually gated image-publication workflow remain pending;
 it does not declare Phase 11F or Phase 11 accepted and does not deploy any service.

@@ -66,7 +66,12 @@ def findings(kind: str, report: dict[str, Any]) -> set[tuple[str, str]]:
 
 
 def evaluate(
-    kind: str, report: dict[str, Any], exceptions: list[dict[str, str]], *, today: date
+    kind: str,
+    report: dict[str, Any],
+    exceptions: list[dict[str, str]],
+    *,
+    today: date,
+    image_profile: str | None = None,
 ) -> set[tuple[str, str]]:
     accepted: set[tuple[str, str]] = set()
     for entry in exceptions:
@@ -82,8 +87,38 @@ def evaluate(
             raise ValueError(
                 "Audit exception requires bounded expiry, owner and concrete rationale"
             )
-        if entry["kind"] == kind:
+        if entry["kind"] == "image" and (
+            not entry.get("image_profile")
+            or not entry.get("version")
+            or "*" in entry["image_profile"]
+            or "*" in entry["version"]
+            or not entry.get("source", "").startswith("https://")
+        ):
+            raise ValueError("Image exception requires an exact profile, version and source")
+        if entry["kind"] == kind and kind != "image":
             accepted.add((entry["package"], entry["id"]))
+    if kind == "image":
+        # Validate the entire report first. Review of one image/version must not waive
+        # another image or a second installed version with the same package/advisory.
+        raw = findings(kind, report)
+        blocked: set[tuple[str, str]] = set()
+        for result in report["Results"]:
+            for value in result.get("Vulnerabilities", []):
+                key = (value["PkgName"], value["VulnerabilityID"])
+                if key not in raw:
+                    continue
+                waived = any(
+                    entry["kind"] == "image"
+                    and image_profile is not None
+                    and entry["image_profile"] == image_profile
+                    and entry["package"] == key[0]
+                    and entry["id"] == key[1]
+                    and entry["version"] == value.get("InstalledVersion")
+                    for entry in exceptions
+                )
+                if not waived:
+                    blocked.add(key)
+        return blocked
     return findings(kind, report) - accepted
 
 
@@ -92,12 +127,14 @@ def main() -> None:
     parser.add_argument("kind", choices=["python", "npm", "image"])
     parser.add_argument("report", type=Path)
     parser.add_argument("--exceptions", type=Path, default=Path("security/exceptions.json"))
+    parser.add_argument("--image-profile")
     args = parser.parse_args()
     blocked = evaluate(
         args.kind,
         json.loads(args.report.read_text(encoding="utf-8-sig")),
         json.loads(args.exceptions.read_text(encoding="utf-8")),
         today=datetime.now(UTC).date(),
+        image_profile=args.image_profile,
     )
     print(json.dumps({"kind": args.kind, "blocked": sorted(blocked)}))
     raise SystemExit(1 if blocked else 0)
