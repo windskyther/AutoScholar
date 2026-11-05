@@ -99,6 +99,6 @@ def test_audit_migration_upgrade_downgrade_upgrade(tmp_path: Path) -> None:
     # Isolate the new migration. Historical PostgreSQL FK alterations are intentionally
     # not emulated by SQLite; the complete chain has a separate PostgreSQL check.
     command.stamp(config, "20261006_0013")
-    command.upgrade(config, "head")
+    command.upgrade(config, "20261104_0014")
     command.downgrade(config, "20261006_0013")
-    command.upgrade(config, "head")
+    command.upgrade(config, "20261104_0014")

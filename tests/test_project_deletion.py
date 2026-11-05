@@ -1,8 +1,11 @@
+import sqlite3
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import httpx
 import pytest
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from autoscholar.agent.database_models import Base
@@ -20,6 +23,33 @@ from tests.api_credentials import AUTH, TOKEN_SECRET
 from tests.governance import offline_app
 from tests.test_chat import SuccessfulProvider
 from tests.test_health import FakeDependency
+
+
+def test_project_deletion_migration_preserves_existing_projects(tmp_path: Path) -> None:
+    database = tmp_path / "project-schema.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE projects (id VARCHAR(36) PRIMARY KEY, name VARCHAR(200) NOT NULL)"
+        )
+        connection.execute("INSERT INTO projects VALUES ('existing', 'Keep original project')")
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", "sqlite+aiosqlite:///" + database.as_posix())
+    command.stamp(config, "20261104_0014")
+    command.upgrade(config, "20261105_0015")
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT id,name,deleted_at FROM projects").fetchall() == [
+            ("existing", "Keep original project", None)
+        ]
+    command.downgrade(config, "20261104_0014")
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT id,name FROM projects").fetchall() == [
+            ("existing", "Keep original project")
+        ]
+    command.upgrade(config, "20261105_0015")
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT id,name,deleted_at FROM projects").fetchall() == [
+            ("existing", "Keep original project", None)
+        ]
 
 
 @pytest.fixture
