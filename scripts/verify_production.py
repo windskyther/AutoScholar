@@ -18,7 +18,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tls", action="store_true", help="Use a temporary localhost certificate")
     parser.add_argument("--openssl", help="OpenSSL executable (required for --tls)")
+    parser.add_argument("--api", default="autoscholar-api:prod-local")
+    parser.add_argument("--web", default="autoscholar-web:prod-local")
+    parser.add_argument("--sandbox", default="autoscholar-python-sandbox:phase11")
+    parser.add_argument(
+        "--workflow", action="store_true", help="Run real CPU workflow through Nginx"
+    )
+    parser.add_argument(
+        "--fault-once", action="store_true", help="Lose one metric artifact, then recover"
+    )
+    parser.add_argument("--download-dataset", action="store_true")
+    parser.add_argument(
+        "--keep-stack", action="store_true", help="Retain owned fixture for recovery drill"
+    )
     args = parser.parse_args()
+    if args.fault_once and not args.workflow:
+        raise SystemExit("--fault-once requires --workflow")
     root = Path(__file__).resolve().parents[1]
     project = "phase11e-" + uuid4().hex[:12]
     output = root / "data/validation" / project
@@ -36,7 +51,13 @@ def main() -> None:
         and not key.upper().startswith(("COMPOSE_", "PROD_", "AUTOSCHOLAR_"))
     }
     environment.update(
-        COMPOSE_PROJECT_NAME=project, PROD_SECRETS_DIR=str(secret_dir), PYTHONUTF8="1"
+        COMPOSE_PROJECT_NAME=project,
+        PROD_SECRETS_DIR=str(secret_dir),
+        PYTHONUTF8="1",
+        AUTOSCHOLAR_API_IMAGE=args.api,
+        AUTOSCHOLAR_WEB_IMAGE=args.web,
+        SANDBOX_IMAGE=args.sandbox,
+        PHASE11_TEST_FAULT_ONCE="1" if args.fault_once else "0",
     )
     command = [
         "docker",
@@ -50,6 +71,8 @@ def main() -> None:
         "-f",
         "tests/integration/phase11.production.yaml",
     ]
+    if args.workflow:
+        command += ["-f", "tests/integration/phase11.workflow.yaml"]
 
     def run(values: list[str], *, directory: Path = root) -> str:
         result = subprocess.run(
@@ -59,6 +82,7 @@ def main() -> None:
             capture_output=True,
             encoding="utf-8",
             errors="replace",
+            timeout=600,
         )
         # Logs are restricted to the generated fixture; no normal application .env is loaded.
         name = f"{len(list(output.glob('command-*.log'))):02d}"
@@ -137,10 +161,58 @@ def main() -> None:
         "started": datetime.now(UTC).isoformat(),
         "only_loopback_web_published": True,
         "supplier_credentials": False,
-        "workflow_execution": "held; ingress acceptance only",
+        "workflow_execution": "real CPU with offline coordinator"
+        if args.workflow
+        else "held; ingress acceptance only",
+        "expected_training_runs": 2 if args.fault_once else 1 if args.workflow else 0,
         "accepted": False,
     }
     try:
+        if args.workflow:
+            dataset = config["volumes"]["mnist"]["name"]
+            run(
+                [
+                    "docker",
+                    "volume",
+                    "create",
+                    "--label",
+                    "com.docker.compose.project=" + project,
+                    "--label",
+                    "com.docker.compose.volume=mnist",
+                    dataset,
+                ]
+            )
+            prepare = [
+                "docker",
+                "run",
+                "--rm",
+                "--user",
+                "0:0",
+                "--label",
+                "com.docker.compose.project=" + project,
+                "--mount",
+                f"type=volume,source={dataset},target=/datasets/mnist",
+            ]
+            if args.download_dataset:
+                run([*prepare, args.sandbox, "python", "/opt/autoscholar/prepare_mnist.py"])
+            else:
+                run(
+                    [
+                        *prepare,
+                        "--network",
+                        "none",
+                        "--mount",
+                        "type=volume,source=autoscholar_mnist_data,target=/public,readonly",
+                        "--mount",
+                        "type=bind,source="
+                        + str(root / "tests/integration/phase9_stack_runtime.py")
+                        + ",target=/dataset_fixture.py,readonly",
+                        args.api,
+                        "python",
+                        "/dataset_fixture.py",
+                        "dataset-copy",
+                    ]
+                )
         run([*command, "up", "-d", "--no-build", "--wait", "--wait-timeout", "240"])
         target = "8443" if args.tls else "8080"
         published = run([*command, "port", "web", target]).strip()
@@ -152,11 +224,20 @@ def main() -> None:
             PRODUCTION_REPORT_FILE=str(output / "browser.json"),
         )
         run(
-            ["node", "scripts/browser.mjs", "test", "--config", "playwright.production.config.ts"],
+            [
+                "node",
+                "scripts/browser.mjs",
+                "test",
+                "--config",
+                "playwright.workflow.config.ts"
+                if args.workflow
+                else "playwright.production.config.ts",
+            ],
             directory=root / "web",
         )
         browser = json.loads((output / "browser.json").read_text(encoding="utf-8"))
-        assert browser["stats"]["expected"] == 6 and browser["stats"]["unexpected"] == 0
+        expected = 1 if args.workflow else 6
+        assert browser["stats"]["expected"] == expected and browser["stats"]["unexpected"] == 0
         containers = run([*command, "ps", "-q"]).split()
         actual = json.loads(run(["docker", "inspect", *containers]))
         for item in actual:
@@ -194,19 +275,29 @@ def main() -> None:
             in {"api", "workflow-worker", "document-worker"}
         }
         assert len(image_ids) == 1
-        report.update(accepted=True, browser_passed=6, url=url, backend_image_id=image_ids.pop())
+        report.update(
+            accepted=True, browser_passed=expected, url=url, backend_image_id=image_ids.pop()
+        )
     finally:
         try:
             run([*command, "logs", "--no-color", "--tail", "80"])
         finally:
             # Rendered configuration above rejects external/non-owned volumes before any creation.
             assert output.resolve().is_relative_to((root / "data/validation").resolve())
-            run([*command, "down", "--volumes", "--remove-orphans"])
-            remaining = run(
-                ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={project}"]
-            ).strip()
-            assert not remaining
-            report["containers_removed"] = True
+            retained = args.keep_stack and report["accepted"]
+            if not retained:
+                run([*command, "down", "--volumes", "--remove-orphans"])
+                remaining = run(
+                    [
+                        "docker",
+                        "ps",
+                        "-aq",
+                        "--filter",
+                        f"label=com.docker.compose.project={project}",
+                    ]
+                ).strip()
+                assert not remaining
+            report["containers_removed"] = not retained
             (output / "receipt.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
             print(
                 json.dumps(

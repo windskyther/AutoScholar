@@ -74,10 +74,13 @@ class OfflineCoordinator:
             args = {"status": "PASS"}
         elif name == "submit_plan_revision":
             args = {
-                "plan": payload["plan"],
-                "rerun_steps": ["train"],
+                "rerun_steps": payload.get("repair_constraints", {}).get("rerun_steps")
+                or ["train"],
                 "reason": "Retry test-injected missing artifact",
             }
+            definition = next(tool for tool in (tools or []) if tool.name == name)
+            if "plan" in definition.parameters.get("properties", {}):
+                args["plan"] = payload["plan"]
         else:
             name = "submit_code_ready"
             args = {"summary": "Validate seeded sources with real static checks and pytest"}

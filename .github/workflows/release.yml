@@ -1,0 +1,56 @@
+name: Publish reviewed images
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Reviewed release version, such as v0.1.0
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: autoscholar-image-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - run: uv sync --frozen --group security --python 3.12
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci
+        working-directory: web
+      - run: node scripts/browser.mjs install --with-deps chromium
+        working-directory: web
+      - run: uv run --no-sync python scripts/install_security_tools.py gitleaks
+      - run: uv run --no-sync python scripts/check_repository.py --gitleaks data/tooling/gitleaks/8.30.1/gitleaks
+      - run: uv run --no-sync python scripts/audit_dependencies.py
+      - run: uv run --no-sync python scripts/build_production.py --sandbox --pull --refresh-system
+      - run: uv run --no-sync python scripts/verify_stack.py --download-dataset
+      - run: uv run --no-sync python scripts/verify_production.py
+      - run: uv run --no-sync python scripts/verify_production.py --tls
+      - run: uv run --no-sync python scripts/verify_production.py --workflow --download-dataset
+      - run: uv run --no-sync python scripts/verify_production.py --workflow --fault-once --download-dataset
+      - run: uv run --no-sync python scripts/verify_recovery.py
+      - run: uv run --no-sync python scripts/install_security_tools.py trivy
+      - run: uv run --no-sync python scripts/release_images.py --version "$RELEASE_VERSION" --publish
+        env:
+          GH_TOKEN: ${{ github.token }}

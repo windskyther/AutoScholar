@@ -18,7 +18,20 @@ def main() -> None:
     parser.add_argument("--api", default="autoscholar-api:prod-local")
     parser.add_argument("--web", default="autoscholar-web:prod-local")
     parser.add_argument("--sandbox", default="autoscholar-python-sandbox:phase11")
+    parser.add_argument(
+        "--db-repository",
+        action="append",
+        choices=["public.ecr.aws/aquasecurity/trivy-db:2", "ghcr.io/aquasecurity/trivy-db:2"],
+        help="Official database mirror; may be repeated for fallback",
+    )
     args = parser.parse_args()
+    repositories = args.db_repository or [
+        "public.ecr.aws/aquasecurity/trivy-db:2",
+        "ghcr.io/aquasecurity/trivy-db:2",
+    ]
+    database_flags = [
+        value for repository in repositories for value in ("--db-repository", repository)
+    ]
     root = Path(__file__).resolve().parents[1]
     output = (args.output or root / "data/validation" / ("images-" + uuid4().hex[:12])).resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -58,8 +71,7 @@ def main() -> None:
                     str(report_file),
                     "--cache-dir",
                     str(root / "data/tooling/trivy-cache"),
-                    "--db-repository",
-                    "ghcr.io/aquasecurity/trivy-db:2",
+                    *database_flags,
                     "--no-progress",
                     "--timeout",
                     "15m",

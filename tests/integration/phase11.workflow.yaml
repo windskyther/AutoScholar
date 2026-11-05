@@ -1,0 +1,13 @@
+# Additional override for the public offline-coordinator production workflow drill.
+services:
+  api:
+    command: [uvicorn, 'fixture:create_workflow_app', --factory, --app-dir, /acceptance, --host, 0.0.0.0, --port, '8000', --no-proxy-headers, --no-access-log]
+    environment:
+      WORKFLOW_APPROVAL_THRESHOLD: '0'
+      PHASE11_TEST_FAULT_ONCE: ${PHASE11_TEST_FAULT_ONCE:-0}
+  workflow-worker:
+    command: [python, /acceptance/fixture.py, workflow]
+    environment:
+      EMBEDDING_DIMENSIONS: '8'
+      WORKFLOW_APPROVAL_THRESHOLD: '0'
+      PHASE11_TEST_FAULT_ONCE: ${PHASE11_TEST_FAULT_ONCE:-0}

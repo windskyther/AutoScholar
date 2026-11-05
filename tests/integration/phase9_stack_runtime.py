@@ -434,6 +434,8 @@ async def database_checks() -> None:
 
 
 async def backfill_check() -> None:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
     from sqlalchemy import text
 
     from autoscholar.infrastructure import Database
@@ -443,7 +445,7 @@ async def backfill_check() -> None:
         async with db.session_factory() as session:
             assert (
                 await session.scalar(text("SELECT version_num FROM alembic_version"))
-                == "20261006_0013"
+                == ScriptDirectory.from_config(Config("/app/alembic.ini")).get_current_head()
             )
             values = (
                 (
@@ -557,6 +559,33 @@ async def main() -> None:
         await backfill_check()
     elif mode == "persistence-check":
         await persistence_check()
+    elif mode == "diagnostics":
+        from sqlalchemy import text
+
+        from autoscholar.infrastructure import Database
+
+        database = Database(settings().database_url)
+        try:
+            async with database.session_factory() as session:
+                for table, fields in (
+                    ("workflow_jobs", "task_id,status,error_code,active,pending_calls"),
+                    ("tool_calls", "task_id,tool_name,status,error_code,output"),
+                    ("agent_tasks", "id,status,error_code,error_message"),
+                ):
+                    rows = (
+                        (
+                            await session.execute(
+                                text(
+                                    f"SELECT {fields} FROM {table} ORDER BY created_at DESC LIMIT 8"
+                                )
+                            )
+                        )
+                        .mappings()
+                        .all()
+                    )
+                    print(json.dumps({table: [dict(row) for row in rows]}, default=str))
+        finally:
+            await database.close()
     elif mode == "ingress":
         await ingress()
     else:

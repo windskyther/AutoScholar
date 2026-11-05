@@ -3,6 +3,8 @@
 import asyncio
 import hashlib
 import io
+import json
+import os
 import signal
 from collections.abc import Sequence
 from contextlib import asynccontextmanager, suppress
@@ -146,6 +148,12 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> Any:
         async with original(application):
+            state_file = config.document_storage_path / ".phase11-ingress-state.json"
+            if state_file.exists():
+                state.update(json.loads(state_file.read_text(encoding="utf-8")))
+                yield
+                assert provider.calls == 0
+                return
             project = await app.state.knowledge_repository.create_project(
                 name="中文生产验收项目", description="临时隔离栈"
             )
@@ -225,6 +233,7 @@ def create_app() -> FastAPI:
                 child, experiment.id, "reports/report.md", "# 中文报告\n公开生产入口夹具。".encode()
             )
             state["artifact_id"] = artifact.id
+            state_file.write_text(json.dumps(state), encoding="utf-8")
             yield
             assert provider.calls == 0
 
@@ -305,7 +314,81 @@ async def hold_workflow() -> None:
         await stop.wait()
 
 
+async def seed_pending() -> None:
+    config = Settings(_env_file=None)  # type: ignore[call-arg]
+    state_file = config.document_storage_path / ".phase11-ingress-state.json"
+    prior = state_file.read_bytes()
+    state_file.unlink()
+    try:
+        app = create_app()
+        async with app.router.lifespan_context(app):
+            pass  # The shared public fixture creates a coherent pending approval.
+    finally:
+        state_file.write_bytes(prior)
+
+
+def create_workflow_app() -> FastAPI:
+    """Production security/storage settings with an explicitly offline coordinator."""
+    bootstrap = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert bootstrap.app_env == "production" and not bootstrap.llm_api_key
+    with patch("autoscholar.core.config.get_settings", return_value=bootstrap):
+        from autoscholar.main import create_app as factory
+        from autoscholar.orchestration.smoke import FaultOnceSandbox, OfflineCoordinator
+    from autoscholar.coding.sandbox import SandboxClient
+
+    config = IngressSettings(_env_file=None)  # type: ignore[call-arg]
+
+    client = SandboxClient(
+        config.sandbox_manager_url,
+        token=config.sandbox_manager_token,
+        timeout_seconds=config.experiment_timeout_seconds + 10,
+    )
+    sandbox = FaultOnceSandbox(client) if os.getenv("PHASE11_TEST_FAULT_ONCE") == "1" else client
+    app = factory(
+        config,
+        llm_provider=OfflineCoordinator(),
+        research_services=[],
+        embedding_provider=PublicEmbeddings(),
+        sparse_embedding_provider=PublicSparse(),
+        reranker=PublicReranker(),
+        sandbox_executor=sandbox,
+    )
+
+    @app.get("/__acceptance/public-pdf")
+    async def pdf() -> Response:
+        return Response(public_pdf(), media_type="application/pdf")
+
+    return app
+
+
+async def workflow() -> None:
+    app = create_workflow_app()
+    stop = asyncio.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        asyncio.get_running_loop().add_signal_handler(sig, stop.set)
+    async with app.router.lifespan_context(app), heartbeat():
+        while not stop.is_set():
+            tick = asyncio.create_task(app.state.durable_service.tick())
+            stopping = asyncio.create_task(stop.wait())
+            done, _ = await asyncio.wait({tick, stopping}, return_when=asyncio.FIRST_COMPLETED)
+            if stopping in done:
+                tick.cancel()
+            stopping.cancel()
+            results = await asyncio.gather(tick, stopping, return_exceptions=True)
+            if isinstance(results[0], Exception):
+                raise results[0]
+            if not stop.is_set() and results[0] is not True:
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), 0.2)
+
+
 if __name__ == "__main__":
     import sys
 
-    asyncio.run(documents() if sys.argv[1] == "documents" else hold_workflow())
+    actions = {
+        "documents": documents,
+        "workflow": workflow,
+        "hold": hold_workflow,
+        "seed-pending": seed_pending,
+    }
+    asyncio.run(actions[sys.argv[1]]())

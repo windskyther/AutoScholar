@@ -1,0 +1,43 @@
+# Only merge onto the public phase9 fixture with a fresh, owned Phase 11 project.
+x-image: &tested-image
+  image: ${PHASE11_API_IMAGE:-autoscholar-api:prod-local}
+services:
+  qdrant:
+    environment:
+      QDRANT__TELEMETRY_DISABLED: 'true'
+  api:
+    <<: *tested-image
+  migrate:
+    <<: *tested-image
+  workflow-worker:
+    <<: *tested-image
+  document-worker:
+    <<: *tested-image
+  ingress:
+    <<: *tested-image
+    ports: !override ['127.0.0.1::8000']
+  dataset-copy:
+    <<: *tested-image
+    user: '0:0'
+  volume-init:
+    <<: *tested-image
+    user: '0:0'
+    command: [python, /acceptance/controller.py, initialize]
+    network_mode: none
+    volumes:
+      - ./phase11_stack_manager.py:/acceptance/controller.py:ro
+      - validation:/validation
+  sandbox-manager:
+    <<: *tested-image
+    user: '0:0'
+    command: [uvicorn, 'controller:create_app', --factory, --app-dir, /acceptance, --host, 0.0.0.0, --port, '8090', --no-access-log]
+    environment:
+      APP_ENV: test
+      SANDBOX_IMAGE: ${PHASE11_CPU_IMAGE:-autoscholar-python-sandbox:phase11}
+      ACCEPTANCE_OWNER: ${COMPOSE_PROJECT_NAME}
+    volumes:
+      - ./phase11_stack_manager.py:/acceptance/controller.py:ro
+volumes:
+  public-mnist:
+    external: true
+    name: ${PHASE11_DATASET_SOURCE:?Set the owned public fixture volume}

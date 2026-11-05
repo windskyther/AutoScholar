@@ -1,8 +1,10 @@
 # Container vulnerability remediation — 2026-11-05
 
-This module fixes the available application/runtime updates and keeps unresolved
-upstream findings blocking publication. It does **not** declare the images free of
-vulnerabilities or accept Phase 11F as a whole. Normal services were not replaced.
+This module fixes available application/runtime updates and retains raw upstream
+findings. The initial counts below precede the individually scoped, expiring
+[2026-11-05 runtime review](container-review-20261105.md). Reviewed findings remain
+visible; new, mismatched or expired findings block publication. This document does
+not itself accept Phase 11F or authorize publication. Normal services were not replaced.
 
 ## Implemented fixes
 
@@ -27,7 +29,7 @@ newer upstream SQLite findings remain. See the [official Python image](https://h
 and [Debian's CVE-2025-7458 status](https://security-tracker.debian.org/tracker/CVE-2025-7458).
 The CPU pair follows the [official PyTorch CPU installation matrix](https://pytorch.org/get-started/previous-versions/).
 
-## Current results and remaining blockers
+## Historical remediation and current review
 
 Counts below are unique **package/advisory pairs**, including HIGH, CRITICAL and
 UNKNOWN severities. They are not counts of distinct CVEs; one source-package issue
@@ -47,10 +49,10 @@ high/critical/unknown findings are zero in both images.
 
 | Remaining group | Trigger assessment and disposition |
 |---|---|
-| util-linux: CVE-2026-76642, CVE-2026-78408/78409/78410 | Privileged mount hooks, namespace/cgroup operations or authorized fstab paths are involved. The application does not dispatch these utilities; sandboxes have no network or Docker socket, use only dedicated workspace/dataset mounts, drop capabilities and prohibit gaining privileges. SUID/SGID bits are removed. Upstream records remain blocking. |
-| libacl1: CVE-2026-54369 | Requires a privileged caller applying pathname-based ACL operations to attacker-controlled paths. Application file handling does not expose an ACL-management API. This is a path assessment, not a patch or exemption. |
+| util-linux: CVE-2026-76642, CVE-2026-78408/78409/78410 | Privileged mount hooks, namespace/cgroup operations or authorized fstab paths are involved. The application does not dispatch these utilities; sandboxes have no network or Docker socket, use only dedicated workspace/dataset mounts, drop capabilities and prohibit gaining privileges. SUID/SGID bits are removed. Each exact package/version pair is covered by the linked temporary review; raw findings stay visible. |
+| libacl1: CVE-2026-54369 | Requires a privileged caller applying pathname-based ACL operations to attacker-controlled paths. Application file handling does not expose an ACL-management API. The linked review records a temporary scoped disposition, not an upstream patch. |
 | ncurses: CVE-2025-69720 | Upstream identifies the `infocmp` command-line parser. Services run without a TTY and do not dispatch it. The binary-package findings remain recorded. |
-| SQLite: CVE-2026-119371/119372/119373/119374/119375/119376/119379 | Crafted SQL, SQLite files or extensions are implicated. Production services use PostgreSQL and do not accept uploaded SQLite databases; generated code remains confined to its own sandbox. No SQLite exception is enabled. UNKNOWN findings continue to block. |
+| SQLite: CVE-2026-119371/119372/119373/119374/119375/119376/119379 | Crafted SQL, SQLite files or extensions are implicated. Production services use PostgreSQL and do not accept uploaded SQLite databases; generated code remains confined to its own sandbox. The linked review records each exact alias/version separately, including UNKNOWN records; new or expired findings still block. |
 | systemd: CVE-2026-16742 | Upstream concerns a logged-in homed-managed account. These service containers do not run systemd-homed. The library/source-package records remain recorded. |
 | Perl: CVE-2026-9538 | Upstream concerns Archive::Tar processing attacker-sized entries. Application archives use the bounded Python path, not Perl Archive::Tar. The package record remains recorded. |
 
@@ -69,8 +71,10 @@ Primary upstream descriptions: [mount hooks](https://security-tracker.debian.org
 [systemd-homed](https://security-tracker.debian.org/tracker/CVE-2026-16742),
 [Archive::Tar](https://security-tracker.debian.org/tracker/CVE-2026-9538).
 
-`security/exceptions.json` remains empty. There is no bulk suppression or
-`--ignore-unfixed`. Future image exceptions must additionally match the exact image
+The initial scan used an empty `security/exceptions.json`. The subsequent review
+records each advisory and binary-package alias separately for its exact profile
+and installed version, with expiry on 2026-11-19. There is no wildcard suppression or
+`--ignore-unfixed`. Image exceptions must match the exact image
 profile and installed package version and provide a primary HTTPS source; a review
 of one image/version cannot waive another. Package updates or newly detected
 advisories therefore require new review.
@@ -95,8 +99,11 @@ image or updates running normal services.
 
 The audit reads immutable local image IDs, saves complete package/vulnerability
 inventories under `data/validation/`, and evaluates API, Web and CPU profiles
-separately. It exits **1** while these upstream blockers remain; scan errors also
-fail. A newly green source/dependency CI run is not permission to publish an image.
+separately. It exits **1** for unresolved, mismatched or expired findings; scan errors also
+fail. The refreshed 2026-11-05 inventory contains 52/0/52 raw blocking pairs for
+API/Web/CPU, including the newly reported zlib CVE-2026-76844. All 104 reviewed
+pairs match the scoped decisions through 2026-11-19; unresolved counts are 0/0/0.
+This is conditional risk disposition, not a claim of zero raw vulnerabilities. A newly green source/dependency CI run is not permission to publish an image.
 
 Compatibility checks cover actual PostgreSQL/Redis/Qdrant and HTTP/HTTPS browser
 flows, plus a fresh Docker controller using only a verified public MNIST copy.
@@ -106,5 +113,5 @@ statistical model-quality evidence. Temporary execution resources are ownership
 checked before cleanup; no supplier API is called.
 
 Continue tracking patched stable Debian packages, rebuilding and rescanning when
-available. These unresolved records, portable CPU CI integration and manual image
-publication gates remain part of unfinished Phase 11F.
+available. Completion requires the runtime constraints, container CI and manual
+publication gate to pass together; the existence of a review record is insufficient.

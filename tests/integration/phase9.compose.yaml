@@ -21,6 +21,7 @@ x-runtime: &runtime
     WORKSPACE_ROOT: /validation/workspaces
     DOCUMENT_STORAGE_PATH: /validation/documents
     SANDBOX_MANAGER_URL: http://sandbox-manager:8090
+    SANDBOX_MANAGER_TOKEN: phase11-public-manager-1234567890
     WORKFLOW_WORKER_POLL_SECONDS: '0.2'
     WORKFLOW_JOB_LEASE_SECONDS: '10'
     WORKFLOW_APPROVAL_THRESHOLD: '0'
@@ -88,6 +89,7 @@ services:
     command: [uvicorn, autoscholar.sandbox.manager:app, --host, 0.0.0.0, --port, '8090', --no-access-log]
     environment:
       SANDBOX_IMAGE: autoscholar-python-sandbox:phase4
+      SANDBOX_MANAGER_TOKEN: phase11-public-manager-1234567890
       SANDBOX_DATASET_VOLUME: '${COMPOSE_PROJECT_NAME}_mnist'
     volumes:
       - ../../src:/app/src:ro

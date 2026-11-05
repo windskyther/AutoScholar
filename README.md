@@ -1491,7 +1491,7 @@ Coding 检查及一次训练后触发指标故障，并按关闭重规划规则�
 
 11D 已加入沙箱管理器独立鉴权、操作白名单、Docker 对象归属校验、取消清理与归档/输出边界加固，并为三条历史重规划失败增加有界诊断回放。使用沙箱前需单独配置 `SANDBOX_MANAGER_TOKEN`（随机 32 字符以上，与 API/MCP Token 不同）；API、Workflow Worker 和管理器使用同一管理器凭据。详见[沙箱控制面说明](docs/security/sandbox.md)。
 
-后续仍需完成 11E–11H：生产 Nginx/镜像、完整发布与备份恢复验收；本批不宣告 Phase 11 整体验收。
+11E–11H 已提供独立生产 Nginx/镜像、真实 CPU 整栈 CI、临时风险审查、手动发布门槛及停写备份/恢复与兼容回退工具。操作见[生产交付](docs/operations/production.md)、[维护恢复](docs/operations/recovery.md)和[供应链检查](docs/security/supply-chain.md)。整体验收以同提交的 Checks 和隔离测试记录为准；当前范围为单操作者、CPU、本机入口，未执行实际发布或部署。
 
 ## 开发路线
 
@@ -1508,7 +1508,7 @@ Coding 检查及一次训练后触发指标故障，并按关闭重规划规则�
 | Phase 8 | MCP 工具平台（无付费 CPU 验收、轻量真实 LLM/Tavily 补测通过） |
 | Phase 9 | 本地 Web 工作台（9A–9G 无付费 CPU 验收通过） |
 | Phase 10 | AutoScholar-Eval：既定工程验收通过，15/15 组同版本真实配对及最终审计完成 |
-| Phase 11 | 11A–11D API、CI、请求治理及沙箱控制面已实现，11E–11H 待完成 |
+| Phase 11 | 单操作者安全、生产镜像/CPU 整栈 CI、备份恢复与手动发布门槛 |
 
 ## 分支与提交约定
 

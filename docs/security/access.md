@@ -70,7 +70,8 @@ developer's `.env`, rotate real credentials, restart consumers or migrate data.
 
 CI runs locked dependencies, backend tests and frontend checks with public test
 credentials only. No supplier API keys, real data, designs, deployment credentials
-or automatic model calls are part of Checks. Full production-stack testing and
-external image publication/deployment are later milestones. CI uses read-only
+or automatic model calls are part of Checks. Full production-stack testing now
+runs in the isolated container job; image publication is a separate manual workflow,
+and actual deployment remains an operator action. CI uses read-only
 permissions, immutable Action commits and isolated hosted runners as described in
 [GitHub's secure-use guidance](https://docs.github.com/en/actions/reference/security/secure-use).

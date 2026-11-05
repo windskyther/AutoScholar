@@ -136,13 +136,14 @@ TLS 测试需要本机 OpenSSL；不在 PATH 时用 `--openssl "D:/path/to/opens
 应用卷使用项目作用域名称，不自动引用开发卷。未标记且非空的目录初始化会拒绝执行；
 不要向真实数据添加标记以绕过检查，也不要递归 `chown` 开发数据或缓存。旧数据应在
 停写和完整备份后复制到新卷，核对数据库、文件摘要与向量维度，并在副本演练后切换。
-完整跨存储备份恢复、受控升级回退、供应链发布门槛与最终 CPU 整栈验收仍属后续模块。
+跨存储备份恢复与兼容升级回退见[维护恢复手册](recovery.md)；供应链和手动发布门槛见[供应链检查](../security/supply-chain.md)。
 普通 `down` 保留数据卷；`down --volumes` 仅用于明确拥有的临时验收项目。
 
 生产 CPU 镜像现使用 `autoscholar-python-sandbox:phase11`，可用
 `scripts/build_production.py --sandbox` 一起构建。依赖在镜像构建时按独立哈希锁安装，
 运行容器不保留 pip；需要额外依赖时先更新锁文件并重建。当前扫描与未修复上游项见
-[容器漏洞处理记录](../security/container-vulnerabilities.md)，镜像发布仍受这些阻断项限制。
+[容器漏洞处理记录](../security/container-vulnerabilities.md)，新增、失配或到期的审查项会阻断发布。
+
 ## Refreshing image security updates
 
 From a clean checkout, use the following to refresh base images and signed OS updates:
@@ -158,3 +159,26 @@ publish images nor restart services; run the image audit and isolated acceptance
 again before approving a release. A source revision change alone is not an OS
 security refresh.
 
+## 真实 CPU 整体流程
+
+构建 API/Web 和 CPU 镜像后，可运行以下公开夹具验收；每轮使用新项目和新卷，完成后清理。
+
+```powershell
+python scripts/verify_stack.py
+python scripts/verify_production.py --workflow
+python scripts/verify_production.py --workflow --fault-once
+python scripts/verify_recovery.py
+```
+
+这些命令使用显式脚本协调器、确定性嵌入和真实 Docker CPU；不调用 LLM/Tavily，
+不读取真实 `.env`。正常流程验证一次训练；故障流程验证一次失败、重新审批、
+一次实验重试以及一个重规划预算，不改写失败记录。`verify_stack.py` 还检查迁移
+降级/升级、旧行回填、Worker/API 重启后的持久化与事件游标。
+默认只读复制本机 `autoscholar_mnist_data` 的公开 MNIST 数据。新机器/CI 没有该卷时，
+对 stack/workflow 命令加 `--download-dataset`，仅受信下载器联网取得哈希校验的公开数据。
+恢复演练使用已准备的镜像；`--previous-api` 可指定旧兼容镜像。默认同镜像用于新机器
+的恢复/重启门槛，不能将其当作两个不同版本的升级证据。
+
+本阶段交付范围是单操作者、CPU、本机回环入口。公网域名/证书链、多用户隔离、
+实际镜像发布和部署切换需要各自配置与授权。容器临时风险审查仍适用；工程验收不改写
+历史模型结果，也不证明模型研究结论的统计可靠性。
