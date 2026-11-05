@@ -37,7 +37,7 @@ test('real approval stays paused, explicit resume/pause/cancel require confirmat
   await expect(section.getByRole('button', { name: '恢复任务', exact: true })).toBeDisabled();
   await section.getByRole('button', { name: '审阅与决定' }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByText('风险级别 3 · MNIST CPU 实验')).toBeVisible();
+  await expect(dialog.getByText('MNIST CPU 实验', { exact: true })).toBeVisible();
   await dialog.locator('summary').click();
   await expect(dialog.locator('pre')).toContainText('train_samples');
   await dialog.locator('summary').click();

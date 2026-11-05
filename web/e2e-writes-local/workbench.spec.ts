@@ -4,7 +4,7 @@ import type { APIRequestContext, Page } from '@playwright/test';
 const TOKEN = 'public-test-fixture-token';
 const fixtureURL = 'http://127.0.0.1:18009';
 const authorization = { Authorization: 'Bearer ' + TOKEN };
-const consent = '我确认将此研究目标交给 Worker 自动执行，并接受可能产生的 API 费用。';
+const consent = '我确认提交后自动执行研究任务，并接受可能产生的 API 费用。';
 // One shared, owned fixture; stop on failure and clean up once, never restart against a stopped DB.
 test.describe.configure({ mode: 'serial' });
 

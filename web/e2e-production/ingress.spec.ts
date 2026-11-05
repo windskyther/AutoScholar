@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const TOKEN = process.env.PRODUCTION_TEST_TOKEN!;
 const headers = { Authorization: 'Bearer ' + TOKEN };
-const consent = '我确认将此研究目标交给 Worker 自动执行，并接受可能产生的 API 费用。';
+const consent = '我确认提交后自动执行研究任务，并接受可能产生的 API 费用。';
 test.describe.configure({ mode: 'serial' });
 
 async function state(request: APIRequestContext) {
