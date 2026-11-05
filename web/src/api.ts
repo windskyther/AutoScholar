@@ -13,12 +13,14 @@ export class ApiError extends Error {
 
 const messages: Record<string, string> = {
   experiment_auth_required: '操作者 Token 无效，请重新连接。',
-  experiment_api_not_configured: '服务端尚未配置 EXPERIMENT_API_TOKEN。',
+  experiment_api_not_configured: '尚未配置访问凭据，请先完成设置。',
   project_not_found: '项目不存在。',
   workbench_task_not_found: '根任务不存在，或链接指向了子任务。',
   workbench_store_unavailable: '任务存储暂不可用。',
-  network_unavailable: '无法连接本地 API，请检查服务是否启动。',
-  invalid_response: 'API 返回格式异常，请检查后端是否已升级。',
+  network_unavailable: '无法连接服务，请检查服务是否启动。',
+  invalid_response: '暂时无法读取服务返回的数据，请稍后重试。',
+  project_has_active_tasks: '项目中还有未结束或待核对的任务，请先处理后再删除。',
+  project_has_active_documents: '项目中的文档仍在处理中，请稍后再删除。',
   response_too_large: '响应超过安全大小上限。',
   request_validation_error: '输入或查询参数不合法。',
   documents_selection_required: '请选择 1–100 个已就绪 PDF。',
@@ -166,6 +168,9 @@ export class ApiClient {
   }
   createProject(name: string, description: string): Promise<Project> {
     return this.write('/projects', isProject, { name: name.trim(), description: description.trim() || null });
+  }
+  deleteProject(projectId: string): Promise<void> {
+    return this.request(`/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE', empty: true });
   }
   documents(projectId: string, page: number, signal?: AbortSignal): Promise<Page<PDFDocument>> {
     return this.checked(`/projects/${encodeURIComponent(projectId)}/documents?limit=20&offset=${(page - 1) * 20}`,

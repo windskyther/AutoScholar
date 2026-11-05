@@ -18,6 +18,21 @@ function json(value: unknown, status = 200) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('explicit browser writes', () => {
+  it('deletes a project with authentication and accepts an empty success response', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetcher);
+    await new ApiClient('test-token').deleteProject('project-a');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][0]).toBe('/api/workbench/projects/project-a');
+    expect(fetcher.mock.calls[0][1]).toMatchObject({ method: 'DELETE', credentials: 'omit', headers: { Authorization: 'Bearer test-token' } });
+  });
+  it('retains an uncertain delete outcome without retrying the request', async () => {
+    const fetcher = vi.fn().mockResolvedValue(json({ error: { code: 'internal_error' } }, 500));
+    vi.stubGlobal('fetch', fetcher);
+    try { await new ApiClient('test-token').deleteProject('project-a'); throw new Error('Expected failure'); }
+    catch (error) { expect(isWriteUncertain(error)).toBe(true); }
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it('creates projects using authenticated JSON without automatic retries', async () => {
     const fetcher = vi.fn().mockResolvedValue(json({ id: 'project-a', name: '中文项目', description: null, created_at: time, updated_at: time }, 201));
     vi.stubGlobal('fetch', fetcher);

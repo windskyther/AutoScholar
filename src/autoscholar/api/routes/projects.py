@@ -96,10 +96,7 @@ def _project_response(record: ProjectRecord) -> ProjectResponse:
 
 
 def _document_response(record: DocumentRecord) -> DocumentResponse:
-    payload = {
-        name: getattr(record, name)
-        for name in DocumentResponse.model_fields
-    }
+    payload = {name: getattr(record, name) for name in DocumentResponse.model_fields}
     return DocumentResponse(**payload)
 
 
@@ -115,9 +112,7 @@ async def _document_or_404(
 ) -> DocumentRecord:
     document = await store.get_document(project_id, document_id)
     if document is None:
-        raise AppError(
-            status_code=404, code="document_not_found", message="Document was not found"
-        )
+        raise AppError(status_code=404, code="document_not_found", message="Document was not found")
     return document
 
 
@@ -147,6 +142,12 @@ async def list_projects(
 @router.get("/{project_id}", response_model=ProjectResponse)
 async def get_project(project_id: str, request: Request) -> ProjectResponse:
     return _project_response(await _project_or_404(_store(request), project_id))
+
+
+@router.delete("/{project_id}", status_code=204)
+async def delete_project(project_id: str, request: Request) -> Response:
+    await _store(request).delete_project(project_id)
+    return Response(status_code=204)
 
 
 @router.post("/{project_id}/documents", response_model=DocumentResponse, status_code=202)
@@ -235,9 +236,7 @@ async def get_document(project_id: str, document_id: str, request: Request) -> D
 
 
 @router.get("/{project_id}/documents/{document_id}/content")
-async def get_document_content(
-    project_id: str, document_id: str, request: Request
-) -> FileResponse:
+async def get_document_content(project_id: str, document_id: str, request: Request) -> FileResponse:
     document = await _document_or_404(_store(request), project_id, document_id)
     storage: DocumentStorage = request.app.state.document_storage
     path = storage.path_for(document.storage_key)
@@ -256,9 +255,7 @@ async def get_document_content(
 
 
 @router.post("/{project_id}/documents/{document_id}/retry", response_model=DocumentResponse)
-async def retry_document(
-    project_id: str, document_id: str, request: Request
-) -> DocumentResponse:
+async def retry_document(project_id: str, document_id: str, request: Request) -> DocumentResponse:
     store = _store(request)
     document = await _document_or_404(store, project_id, document_id)
     if document.status != "failed":
@@ -271,9 +268,7 @@ async def retry_document(
 
 
 @router.post("/{project_id}/documents/{document_id}/reindex", response_model=DocumentResponse)
-async def reindex_document(
-    project_id: str, document_id: str, request: Request
-) -> DocumentResponse:
+async def reindex_document(project_id: str, document_id: str, request: Request) -> DocumentResponse:
     store = _store(request)
     document = await _document_or_404(store, project_id, document_id)
     if document.status != "ready":

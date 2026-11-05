@@ -77,7 +77,7 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
         ? pending.action === 'reject' ? '审批已拒绝，任务仍等待处理；可修改参数或取消任务。'
           : pending.action === 'modify' ? '已创建新计划版本并暂停。单独恢复后会重新验证代码和审批，既有预算用量不会清零。'
             : '审批已批准，任务保持暂停；需单独恢复，批准本身不会开始训练。'
-        : pending.action === 'resume' ? '恢复请求已保存，Worker 可能继续调用付费 API；实际状态以快照为准。'
+        : pending.action === 'resume' ? '恢复请求已保存，任务可能继续产生 API 费用，请留意执行状态。'
           : pending.action === 'pause' ? '暂停请求已保存。正在执行的单元可能先收尾，不代表立即停止或免除已产生费用。'
             : '取消请求已保存。正在执行的单元可能先收尾，已产生费用不能撤销。');
       setDialog(null); refresh();
@@ -106,14 +106,14 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
       description={uncertain ? '写入结果未确认，已锁定变更操作。请核查最新任务及审批记录后手动解锁；不会自动重发。' : '未自动重试，请刷新后重新选择操作。'}
       action={uncertain ? <Button loading={busy} onClick={() => void inspect()}>核查并解锁</Button> : undefined} />}
     {controls.isPending ? <Loading /> : controls.isError ? <QueryError error={controls.error} retry={refresh} />
-      : !controls.data.expected ? <Alert type="info" title="历史非持久化任务仅支持查看，不支持控制或审批。" /> : <>
+      : !controls.data.expected ? <Alert type="info" title="此历史任务仅支持查看。" /> : <>
         <Space wrap><Status value={controls.data.status} />
           {(['pause', 'resume', 'cancel'] as const).map((action) => <Button key={action} danger={action === 'cancel'}
             disabled={busy || uncertain || !controls.data.actions.includes(action)}
             onClick={() => openControl(action)}>{controlLabels[action]}</Button>)}
         </Space>
         {controls.data.status === 'recovery_required' && <Alert className="snapshot-note" type="warning" showIcon
-          title="此任务需要核查不确定调用，不能直接恢复。" description="本模块不提供强制重放。请使用既有后端恢复核查流程处理回执；也可明确取消任务。" />}
+          title="此任务有执行结果待核对，暂时无法继续。" description="请核对结果，或取消任务。" />}
         {approvals.isPending ? <Loading /> : approvals.isError ? <QueryError error={approvals.error} retry={() => void approvals.refetch()} />
           : <Table<Approval> className="approval-table" rowKey="id" dataSource={approvals.data.items} scroll={{ x: 800 }} size="small"
             locale={{ emptyText: <Empty description="暂无人工审批记录。" /> }} columns={[
@@ -132,14 +132,13 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
       styles={{ body: { maxHeight: '70dvh', overflowY: 'auto' } }}
       onCancel={() => { if (!busy) { setDialog(null); setError(null); } }}>
       {dialog && <>
-        <p className="identifier">任务：{taskId} · 检查点 #{dialog.expected.checkpoint_sequence} · 事件 #{dialog.expected.event_sequence}</p>
         {stale && <Alert type="warning" title="状态或有效期已变化，请关闭窗口并刷新后重新审阅。" />}
         {dialog.kind === 'control' ? <Alert type={dialog.action === 'resume' ? 'warning' : 'info'} showIcon
           title={dialog.action === 'resume' ? '恢复后可能产生 LLM、检索等 API 费用及本地训练记录。'
             : dialog.action === 'pause' ? '暂停是协作式请求，当前单元可能继续收尾。'
               : '取消不能在工作台撤销；当前单元可能继续收尾，已产生费用不能退回。'} /> : <>
-          <Alert type="warning" showIcon title="风险级别 3 · MNIST CPU 实验"
-            description="计算量单位 = epochs × train_samples × 2 个模型，不是金额。批准不会自动恢复；修改会创建新计划版本，并使相关代码、实验及下游结果失效。" />
+          <Alert type="warning" showIcon title="MNIST CPU 实验"
+            description="计算量按训练轮数、样本数和模型数估算，不代表金额。批准后仍需恢复任务；修改配置会使相关代码、实验和后续结果失效。" />
           <Descriptions size="small" bordered column={2} items={[
             { key: 'version', label: '计划 / 步骤', children: `v${dialog.approval.plan_version} / ${dialog.approval.step_id}` },
             { key: 'cost', label: '当前计算量单位', children: dialog.approval.cost_units.toLocaleString('zh-CN') },

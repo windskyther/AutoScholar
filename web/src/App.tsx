@@ -18,7 +18,7 @@ function Shell() {
   return <TaskSubmissionProvider><WorkspaceLayout /></TaskSubmissionProvider>;
 }
 function WorkspaceLayout() {
-  const { api, session, disconnect } = useConnection();
+  const { api, disconnect } = useConnection();
   const submission = useSubmission();
   const [modal, contextHolder] = Modal.useModal();
   const location = useLocation();
@@ -31,11 +31,9 @@ function WorkspaceLayout() {
       <Menu mode="inline" selectedKeys={['projects']} items={[
         { key: 'projects', icon: <FolderOutlined />, label: <Link to="/">项目与任务</Link> },
       ]} />
-      <div className="sidebar-foot">Phase 9 · 本地研究工作台</div>
     </Layout.Sider>
     <Layout>
-      <Layout.Header className="app-header"><Space><Tag color="success">已连接</Tag>
-        <span>API {session?.api_version}</span></Space>
+      <Layout.Header className="app-header"><Space><Tag color="success">已连接</Tag></Space>
         <Button icon={<DisconnectOutlined />} onClick={() => {
           if (!submission.pending) disconnect();
           else modal.confirm({ title: '还有一笔结果未确认的提交', content: '断开连接会丢失内存中的提交编号和表单。请先记录编号并核查任务列表。',

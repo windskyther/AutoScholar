@@ -25,16 +25,13 @@ export default function ConnectPage() {
   return <main className="connection-screen"><section className="connection-panel">
     <div className="wordmark">AutoScholar</div>
     <h1>连接研究工作台</h1>
-    <p>查看项目、任务计划与执行结果。当前为本地单操作者模式。</p>
-    <Alert type="info" showIcon title="使用操作者 Token，不是模型供应商 API Key"
-      description="填写服务端 EXPERIMENT_API_TOKEN。仅保存在浏览器内存，刷新后需重新连接。" />
+    <p>连接后管理资料、开展研究并查看结果。</p>
     <Form form={form} layout="vertical" onFinish={(values) => void submit(values)} autoComplete="off">
       <Form.Item label="操作者 Token" name="token" rules={[{ required: true, whitespace: true, message: '请输入操作者 Token' }]}>
-        <Input.Password autoComplete="off" placeholder="EXPERIMENT_API_TOKEN" maxLength={4096} disabled={busy} />
+        <Input.Password autoComplete="off" placeholder="输入访问凭据" maxLength={4096} disabled={busy} />
       </Form.Item>
       {error !== null && <Alert type="error" showIcon title={errorMessage(error)} />}
       <Button type="primary" htmlType="submit" loading={busy} block>连接本地 API</Button>
     </Form>
-    <div className="connection-footer">API 地址：同源 /api/workbench · 本次连接不会调用付费 API</div>
   </section></main>;
 }

@@ -107,7 +107,6 @@ function Files({ taskId }: { taskId: string }) {
     finally { if (pending.current === controller) { pending.current = null; setBusy(false); } }
   }
   return <>
-    <Alert type="info" title="只列出登记产物，不提供任意路径或整个工作目录导出。报告为纯文本预览；下载前校验大小和 SHA-256。" />
     {error && !selected && <Alert type="error" title={error} />}
     {query.isPending ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
       : <Table<ArtifactResource> rowKey="id" dataSource={query.data.items} scroll={{ x: 950 }} size="small" columns={[

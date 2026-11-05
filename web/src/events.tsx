@@ -6,14 +6,14 @@ import { useConnection } from './auth';
 import { dateLabel, Loading } from './components';
 import type { EventPage, StreamMessage, WorkflowEvent } from './types';
 
-const labels: Record<string, string> = { submitted: '任务已提交', claimed: 'Worker 已领取', unit_started: '执行单元开始',
+const labels: Record<string, string> = { submitted: '任务已提交', claimed: '任务开始处理', unit_started: '执行单元开始',
   checkpoint_saved: '检查点已保存', budget_saved: '预算已更新', call_started: '外部调用开始', call_finished: '外部调用结束',
   call_reconciled: '调用回执已核对', recovery_verified: '恢复已核验', checkpoint_rejected: '检查点校验失败',
   approval_requested: '等待人工审批', approval_decided: '审批已决定', approval_consumed: '审批已消费',
   pause: '请求暂停', resume: '请求恢复', cancel: '请求取消', memory_retrieved: '已检索 Memory',
   memory_enabled_changed: 'Memory 启用状态改变', experience_recorded: '已记录经验', other: '其他事件' };
 const states = { loading: '加载事件记录', connecting: '连接事件流', live: '事件流已连接', reconnecting: '断线后补齐事件',
-  complete: '任务已结束，事件已同步', unsupported: '历史任务无持久化实时事件', error: '事件连接已停止' };
+  complete: '任务已结束，事件已同步', unsupported: '此历史任务没有实时记录', error: '事件连接已停止' };
 
 function delay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -111,17 +111,16 @@ export default function Events({ taskId, projectId }: { taskId: string; projectI
       <Tag color={state === 'live' ? 'success' : state === 'error' ? 'error' : 'default'}>{states[state]}</Tag>
       <Button onClick={() => setReload((value) => value + 1)}>重新加载记录</Button>
     </Space></div>
-    <p>这里只读订阅已持久化的工作流事件，不是模型逐 Token 输出。断线按原序号补齐，最多连续自动重连 5 次；刷新或重连不会重新执行任务。</p>
     {error !== null && <Alert type="warning" showIcon title={errorMessage(error)} description="任务仍由后台管理，可手动刷新快照；重新加载记录会重新读取最近事件，不会提交任务。" />}
     {historyError !== null && <Alert type="error" title={errorMessage(historyError)} />}
     {state === 'loading' ? <Loading /> : <>
       <Space wrap className="event-navigation"><Button disabled={earliest <= 1} loading={loadingHistory} onClick={() => void older()}>更早记录</Button>
         <Button disabled={!history} onClick={() => setHistory(null)}>返回最新</Button>
         <span>{history ? '正在浏览历史页，最新事件仍在后台接收。' : '最近事件视图最多保留 200 项；更早记录按页读取。'}</span></Space>
-      <Table<WorkflowEvent> key={history ? 'history-' + history.next_cursor : 'live'} rowKey="sequence" dataSource={[...visible].reverse()} size="small" scroll={{ x: 620 }} locale={{ emptyText: <Empty description="暂无持久化事件。" /> }} columns={[
+      <Table<WorkflowEvent> key={history ? 'history-' + history.next_cursor : 'live'} rowKey="sequence" dataSource={[...visible].reverse()} size="small" scroll={{ x: 620 }} locale={{ emptyText: <Empty description="暂无执行记录。" /> }} columns={[
         { title: '序号', dataIndex: 'sequence', width: 85, render: (value) => `#${value}` },
         { title: '事件', dataIndex: 'kind', width: 190, render: (value: string) => labels[value] },
-        { title: '安全摘要', dataIndex: 'payload', render: (value: WorkflowEvent['payload']) => <span className="event-payload">{Object.keys(value).length ? JSON.stringify(value) : '—'}</span> },
+        { title: '详情', dataIndex: 'payload', render: (value: WorkflowEvent['payload']) => <span className="event-payload">{Object.keys(value).length ? JSON.stringify(value) : '—'}</span> },
         { title: '时间', dataIndex: 'created_at', width: 190, render: dateLabel },
       ]} pagination={{ pageSize: 20, showSizeChanger: false }} />
     </>}

@@ -56,7 +56,7 @@ test('connects, navigates true records, renders Chinese safely and keeps credent
   await page.getByRole('link', { name: project.name }).click();
   await page.getByRole('link', { name: task.objective }).click();
   await expect(page.getByRole('heading', { name: '任务详情', exact: true })).toBeVisible();
-  await expect(page.getByText('当前为只读快照，不是实时流')).toBeVisible();
+  await expect(page.getByText('当前为只读快照，不是实时流')).toHaveCount(0);
   await expect(page.getByText('中文输出', { exact: false })).toBeVisible();
   expect(await page.evaluate(() => (window as unknown as { uiInjected?: boolean }).uiInjected)).toBeUndefined();
   const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage }, cookies: document.cookie }));
@@ -84,7 +84,7 @@ for (const status of [401, 503]) {
   test(`connection ${status} shows actionable error with no automatic retries`, async ({ page }) => {
     const requests = await mockAPI(page, status);
     await connect(page);
-    await expect(page.getByText(status === 401 ? '操作者 Token 无效，请重新连接。' : '服务端尚未配置 EXPERIMENT_API_TOKEN。')).toBeVisible();
+    await expect(page.getByText(status === 401 ? '操作者 Token 无效，请重新连接。' : '尚未配置访问凭据，请先完成设置。')).toBeVisible();
     await expect(page.getByRole('heading', { name: '连接研究工作台' })).toBeVisible();
     expect(requests).toHaveLength(1);
   });
@@ -109,7 +109,7 @@ test('malformed backend records show a query error instead of a blank page', asy
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: null }) });
   });
   await connect(page);
-  await expect(page.getByText('API 返回格式异常，请检查后端是否已升级。')).toBeVisible();
+  await expect(page.getByText('暂时无法读取服务返回的数据，请稍后重试。')).toBeVisible();
   await expect(page.getByRole('button', { name: '手动重试查询' })).toBeVisible();
   await expect(page.getByRole('button', { name: '断开连接' })).toBeVisible();
 });

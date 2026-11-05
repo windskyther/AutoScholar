@@ -7,7 +7,9 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from autoscholar.agent.database_models import AgentTaskRow
 from autoscholar.core.errors import AppError
+from autoscholar.orchestration.durable_models import WorkflowJobRow
 from autoscholar.rag.database_models import (
     DocumentChunkRow,
     DocumentJobRow,
@@ -23,6 +25,7 @@ from autoscholar.rag.models import (
     DocumentStatus,
     ProjectRecord,
 )
+from autoscholar.tool_platform.operation_models import CoreToolCallRow
 
 
 class DuplicateDocumentError(Exception):
@@ -33,6 +36,8 @@ class KnowledgeStore(Protocol):
     async def create_project(self, *, name: str, description: str | None) -> ProjectRecord: ...
 
     async def get_project(self, project_id: str) -> ProjectRecord | None: ...
+
+    async def delete_project(self, project_id: str) -> None: ...
 
     async def list_projects(
         self, *, limit: int, offset: int
@@ -80,16 +85,101 @@ class KnowledgeRepository:
 
     async def get_project(self, project_id: str) -> ProjectRecord | None:
         async with self._sessions() as session:
-            row = await session.get(ProjectRow, project_id)
+            row = await session.scalar(
+                select(ProjectRow).where(
+                    ProjectRow.id == project_id, ProjectRow.deleted_at.is_(None)
+                )
+            )
             return self._project_record(row) if row is not None else None
+
+    @staticmethod
+    async def _lock_active_project(session: AsyncSession, project_id: str) -> ProjectRow:
+        row = await session.scalar(
+            select(ProjectRow).where(ProjectRow.id == project_id).with_for_update()
+        )
+        if row is None or row.deleted_at is not None:
+            raise AppError(
+                status_code=404, code="project_not_found", message="Project was not found"
+            )
+        return row
+
+    async def delete_project(self, project_id: str) -> None:
+        terminal = {"succeeded", "partial", "failed", "budget_exceeded", "cancelled"}
+        async with self._sessions() as session:
+            project = await session.scalar(
+                select(ProjectRow).where(ProjectRow.id == project_id).with_for_update()
+            )
+            if project is None:
+                raise AppError(
+                    status_code=404, code="project_not_found", message="Project was not found"
+                )
+            if project.deleted_at is not None:
+                return  # Repeating a confirmed DELETE never creates another operation.
+            family = (
+                select(AgentTaskRow.id)
+                .where(AgentTaskRow.project_id == project_id)
+                .cte("project_family", recursive=True)
+            )
+            family = family.union(
+                select(AgentTaskRow.id).join(family, AgentTaskRow.parent_task_id == family.c.id)
+            )
+            task_ids = select(family.c.id).distinct()
+            tasks = (
+                await session.scalars(
+                    select(AgentTaskRow).where(AgentTaskRow.id.in_(task_ids)).with_for_update()
+                )
+            ).all()
+            jobs = (
+                await session.scalars(
+                    select(WorkflowJobRow).where(WorkflowJobRow.task_id.in_(task_ids))
+                )
+            ).all()
+            job_states = {job.task_id: job.status for job in jobs}
+            unknown_calls = await session.scalar(
+                select(func.count(CoreToolCallRow.id)).where(
+                    CoreToolCallRow.task_id.in_(task_ids), CoreToolCallRow.status != "completed"
+                )
+            )
+            if (
+                unknown_calls
+                or any(job.status not in terminal or job.pending_calls for job in jobs)
+                or any(job_states.get(task.id, task.status) not in terminal for task in tasks)
+            ):
+                raise AppError(
+                    status_code=409,
+                    code="project_has_active_tasks",
+                    message="Finish or cancel project tasks before deletion",
+                )
+            busy_documents = await session.scalar(
+                select(func.count(DocumentJobRow.id))
+                .join(DocumentRow, DocumentRow.id == DocumentJobRow.document_id)
+                .where(
+                    DocumentRow.project_id == project_id,
+                    DocumentJobRow.status.in_(["queued", "processing"]),
+                )
+            )
+            if busy_documents:
+                raise AppError(
+                    status_code=409,
+                    code="project_has_active_documents",
+                    message="Wait for document processing before deletion",
+                )
+            project.deleted_at = datetime.now(UTC)
+            await session.commit()
 
     async def list_projects(
         self, *, limit: int = 50, offset: int = 0
     ) -> tuple[list[ProjectRecord], int]:
         async with self._sessions() as session:
-            total = int(await session.scalar(select(func.count(ProjectRow.id))) or 0)
+            total = int(
+                await session.scalar(
+                    select(func.count(ProjectRow.id)).where(ProjectRow.deleted_at.is_(None))
+                )
+                or 0
+            )
             result = await session.execute(
                 select(ProjectRow)
+                .where(ProjectRow.deleted_at.is_(None))
                 .order_by(ProjectRow.created_at, ProjectRow.id)
                 .limit(limit)
                 .offset(offset)
@@ -109,6 +199,7 @@ class KnowledgeRepository:
         size_bytes: int,
     ) -> DocumentRecord:
         async with self._sessions() as session:
+            await self._lock_active_project(session, project_id)
             row = DocumentRow(
                 id=document_id,
                 project_id=project_id,
@@ -145,6 +236,9 @@ class KnowledgeRepository:
                 select(DocumentRow).where(
                     DocumentRow.id == document_id,
                     DocumentRow.project_id == project_id,
+                    DocumentRow.project_id.in_(
+                        select(ProjectRow.id).where(ProjectRow.deleted_at.is_(None))
+                    ),
                 )
             )
             row = result.scalar_one_or_none()
@@ -159,7 +253,9 @@ class KnowledgeRepository:
         self, project_id: str, *, limit: int = 50, offset: int = 0
     ) -> tuple[list[DocumentRecord], int]:
         async with self._sessions() as session:
-            predicate = DocumentRow.project_id == project_id
+            predicate = (DocumentRow.project_id == project_id) & DocumentRow.project_id.in_(
+                select(ProjectRow.id).where(ProjectRow.deleted_at.is_(None))
+            )
             total = int(
                 await session.scalar(select(func.count(DocumentRow.id)).where(predicate)) or 0
             )
@@ -179,6 +275,9 @@ class KnowledgeRepository:
             statement = select(DocumentRow).where(
                 DocumentRow.project_id == project_id,
                 DocumentRow.status == "ready",
+                DocumentRow.project_id.in_(
+                    select(ProjectRow.id).where(ProjectRow.deleted_at.is_(None))
+                ),
             )
             if document_ids is not None:
                 if not document_ids:
@@ -191,6 +290,12 @@ class KnowledgeRepository:
         self, document_id: str, *, kind: DocumentJobKind
     ) -> DocumentRecord:
         async with self._sessions() as session:
+            project_id = await session.scalar(
+                select(DocumentRow.project_id).where(DocumentRow.id == document_id)
+            )
+            if project_id is None:
+                raise LookupError(f"Unknown document: {document_id}")
+            await self._lock_active_project(session, project_id)
             row = await session.scalar(
                 select(DocumentRow).where(DocumentRow.id == document_id).with_for_update()
             )

@@ -12,16 +12,15 @@ import { useSubmission } from './task-submission';
 import Events from './events';
 import Controls from './controls';
 import Resources from './resources';
+import DeleteProject from './delete-project';
 
 export function ProjectsPage() {
-  const { api, session } = useConnection();
+  const { api } = useConnection();
   const [page, setPage] = useState(1);
   const query = useQuery({ queryKey: ['projects', page], queryFn: ({ signal }) => api!.projects(page, signal) });
   return <>
-    <PageHeading title="项目" subtitle="从项目进入研究任务，所有数据来自当前连接的 API。" refresh={() => void query.refetch()} />
-    <div className="capability-strip"><CreateProject /><Tag>单操作者</Tag><Tag>手动确认提交</Tag>
-      <span>LLM：{session?.capabilities.llm_configured ? '已配置，未进行联测' : '未配置'}</span>
-      <span>检索后端：{session?.capabilities.research_backend}</span></div>
+    <PageHeading title="项目" refresh={() => void query.refetch()} />
+    <div className="filters"><CreateProject /></div>
     {query.isPending ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
       : <Table<Project> rowKey="id" dataSource={query.data.items} scroll={{ x: 650 }}
         locale={{ emptyText: <Empty description="暂无项目，点击“新建项目”开始。" /> }}
@@ -29,6 +28,7 @@ export function ProjectsPage() {
           { title: '项目', dataIndex: 'name', render: (name: string, item) => <Link to={`/projects/${encodeURIComponent(item.id)}`}>{name}</Link> },
           { title: '说明', dataIndex: 'description', ellipsis: true, render: (value: string | null) => value || '未填写' },
           { title: '更新时间', dataIndex: 'updated_at', width: 210, render: dateLabel },
+          { title: '操作', width: 150, render: (_, item) => <DeleteProject project={item} onDeleted={() => setPage(1)} /> },
         ]} pagination={{ current: page, pageSize: 20, total: query.data.total,
                           showSizeChanger: false, onChange: setPage }} />}
   </>;
@@ -49,11 +49,11 @@ export function ProjectPage() {
   return <>
     <Breadcrumb items={[{ title: <Link to="/">项目</Link> }, { title: project.data.name }]} />
     <PageHeading title={project.data.name} subtitle={project.data.description || '该项目尚未填写说明。'} refresh={() => void tasks.refetch()} />
-    <div className="section-heading"><h2>研究任务</h2><Button type="primary"
+    <div className="section-heading"><h2>研究任务</h2><Space><DeleteProject project={project.data} /><Button type="primary"
       disabled={!session?.capabilities.llm_configured || !session.capabilities.budget_limits}
-      onClick={() => submission.openProject(project.data)}>创建研究任务</Button></div>
-    {!session?.capabilities.llm_configured && <Alert type="warning" title="LLM 尚未配置，任务提交暂不可用；只读查询和 PDF 管理不受影响。" />}
-    {!session?.capabilities.budget_limits && <Alert type="warning" title="后端尚未提供 9C 预算配置，请先升级 API。" />}
+      onClick={() => submission.openProject(project.data)}>创建研究任务</Button></Space></div>
+    {!session?.capabilities.llm_configured && <Alert type="warning" title="研究服务尚未配置，暂时无法创建任务。" />}
+    {!session?.capabilities.budget_limits && <Alert type="warning" title="暂时无法读取任务配置，请稍后刷新。" />}
     <Space className="filters" wrap>
       <Input.Search placeholder="搜索研究目标" aria-label="搜索研究目标" allowClear maxLength={200}
         onSearch={(value) => { setSearch(value.trim()); setPage(1); }} style={{ width: 280 }} />
@@ -61,7 +61,6 @@ export function ProjectPage() {
         options={Object.entries(statusLabels).map(([value, label]) => ({ value: value as TaskStatus, label }))}
         onChange={(value) => { setStatus(value); setPage(1); }} />
     </Space>
-    <Alert type="info" title="仅列出项目根任务。子任务及历史尝试可在任务详情中查看。" />
     {tasks.isPending ? <Loading /> : tasks.isError ? <QueryError error={tasks.error} retry={() => void tasks.refetch()} />
       : <Table<Task> rowKey="task_id" dataSource={tasks.data.items} scroll={{ x: 850 }}
         locale={{ emptyText: <Empty description="没有符合条件的研究任务。" /> }} columns={[
@@ -96,8 +95,6 @@ export function TaskPage() {
     <PageHeading title="任务详情" subtitle={data.task.objective} refresh={() => void query.refetch()} />
     <Space wrap data-testid="task-status"><Status value={data.execution?.status ?? data.task.status} />
       <Tag>{data.task.mode}</Tag><span className="identifier">{data.task.task_id}</span></Space>
-    <Alert className="snapshot-note" type="info" showIcon title={session?.capabilities.task_streaming ? '任务快照随持久化事件刷新' : '当前为只读快照，不是实时流'}
-      description="刷新页面不会重新执行任务。控制与审批需要单独确认；资源浏览和下载不会触发模型或训练调用。" />
     {session?.capabilities.task_controls && <Controls key={taskId} taskId={taskId!} projectId={projectId!} />}
     <div className="metrics-grid">
       <Metric label="模型调用" value={usage.model_calls ?? 0} limit={limits?.model_calls} />
@@ -106,9 +103,9 @@ export function TaskPage() {
       <Metric label="训练次数" value={usage.training_runs ?? 0} limit={limits?.training_runs} />
     </div>
     <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }} items={[
-      { key: 'stage', label: '执行阶段', children: data.execution?.stage || '暂无持久化执行信息' },
+      { key: 'stage', label: '执行阶段', children: data.execution?.stage || '暂无执行信息' },
       { key: 'plan', label: '计划版本', children: data.current_plan?.version ?? '尚未生成' },
-      { key: 'cost', label: '金额', children: '暂不可估算，不是零费用' },
+      { key: 'cost', label: '金额', children: '暂不可估算' },
       { key: 'evidence', label: '证据', children: data.resources.evidence },
       { key: 'experiments', label: '实验', children: data.resources.experiments },
       { key: 'artifacts', label: '产物', children: data.resources.artifacts },
@@ -131,6 +128,5 @@ export function TaskPage() {
     {data.answer ? <pre className="plain-output">{data.answer}</pre> : <Empty description="任务尚未产生最终输出。" />}
     {session?.capabilities.task_streaming && <Events taskId={taskId!} projectId={projectId!} />}
     {session?.capabilities.resource_browser && <Resources key={taskId} taskId={taskId!} />}
-    <p className="usage-note">以上用量仅采用根任务记录，不累加子任务的同一份共享预算。</p>
   </>;
 }

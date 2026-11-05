@@ -41,6 +41,9 @@ class FakeKnowledgeStore:
     async def get_project(self, project_id: str) -> ProjectRecord | None:
         return self.projects.get(project_id)
 
+    async def delete_project(self, project_id: str) -> None:
+        self.projects.pop(project_id, None)
+
     async def list_projects(self, *, limit: int, offset: int) -> tuple[list[ProjectRecord], int]:
         items = list(self.projects.values())
         return items[offset : offset + limit], len(items)

@@ -67,12 +67,22 @@ class WorkbenchRepository:
         )
 
     @staticmethod
+    async def visible_project(session: AsyncSession, project_id: str | None) -> None:
+        if project_id is not None:
+            project = await session.get(ProjectRow, project_id)
+            if project is not None and project.deleted_at is not None:
+                raise AppError(
+                    status_code=404, code="project_not_found", message="Project was not found"
+                )
+
+    @staticmethod
     async def root(session: AsyncSession, task_id: str) -> AgentTaskRow:
         row = await session.get(AgentTaskRow, task_id)
         if row is None or row.parent_task_id is not None:
             raise AppError(
                 status_code=404, code="workbench_task_not_found", message="Root task was not found"
             )
+        await WorkbenchRepository.visible_project(session, row.project_id)
         return row
 
     async def controls(self, task_id: str) -> WorkbenchControlState:
@@ -93,6 +103,7 @@ class WorkbenchRepository:
                     message="Root task was not found",
                 )
             task, job = result
+            await self.visible_project(session, task.project_id)
             if job is None:
                 return WorkbenchControlState(
                     task_id=task_id, status=task.status, expected=None, actions=[]
@@ -203,7 +214,8 @@ class WorkbenchRepository:
         offset: int,
     ) -> TaskListResponse:
         async with self.sessions() as session:
-            if await session.get(ProjectRow, project_id) is None:
+            project = await session.get(ProjectRow, project_id)
+            if project is None or project.deleted_at is not None:
                 raise AppError(
                     status_code=404, code="project_not_found", message="Project was not found"
                 )

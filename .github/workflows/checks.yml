@@ -134,6 +134,7 @@ jobs:
           tests/test_collection_isolation.py tests/test_backup_archives.py
           tests/test_operations.py tests/test_release_gate.py
           tests/test_cpu_acceptance.py tests/test_production_build.py
+          tests/test_project_deletion.py
           --basetemp=data/ci-tmp
 
   frontend:

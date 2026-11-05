@@ -90,7 +90,7 @@ describe('bounded browser API', () => {
     } }, 503)));
     try { await new ApiClient('test-token').session(); throw new Error('Expected failure'); }
     catch (error) {
-      expect(errorMessage(error)).toContain('EXPERIMENT_API_TOKEN');
+      expect(errorMessage(error)).toContain('访问凭据');
       expect(errorMessage(error)).not.toContain('sensitive-upstream-value');
     }
   });

@@ -165,6 +165,7 @@ $apiHeaders = @{ Authorization = 'Bearer ' + ([System.Net.NetworkCredential]::ne
 | `GET` | `/agent/tasks/{task_id}/workspace/files/{path}` | 读取工作区 UTF-8 文本文件 |
 | `POST` | `/projects` | 创建隔离的知识库项目 |
 | `GET` | `/projects`、`/projects/{project_id}` | 列出或读取项目 |
+| `DELETE` | `/projects/{project_id}` | 从工作台移除项目，保留历史记录；未结束的任务或文档处理会阻止删除 |
 | `POST` | `/projects/{project_id}/documents` | 上传 PDF 并进入后台摄取队列 |
 | `GET` | `/projects/{project_id}/documents` | 查询 PDF 处理状态 |
 | `GET` | `/projects/{project_id}/documents/{document_id}/content` | 受控读取 PDF 原文件 |
@@ -900,6 +901,7 @@ if ($LASTEXITCODE -ne 0) { throw '本地 HTTP 联测失败' }
 连接操作不变；请使用包含 9C 的后端版本。项目页现在支持：
 
 - **新建项目**：填写名称和可选说明，成功后进入项目。创建结果未知时先关闭弹窗、刷新项目列表核查，不盲目重复创建。
+- **删除项目**：项目列表和详情页均可操作，输入项目名称后确认。删除后项目及关联内容不再出现在工作台；历史记录保留，界面不提供恢复入口。未结束的任务、待核对调用或文档处理会阻止删除，删除结果未知时先核对，不自动重复请求。
 - **PDF 知识库**：选择研究用 PDF，明确确认上传并索引。上传成功只表示已保存并排队；RAG Worker 完成解析、分块和索引后才显示“已就绪”。处理中每 3 秒只读刷新当前页，支持分页、失败重试、重建索引和异步删除。重试、重建与删除都需确认；配置远程 Embedding 时索引可能收费。不要上传密钥、`.env` 或私有设计文档。
 - **创建研究任务**：填写目标，选择检索来源、全部/不使用/指定 PDF 及检索方式；指定文档最多 100 项，后端核对同一项目及就绪状态。Tavily 未配置时禁用 Web 选项，论文检索可匿名但可能限流。提交只支持持久化 `autonomous` 模式，不能从浏览器运行同步 `/agent/run`。
 

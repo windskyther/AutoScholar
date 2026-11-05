@@ -22,9 +22,9 @@ export function QueryError({ error, retry }: { error: unknown; retry: () => void
 }
 export function Loading() { return <div className="loading" role="status"><Spin /> 正在读取数据</div>; }
 export function PageHeading({ title, subtitle, refresh }: {
-  title: string; subtitle: string; refresh?: () => void;
+  title: string; subtitle?: string; refresh?: () => void;
 }) {
-  return <div className="page-heading"><div><h1>{title}</h1><p>{subtitle}</p></div>
+  return <div className="page-heading"><div><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>
     {refresh && <Button icon={<ReloadOutlined />} onClick={refresh}>刷新快照</Button>}</div>;
 }
 export function Metric({ label, value, limit }: { label: string; value: number; limit?: number }) {

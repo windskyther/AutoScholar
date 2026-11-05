@@ -78,7 +78,7 @@ async function draftTask(page: Page) {
   await page.getByRole('button', { name: '创建研究任务' }).click();
   await page.getByLabel('研究目标', { exact: true }).fill('公开的 MNIST 验收目标');
 }
-const consent = '我确认将此研究目标交给 Worker 自动执行，并接受可能产生的 API 费用。';
+const consent = '我确认提交后自动执行研究任务，并接受可能产生的 API 费用。';
 
 test('creates a project after input validation and navigates to it', async ({ page }) => {
   const calls = await fixture(page);

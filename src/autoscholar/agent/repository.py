@@ -30,6 +30,8 @@ from autoscholar.agent.records import (
     ToolTraceRecord,
 )
 from autoscholar.core.budget import current_parent
+from autoscholar.core.errors import AppError
+from autoscholar.rag.database_models import ProjectRow
 
 
 class AgentTaskRepository:
@@ -50,12 +52,30 @@ class AgentTaskRepository:
         mode: ResolvedAgentMode = "compute",
     ) -> AgentTaskRecord:
         async with self._sessions() as session:
+            parent_id = current_parent.get()
+            parent_project = (
+                await session.scalar(
+                    select(AgentTaskRow.project_id).where(AgentTaskRow.id == parent_id)
+                )
+                if parent_id is not None
+                else None
+            )
+            for guarded_project in sorted(
+                {p for p in (project_id, parent_project) if p is not None}
+            ):
+                project = await session.scalar(
+                    select(ProjectRow).where(ProjectRow.id == guarded_project).with_for_update()
+                )
+                if project is not None and project.deleted_at is not None:
+                    raise AppError(
+                        status_code=404, code="project_not_found", message="Project was not found"
+                    )
             row = AgentTaskRow(
                 id=task_id,
                 project_id=project_id,
                 status="running",
                 mode=mode,
-                parent_task_id=current_parent.get(),
+                parent_task_id=parent_id,
                 objective=objective,
                 plan=[],
                 metrics={},

@@ -28,7 +28,7 @@ export interface Session {
   capabilities: {
     llm_configured: boolean; web_search_configured: boolean; research_backend: string;
     filesystem_backend: string; experiment_backend: string; task_streaming: boolean; task_controls?: boolean; resource_browser?: boolean;
-    document_max_bytes?: number; document_max_pages?: number; budget_limits?: BudgetLimits;
+    document_max_bytes?: number; document_max_pages?: number; budget_limits?: BudgetLimits; project_deletion?: boolean;
   };
 }
 export interface Task {

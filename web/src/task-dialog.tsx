@@ -78,8 +78,8 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
   }
   return <Modal title={`提交研究任务 · ${project.name}`} open={open} width={820} mask={{ closable: false }}
     keyboard={!busy} closable={!busy} onCancel={() => { if (!busy) close(); }} footer={null}>
-    <Alert type="warning" showIcon title="提交后由 Worker 自动执行，可能产生 LLM、检索和训练费用"
-      description="预算是资源上限，不是金额估价；最后一次模型响应可能越过 Token 阈值。这里只支持持久化 autonomous 模式，不会自动重试或重跑整轮。" />
+    <Alert type="warning" showIcon title="提交后自动执行研究任务，可能产生模型、检索和训练费用"
+      description="预算限制资源用量，不等同于金额；单次模型响应可能使 Token 用量超过上限。" />
     <Form form={form} layout="vertical" disabled={busy || uncertain} onFinish={(values) => void submit(values)} initialValues={{
       budget: ceiling, sources: session?.capabilities.web_search_configured ? ['web'] : ['paper'],
       documentMode: 'all', retrieval: 'hybrid_rerank', consent: false,
@@ -117,7 +117,7 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
           <InputNumber min={field.min} max={Math.min(ceiling?.[field.key] ?? field.max, field.max)} precision={0} style={{ width: '100%' }} />
         </Form.Item>)}</div> }]} />
       <Form.Item name="consent" valuePropName="checked" rules={[{ validator: (_, value) => value ? Promise.resolve() : Promise.reject(new Error('请确认自动执行及可能产生费用')) }]}>
-        <Checkbox>我确认将此研究目标交给 Worker 自动执行，并接受可能产生的 API 费用。</Checkbox>
+        <Checkbox>我确认提交后自动执行研究任务，并接受可能产生的 API 费用。</Checkbox>
       </Form.Item>
       {error !== null && <Alert type="error" showIcon title={errorMessage(error)}
         description={uncertain ? '请勿新建另一轮。请求内容已锁定，可使用下面的原编号确认/重试；关闭窗口会保留该请求，但刷新或断开连接将丢失内存状态，请先记录编号并核查项目任务。' : '请检查输入和文档状态，修改后再手动提交。'} />}

@@ -61,7 +61,6 @@ export default function Documents({ projectId }: { projectId: string }) {
       <Button onClick={() => void query.refetch()}>刷新文档</Button>
       <Button disabled={busy} onClick={() => { setError(null); setFile(null); form.resetFields(); setOpen(true); }}>上传 PDF</Button>
     </Space></div>
-    <p>处理中每 3 秒只读刷新状态；仅“已就绪”文档能参与检索。后台处理需要 RAG Worker。</p>
     {notice && <Alert type="success" showIcon title={notice} />}
     {error !== null && !open && <Alert type="error" showIcon title={errorMessage(error)}
       description={isWriteUncertain(error) ? '结果未确认，请刷新文档状态核查，不会自动重复执行。' : undefined} />}
