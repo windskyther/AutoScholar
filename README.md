@@ -15,6 +15,20 @@ AutoScholar 是运行在本机的 AI 研究工作台。你可以围绕一个研�
 
 当前版本面向个人在本机使用。实验能力以 MNIST CPU 流程为主，尚不支持在工作台中任意上传训练数据或选择 GPU 环境。
 
+## 一键启动（Windows）
+
+安装好 Docker Desktop、Node.js 24.x，并按下方说明填写一次 `.env` 后，双击项目根目录中的 **[Start-AutoScholar.cmd](Start-AutoScholar.cmd)**。
+
+启动器会自动启动 Docker、启动后台服务、按需安装界面依赖，并在后台运行工作台、打开浏览器。已有工作台会直接复用，启动窗口关闭后仍可使用。登录时输入原来的 `EXPERIMENT_API_TOKEN`。
+
+启动失败时窗口会保留具体提示；界面进程日志保存在 `data/launcher/`。首次 MNIST 数据准备仍按下方步骤执行。启动器不会自动提交研究任务。
+
+更新了后台代码、需要重新构建时，在项目根目录运行：
+
+```powershell
+.\Start-AutoScholar.cmd -Rebuild
+```
+
 ## 首次启动
 
 以下命令以 **Windows PowerShell** 为例。已下载项目的用户直接进入项目目录，跳过下载步骤。
@@ -139,7 +153,7 @@ docker compose --profile datasets run --rm mnist-init
 
 ## 日常启动与停止
 
-完成首次安装后，每次使用先启动 Docker Desktop，然后在项目根目录执行：
+完成首次安装后，日常使用直接双击 `Start-AutoScholar.cmd` 即可。也可以手动启动：先启动 Docker Desktop，然后在项目根目录执行：
 
 ```powershell
 docker compose up -d
@@ -147,7 +161,7 @@ docker compose up -d
 
 另开一个窗口，进入项目的 `web` 目录执行 `npm run dev`，再打开工作台并输入 Token。依赖未变化时无需重复执行 `npm ci`。
 
-停止界面时，在运行 `npm run dev` 的窗口按 `Ctrl+C`。**关闭界面或浏览器不会停止后台任务**；如需暂停研究，先在任务中暂停或取消。
+手动启动界面时，在运行 `npm run dev` 的窗口按 `Ctrl+C` 可停止界面。一键启动的界面进程在后台运行，可在任务管理器中按 `data/launcher/workbench.json` 记录的 PID 找到对应的 Node.js 进程并结束。**关闭界面或浏览器不会停止后台任务**；如需暂停研究，先在任务中暂停或取消。
 
 停止后台服务，在项目根目录执行：
 
