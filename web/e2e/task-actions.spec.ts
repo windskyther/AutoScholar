@@ -10,8 +10,9 @@ const goal = { task_id: 'goal-a', project_id: project.id, parent_task_id: null, 
 const keep = { ...goal, task_id: 'goal-keep', objective: '保留此研究目标' };
 const markdown = '# 中文研究 / 目标\n\n## 完整研究结论\n\n\\(y=x^2\\) [E1]\n\n|来源|结论|\n|---|---|\n|论文|保留完整中文与数学公式|\n';
 
-async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' | 'empty' = 'success') {
+async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' | 'empty' | 'cancelled' = 'success') {
   let removed = false;
+  const shownGoal = mode === 'cancelled' ? { ...goal, status: 'cancelled' } : goal;
   const calls: { method: string; path: string }[] = [];
   await page.route('**/api/**', async (route) => {
     const request = route.request(); const path = new URL(request.url()).pathname;
@@ -32,9 +33,9 @@ async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' | 'emp
     if (path === '/api/workbench/projects') return route.fulfill({ json: { items: [project], total: 1, limit: 20, offset: 0 } });
     if (path === `/api/workbench/projects/${project.id}`) return route.fulfill({ json: project });
     if (path.endsWith('/documents')) return route.fulfill({ json: { items: [], total: 0, limit: 20, offset: 0 } });
-    if (path.endsWith('/tasks')) return route.fulfill({ json: { items: removed ? [keep] : [goal, keep], total: removed ? 1 : 2, limit: 20, offset: 0 } });
+    if (path.endsWith('/tasks')) return route.fulfill({ json: { items: removed ? [keep] : [shownGoal, keep], total: removed ? 1 : 2, limit: 20, offset: 0 } });
     if (path.endsWith('/overview')) return removed ? route.fulfill({ status: 404, json: { error: { code: 'workbench_task_not_found' } } }) : route.fulfill({ json: {
-      task: goal, children: { items: [], total: 0, limit: 20, offset: 0 }, current_plan: null, execution: null,
+      task: shownGoal, children: { items: [], total: 0, limit: 20, offset: 0 }, current_plan: null, execution: null,
       resources: { evidence: 2, experiments: 0, artifacts: 0 }, answer: mode === 'empty' ? null : '页面中的截断预览', answer_truncated: mode !== 'empty',
       usage_scope: 'root_task_only', monetary_cost: null,
     } });
@@ -127,7 +128,17 @@ test('a changed execution state refuses deletion and preserves the goal', async 
   await page.getByRole('button', { name: `删除研究目标 ${goal.objective}`, exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '删除研究目标', exact: true });
   await dialog.getByRole('button', { name: '删除此目标', exact: true }).click();
-  await expect(dialog.getByText('任务仍在执行或有待核对的调用，请先取消任务并核对执行记录。')).toBeVisible();
+  await expect(dialog.getByText('任务或关联子任务尚未完全停止，请等待取消完成后再删除。')).toBeVisible();
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   await expect(page.getByRole('link', { name: goal.objective, exact: true })).toBeVisible();
+});
+
+test('a fully cancelled goal can be removed while its sibling stays visible', async ({ page }) => {
+  const calls = await fixture(page, 'cancelled');
+  await expect(page.getByText('已取消', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: `删除研究目标 ${goal.objective}`, exact: true }).click();
+  await page.getByRole('dialog', { name: '删除研究目标', exact: true }).getByRole('button', { name: '删除此目标', exact: true }).click();
+  await expect(page.getByRole('link', { name: goal.objective, exact: true })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: keep.objective, exact: true })).toBeVisible();
+  expect(calls.filter((call) => call.method === 'DELETE')).toHaveLength(1);
 });

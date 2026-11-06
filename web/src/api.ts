@@ -21,7 +21,7 @@ const messages: Record<string, string> = {
   invalid_response: '暂时无法读取服务返回的数据，请稍后重试。',
   project_has_active_tasks: '项目中还有未结束或待核对的任务，请先处理后再删除。',
   project_has_active_documents: '项目中的文档仍在处理中，请稍后再删除。',
-  task_has_active_operations: '任务仍在执行或有待核对的调用，请先取消任务并核对执行记录。',
+  task_has_active_operations: '任务或关联子任务尚未完全停止，请等待取消完成后再删除。',
   task_output_unavailable: '任务尚未产生可导出的输出。',
   response_too_large: '响应超过安全大小上限。',
   request_validation_error: '输入或查询参数不合法。',

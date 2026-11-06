@@ -1,6 +1,7 @@
 """Local goal removal and full Markdown export never dispatch research operations."""
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from sqlalchemy import select
 
 from autoscholar.core.budget import current_parent
 from autoscholar.core.config import Settings
+from autoscholar.orchestration.durable import DurableService
 from autoscholar.orchestration.durable_models import WorkflowEventRow, WorkflowJobRow
 from autoscholar.rag.repository import KnowledgeRepository
 from autoscholar.tool_platform.operation_models import CoreToolCallRow
@@ -122,15 +124,16 @@ async def test_goal_removal_refuses_active_or_uncertain_family_operations(
         )
     else:
         async with service.tasks.session_factory() as session:
-            session.add(
-                WorkflowJobRow(
-                    task_id="goal",
-                    idempotency_key="goal-key",
-                    request_sha256="a" * 64,
-                    status="paused" if guard == "paused" else "cancelled",
-                    pending_calls={"call": "llm"} if guard == "pending" else {},
+            if guard != "receipt":
+                session.add(
+                    WorkflowJobRow(
+                        task_id="goal",
+                        idempotency_key="goal-key",
+                        request_sha256="a" * 64,
+                        status="paused" if guard == "paused" else "recovery_required",
+                        pending_calls={"call": "llm"} if guard == "pending" else {},
+                    )
                 )
-            )
             if guard == "receipt":
                 session.add(
                     CoreToolCallRow(
@@ -149,6 +152,105 @@ async def test_goal_removal_refuses_active_or_uncertain_family_operations(
     assert (
         result.status_code == 409 and result.json()["error"]["code"] == "task_has_active_operations"
     )
+    assert (await client.get("/workbench/tasks/goal/overview", headers=AUTH)).status_code == 200
+
+
+async def test_cancel_then_remove_preserves_uncertain_receipts_and_stale_children(
+    actions: tuple[Any, ...],
+) -> None:
+    client, service, _, project_id, _ = actions
+    await service.tasks.update_task(
+        "child",
+        status="running",
+        plan=[],
+        answer=None,
+        metrics={"total_tokens": 9},
+        mode="research",
+    )
+    async with service.tasks.session_factory() as session:
+        session.add(
+            WorkflowJobRow(
+                task_id="goal",
+                idempotency_key="cancel-then-delete",
+                request_sha256="a" * 64,
+                status="recovery_required",
+                pending_calls={"call": "llm"},
+                active={"stage": "executor", "step_id": "research", "version": 1},
+                usage={"model_calls": 1, "total_tokens": 9},
+            )
+        )
+        session.add(
+            CoreToolCallRow(
+                id="call",
+                task_id="child",
+                service="fixture",
+                tool="search",
+                arguments_sha256="a" * 64,
+                authority_sha256="b" * 64,
+                output_schema={},
+                status="unknown",
+            )
+        )
+        await session.commit()
+    durable = DurableService(service)
+    assert await durable.repository.control("goal", "cancel") == "cancelled"
+    path = f"/workbench/projects/{project_id}/tasks/goal"
+    assert (await client.delete(path, headers=AUTH)).status_code == 204
+    assert (await client.delete(path, headers=AUTH)).status_code == 204
+    assert (await client.get("/workbench/tasks/goal/overview", headers=AUTH)).status_code == 404
+    async with service.tasks.session_factory() as session:
+        job = await session.get(WorkflowJobRow, "goal")
+        receipt = await session.get(CoreToolCallRow, "call")
+        assert job and job.status == "cancelled" and job.pending_calls == {"call": "llm"}
+        assert job.active == {"stage": "executor", "step_id": "research", "version": 1}
+        assert job.usage == {"model_calls": 1, "total_tokens": 9}
+        assert job.owner is None and job.lease_until is None
+        assert receipt and receipt.status == "unknown" and receipt.result is None
+        events = (
+            await session.scalars(
+                select(WorkflowEventRow)
+                .where(WorkflowEventRow.task_id == "goal")
+                .order_by(WorkflowEventRow.sequence)
+            )
+        ).all()
+        assert [event.kind for event in events] == ["cancel", "task_deleted"]
+    child = await service.tasks.get_task("child")
+    assert child and child.status == "running" and child.metrics == {"total_tokens": 9}
+    assert await service.tasks.get_task("keep") is not None
+    assert not await durable.tick("goal")  # removing the row from the UI never requeues work
+
+
+@pytest.mark.parametrize("guard", ["owner", "lease", "child_job"])
+async def test_cancelled_goal_removal_still_refuses_live_owners_and_independent_jobs(
+    actions: tuple[Any, ...],
+    guard: str,
+) -> None:
+    client, service, _, project_id, _ = actions
+    async with service.tasks.session_factory() as session:
+        session.add(
+            WorkflowJobRow(
+                task_id="goal",
+                idempotency_key="stopped-root",
+                request_sha256="a" * 64,
+                status="cancelled",
+                owner="worker" if guard == "owner" else None,
+                lease_until=datetime.now(UTC) + timedelta(minutes=1) if guard == "lease" else None,
+            )
+        )
+        if guard == "child_job":
+            session.add(
+                WorkflowJobRow(
+                    task_id="child",
+                    idempotency_key="live-child",
+                    request_sha256="b" * 64,
+                    status="running",
+                    owner="child-worker",
+                    lease_until=datetime.now(UTC) + timedelta(minutes=1),
+                )
+            )
+        await session.commit()
+    result = await client.delete(f"/workbench/projects/{project_id}/tasks/goal", headers=AUTH)
+    assert result.status_code == 409
     assert (await client.get("/workbench/tasks/goal/overview", headers=AUTH)).status_code == 200
 
 

@@ -74,7 +74,7 @@ class WorkbenchRepository:
                     status_code=404, code="project_not_found", message="Project not found"
                 )
             # Follow the workflow's job-before-event/task lock order.
-            await session.scalar(
+            root_job = await session.scalar(
                 select(WorkflowJobRow).where(WorkflowJobRow.task_id == task_id).with_for_update()
             )
             root = await session.scalar(
@@ -113,11 +113,36 @@ class WorkbenchRepository:
                     CoreToolCallRow.task_id.in_(ids), CoreToolCallRow.status != "completed"
                 )
             )
-            if (
-                unknown
-                or any(item.status not in terminal or item.pending_calls for item in jobs)
-                or any(states.get(item.id, item.status) not in terminal for item in tasks)
-            ):
+            stopped = (
+                root_job is not None
+                and root_job.status in terminal
+                and root_job.owner is None
+                and root_job.lease_until is None
+            )
+            if stopped:
+                # Removal only hides the workbench goal. A fenced, terminal root
+                # cannot dispatch again; retain its uncertain receipts and stale
+                # child states exactly as recorded. Independent child jobs must
+                # also be stopped before hiding their parent.
+                blocked = any(
+                    item.status not in terminal
+                    or item.owner is not None
+                    or item.lease_until is not None
+                    for item in jobs
+                )
+            else:
+                blocked = bool(
+                    unknown
+                    or any(
+                        item.status not in terminal
+                        or item.pending_calls
+                        or item.owner is not None
+                        or item.lease_until is not None
+                        for item in jobs
+                    )
+                    or any(states.get(item.id, item.status) not in terminal for item in tasks)
+                )
+            if blocked:
                 raise AppError(
                     status_code=409,
                     code="task_has_active_operations",
