@@ -11,8 +11,9 @@ const document = { id: 'doc-ready', project_id: project.id, original_filename: '
   embedding_model: 'fixture', index_version: 1, error_code: null, error_message: null, created_at: time, updated_at: time };
 type Entry = { method: string; path: string; key?: string; body?: string };
 
-async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProjectAck?: boolean; unauthorizedTask?: boolean; researchWorkflows?: boolean } = {}) {
+async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProjectAck?: boolean; unauthorizedTask?: boolean; researchWorkflows?: boolean; tokenBudget?: number } = {}) {
   const calls: Entry[] = [];
+  const limits = { ...budget, total_tokens: options.tokenBudget ?? budget.total_tokens };
   const projects = [project];
   const docs = [{ ...document }, { ...document, id: 'doc-failed', title: '失败 PDF', status: 'failed', error_code: 'pdf_text_not_extractable' }];
   let task: Record<string, unknown> | null = null;
@@ -28,7 +29,7 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
     let status = 200;
     if (path === '/api/workbench/session') body = { status: 'connected', authentication: 'single_operator_bearer', api_version: 'fixture', capabilities: {
       llm_configured: true, web_search_configured: true, research_backend: 'native', filesystem_backend: 'native', experiment_backend: 'native',
-      task_streaming: false, document_max_bytes: 1024, document_max_pages: 10, budget_limits: budget,
+      task_streaming: false, document_max_bytes: 1024, document_max_pages: 10, budget_limits: limits,
       research_workflows: options.researchWorkflows ?? false,
     } };
     else if (path === '/api/workbench/projects' && method === 'POST') {
@@ -61,7 +62,7 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
         body = { task_id: task.task_id, status: 'queued', created: !lost, status_url: '/workbench/agent/tasks/task-submitted' }; status = 202;
       }
     } else if (path.endsWith('/overview')) body = { task, children: { items: [], total: 0, limit: 20, offset: 0 }, current_plan: null,
-      execution: { status: 'queued', stage: 'planner', plan_version: 1, checkpoint_sequence: 1, budget_used: {}, budget_limits: budget,
+      execution: { status: 'queued', stage: 'planner', plan_version: 1, checkpoint_sequence: 1, budget_used: {}, budget_limits: limits,
         active_seconds: 0, pending_call_count: 0, error_code: null }, resources: { evidence: 0, experiments: 0, artifacts: 0 },
       answer: null, answer_truncated: false, usage_scope: 'root_task_only', monetary_cost: null };
     else throw new Error('Unexpected fixture route: ' + method + ' ' + path);
@@ -96,6 +97,22 @@ test('research defaults preserve the objective and explicitly disable unselected
   const submitted = calls.filter((item) => item.method === 'POST' && item.path.endsWith('/agent/tasks'));
   expect(submitted).toHaveLength(1);
   expect(JSON.parse(submitted[0].body!)).toMatchObject({ objective, workflow_kind: 'research', document_ids: [] });
+});
+
+test('the advertised 500000-token allowance is available and submitted for a new task', async ({ page }) => {
+  const calls = await fixture(page, { researchWorkflows: true, tokenBudget: 500000 });
+  await enterProject(page);
+  await page.getByRole('button', { name: '创建研究任务' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('研究目标', { exact: true }).fill('公开预算验收，不执行真实模型调用');
+  const tokens = dialog.getByRole('spinbutton', { name: /总 Token 预算$/ });
+  await expect(tokens).toHaveValue('500000');
+  await expect(tokens).toHaveAttribute('aria-valuemax', '500000');
+  await dialog.getByLabel('我确认提交后自动执行研究任务，并接受可能产生的 API 费用。').check();
+  await dialog.getByRole('button', { name: '确认提交并自动执行', exact: true }).click();
+  await expect.poll(() => calls.filter((call) => call.method === 'POST' && call.path.endsWith('/agent/tasks')).length).toBe(1);
+  const request = calls.find((call) => call.method === 'POST' && call.path.endsWith('/agent/tasks'))!;
+  expect(JSON.parse(request.body!).budget.total_tokens).toBe(500000);
 });
 
 test('experiment selection is explicit and retains its execution budget', async ({ page }) => {

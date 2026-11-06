@@ -266,7 +266,7 @@ async def test_facade_existing_projects_and_durable_routes(tmp_path: Path) -> No
                 await client.get(f"/workbench/tasks/{task_id}/overview", headers=AUTH)
             ).json()
             assert overview["execution"]["status"] == "queued"
-            assert overview["execution"]["budget_limits"]["total_tokens"] == 120000
+            assert overview["execution"]["budget_limits"]["total_tokens"] == 500000
             await app.state.durable_service.tick()
             overview = (
                 await client.get(f"/workbench/tasks/{task_id}/overview", headers=AUTH)

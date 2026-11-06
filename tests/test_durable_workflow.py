@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from sqlalchemy import select
 
+from autoscholar.core.budget import BudgetLimits
 from autoscholar.core.errors import AppError
 from autoscholar.llm import LLMResult
 from autoscholar.orchestration.durable import DurableService
@@ -24,6 +25,41 @@ async def drain(durable: DurableService, task_id: str) -> str:
             break
     _, job = await durable.repository.snapshot(task_id)
     return job.status
+
+
+async def test_new_token_ceiling_preserves_old_checkpoints_and_smaller_requested_budgets(
+    tmp_path: Path,
+) -> None:
+    provider = ScriptedProvider([])
+    service, engine = await workflow(tmp_path, provider, FakeExperimentSandbox())
+    try:
+        service.limits = BudgetLimits(total_tokens=120000)
+        durable = DurableService(service)
+        old_id, _ = await durable.submit(
+            {"objective": "Retain old budget", "budget": {"total_tokens": 120000}}, "old-budget"
+        )
+        before, old_job = await durable.repository.snapshot(old_id)
+        service.limits = BudgetLimits()
+        assert service.limits.total_tokens == 500000
+        for requested, expected in (
+            (None, 500000),
+            (500000, 500000),
+            (750000, 500000),
+            (1000, 1000),
+        ):
+            payload: dict[str, Any] = {"objective": "New budget fixture"}
+            if requested is not None:
+                payload["budget"] = {"total_tokens": requested}
+            task_id, _ = await durable.submit(payload, f"new-budget-{requested}")
+            snapshot, job = await durable.repository.snapshot(task_id)
+            assert snapshot.limits.total_tokens == expected
+            assert job.status == "queued" and not job.pending_calls and not job.usage
+        after, job = await durable.repository.snapshot(old_id)
+        assert before == after and after.limits.total_tokens == 120000
+        assert job.checkpoint_sequence == old_job.checkpoint_sequence
+        assert job.usage == old_job.usage == {} and not provider.calls
+    finally:
+        await engine.dispose()
 
 
 async def test_restart_reuses_completed_coding_and_budget(tmp_path: Path) -> None:

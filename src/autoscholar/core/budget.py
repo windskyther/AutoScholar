@@ -34,7 +34,7 @@ class BudgetLimits(BaseModel):
     code_repairs: int = Field(default=3, ge=0, le=10)
     training_runs: int = Field(default=4, ge=1, le=20)
     sandbox_runs: int = Field(default=40, ge=1, le=200)
-    total_tokens: int = Field(default=120000, ge=1, le=1000000)
+    total_tokens: int = Field(default=500000, ge=1, le=1000000)
     wall_seconds: int = Field(default=1800, ge=1, le=7200)
 
     def bounded_by(self, ceiling: BudgetLimits) -> BudgetLimits:
