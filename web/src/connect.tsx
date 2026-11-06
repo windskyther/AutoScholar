@@ -13,7 +13,7 @@ export default function ConnectPage() {
   const location = useLocation();
   if (api) {
     const destination = (location.state as { from?: string } | null)?.from;
-    return <Navigate to={destination?.startsWith('/projects/') ? destination : '/'} replace />;
+    return <Navigate to={destination?.startsWith('/projects/') || destination === '/models' ? destination : '/'} replace />;
   }
   async function submit({ token }: { token: string | null }) {
     if (busy) return;

@@ -104,7 +104,7 @@ test('lost acknowledgement after a real committed task is recovered with the sam
   await page.getByRole('link', { name: '中文研究项目' }).click();
   await page.getByRole('button', { name: '创建研究任务' }).click();
   await page.getByLabel('研究目标', { exact: true }).fill('公开 MNIST HTTP 幂等验收，不执行模型');
-  await page.getByLabel('总 Token 预算').fill('100');
+  await page.getByLabel('总 Token 预算', { exact: true }).fill('100');
   await page.getByRole('checkbox', { name: consent }).check();
   let firstKey: string | undefined;
   let taskId: string | undefined;

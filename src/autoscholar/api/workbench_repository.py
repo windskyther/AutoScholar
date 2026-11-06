@@ -425,6 +425,8 @@ class WorkbenchRepository:
                     {
                         "status": job.status,
                         "stage": payload.get("stage"),
+                        "model_profile_name": payload.get("model_profile_name"),
+                        "model_name": payload.get("model_name"),
                         "plan_version": payload.get("version"),
                         "checkpoint_sequence": job.checkpoint_sequence,
                         "budget_used": {

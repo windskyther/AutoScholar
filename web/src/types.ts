@@ -22,6 +22,7 @@ export interface TaskSubmission {
   retrieval_mode: 'dense' | 'sparse' | 'hybrid' | 'hybrid_rerank'; research_sources: ('web' | 'paper')[];
   budget: BudgetLimits;
   workflow_kind?: 'research' | 'experiment';
+  model_profile_id?: string | null;
 }
 export interface SubmissionReceipt { task_id: string; status: TaskStatus; created: boolean; status_url: string }
 export interface Session {
@@ -31,6 +32,7 @@ export interface Session {
     filesystem_backend: string; experiment_backend: string; task_streaming: boolean; task_controls?: boolean; resource_browser?: boolean;
     document_max_bytes?: number; document_max_pages?: number; budget_limits?: BudgetLimits; project_deletion?: boolean;
     research_workflows?: boolean; task_deletion?: boolean; markdown_export?: boolean;
+    model_management?: boolean;
   };
 }
 export interface Task {
@@ -49,6 +51,7 @@ export interface Overview {
     checkpoint_sequence: number; budget_used: Record<string, number>;
     budget_limits: Record<string, number> | null; active_seconds: number;
     pending_call_count: number; error_code: string | null; cause_error_code?: string | null;
+    model_profile_name?: string | null; model_name?: string | null;
   } | null;
   resources: { evidence: number; experiments: number; artifacts: number };
   answer: string | null; answer_truncated: boolean; usage_scope: 'root_task_only'; monetary_cost: null;

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Descriptions, Empty, Form, Input, InputNumber, Modal, Space, Table, Tag } from 'antd';
+import { Alert, Button, Descriptions, Empty, Form, Input, Modal, Space, Table, Tag } from 'antd';
+import NumberSlider from './number-slider';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, errorMessage, isWriteUncertain } from './api';
 import { useConnection } from './auth';
@@ -156,12 +157,12 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
           {dialog.kind === 'approval' && <>
             {dialog.action === 'modify' && <div className="budget-grid">
               <Form.Item name="name" label="实验名称" rules={[{ required: true, pattern: /^[A-Za-z0-9][A-Za-z0-9._ -]{0,199}$/ }]}><Input maxLength={200} /></Form.Item>
-              <Form.Item name="seed" label="随机种子" rules={[{ required: true }]}><InputNumber min={0} max={4294967295} precision={0} /></Form.Item>
-              <Form.Item name="epochs" label="训练轮数" rules={[{ required: true }]}><InputNumber min={1} max={10} precision={0} /></Form.Item>
-              <Form.Item name="batch_size" label="批量大小" rules={[{ required: true }]}><InputNumber min={8} max={256} precision={0} /></Form.Item>
-              <Form.Item name="learning_rate" label="学习率" rules={[{ required: true }, { type: 'number', min: Number.MIN_VALUE, max: 1 }]}><InputNumber min={0.000000001} max={1} /></Form.Item>
-              <Form.Item name="train_samples" label="训练样本数" rules={[{ required: true }]}><InputNumber min={128} max={60000} precision={0} /></Form.Item>
-              <Form.Item name="test_samples" label="测试样本数" rules={[{ required: true }]}><InputNumber min={128} max={10000} precision={0} /></Form.Item>
+              <Form.Item name="seed" label="随机种子" rules={[{ required: true }]}><NumberSlider min={0} max={4294967295} /></Form.Item>
+              <Form.Item name="epochs" label="训练轮数" rules={[{ required: true }]}><NumberSlider min={1} max={10} /></Form.Item>
+              <Form.Item name="batch_size" label="批量大小" rules={[{ required: true }]}><NumberSlider min={8} max={256} /></Form.Item>
+              <Form.Item name="learning_rate" label="学习率" rules={[{ required: true }, { type: 'number', min: 0.000000001, max: 1 }]}><NumberSlider min={0.000000001} max={1} step={0.000000001} precision={9} /></Form.Item>
+              <Form.Item name="train_samples" label="训练样本数" rules={[{ required: true }]}><NumberSlider min={128} max={60000} /></Form.Item>
+              <Form.Item name="test_samples" label="测试样本数" rules={[{ required: true }]}><NumberSlider min={128} max={10000} /></Form.Item>
             </div>}
             {dialog.action === 'modify' && <Form.Item noStyle shouldUpdate>
               {({ getFieldValue }) => <Alert type="info" title={`修改后计算量单位：${

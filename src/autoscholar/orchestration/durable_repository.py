@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from autoscholar.agent.database_models import AgentTaskRow
 from autoscholar.core.errors import AppError
+from autoscholar.llm.profiles import ModelProfileRow
 from autoscholar.orchestration.checkpoints import Snapshot, digest
 from autoscholar.orchestration.durable_models import (
     WorkflowApprovalRow,
@@ -147,6 +148,23 @@ class DurableRepository:
                 if existing.request_sha256 != request_hash:
                     raise conflict("idempotency_conflict", "Key was used with a different request")
                 return existing.task_id, False
+            if snapshot.model_profile_id:
+                profile = await session.scalar(
+                    select(ModelProfileRow)
+                    .where(
+                        ModelProfileRow.id == snapshot.model_profile_id,
+                        ModelProfileRow.enabled.is_(True),
+                    )
+                    .with_for_update()
+                )
+                if profile is None:
+                    raise AppError(
+                        status_code=422,
+                        code="model_profile_unavailable",
+                        message="Selected model is missing or disabled",
+                    )
+                snapshot.model_profile_name = profile.name
+                snapshot.model_name = profile.model
             if snapshot.project_id:
                 project = await session.scalar(
                     select(ProjectRow)

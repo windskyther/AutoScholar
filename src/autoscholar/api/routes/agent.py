@@ -42,6 +42,7 @@ class AgentRunRequest(BaseModel):
     mode: AgentMode = "auto"
     workflow_kind: WorkflowKind = "experiment"
     project_id: str | None = None
+    model_profile_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f-]{36}$")] | None = None
     document_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] | None = (
         Field(default=None, max_length=100)
     )
@@ -283,6 +284,12 @@ def _run_response(task: AgentTaskRecord, request_id: str) -> AgentRunResponse:
 
 @router.post("/run", response_model=AgentRunResponse)
 async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunResponse:
+    if payload.model_profile_id is not None:
+        raise AppError(
+            status_code=422,
+            code="durable_model_required",
+            message="Model selection requires POST /agent/tasks",
+        )
     if payload.mode == "experiment" or (
         payload.mode == "autonomous" and payload.workflow_kind == "experiment"
     ):

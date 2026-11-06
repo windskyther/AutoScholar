@@ -49,6 +49,7 @@ from autoscholar.infrastructure import Database, Qdrant, RedisClient
 from autoscholar.infrastructure.admission import RedisAdmissionStore
 from autoscholar.infrastructure.base import ManagedDependency
 from autoscholar.llm import LLMProvider, create_llm_provider
+from autoscholar.llm.profiles import ModelProfiles, RoutedLLM
 from autoscholar.orchestration.durable import DurableService
 from autoscholar.orchestration.repository import WorkflowRepository
 from autoscholar.orchestration.sandbox import BudgetedSandbox
@@ -133,6 +134,18 @@ def create_app(
     resolved_knowledge_repository = knowledge_repository
     if resolved_agent_repository is None and isinstance(resolved_database, Database):
         resolved_agent_repository = AgentTaskRepository(resolved_database.session_factory)
+    resolved_model_profiles = None
+    if isinstance(resolved_agent_repository, AgentTaskRepository):
+        resolved_model_profiles = ModelProfiles(
+            resolved_agent_repository.session_factory,
+            resolved_settings,
+        )
+        resolved_llm_provider = BudgetedLLM(
+            RoutedLLM(
+                resolved_llm_provider.provider,
+                resolved_model_profiles,
+            )
+        )
     if resolved_knowledge_repository is None and isinstance(resolved_database, Database):
         resolved_knowledge_repository = KnowledgeRepository(resolved_database.session_factory)
     resolved_document_storage = document_storage or LocalDocumentStorage(
@@ -455,6 +468,7 @@ def create_app(
         openapi_url=None if resolved_settings.app_env == "production" else "/openapi.json",
     )
     application.state.settings = resolved_settings
+    application.state.model_profiles = resolved_model_profiles
     application.state.governance = resolved_governance
     application.state.mcp_research_gateway = mcp_gateway
     application.state.mcp_filesystem_gateway = filesystem_gateway

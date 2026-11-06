@@ -49,6 +49,8 @@ class PlanSummary(BaseModel):
 
 
 class ExecutionSummary(BaseModel):
+    model_profile_name: str | None = None
+    model_name: str | None = None
     status: TaskStatus
     stage: str | None
     plan_version: int | None

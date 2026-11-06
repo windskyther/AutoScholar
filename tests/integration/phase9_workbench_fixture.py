@@ -351,7 +351,13 @@ async def fixture_app(
         nonlocal api_requests
         allowed_write = writes and (
             request.url.path
-            in {"/workbench/projects", "/workbench/agent/tasks", "/__fixture/process"}
+            in {
+                "/workbench/projects",
+                "/workbench/agent/tasks",
+                "/workbench/models",
+                "/__fixture/process",
+            }
+            or re.fullmatch(r"/workbench/models/[^/]+/(?:enable|disable)", request.url.path)
             or re.fullmatch(
                 r"/workbench/projects/[^/]+/documents(?:/[^/]+(?:/(?:retry|reindex))?)?",
                 request.url.path,

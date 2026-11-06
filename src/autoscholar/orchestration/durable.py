@@ -12,6 +12,7 @@ from autoscholar.core.budget import BudgetExceeded, BudgetLimits, current_budget
 from autoscholar.core.errors import AppError
 from autoscholar.core.journal import current_journal, persist_budget
 from autoscholar.experiment.models import ExperimentSpecification
+from autoscholar.llm.profiles import current_model_profile
 from autoscholar.orchestration.approvals import ApprovalService, cost_units
 from autoscholar.orchestration.checkpoints import Snapshot, Stage, digest
 from autoscholar.orchestration.durable_repository import DurableRepository, LeaseLost, conflict
@@ -53,7 +54,10 @@ class DurableService:
             specification=ExperimentSpecification.model_validate(specification or {}),
             approval_threshold=self.approval_threshold,
         )
-        return await self.repository.enqueue(snapshot, key, digest(payload))
+        canonical = dict(payload)
+        if canonical.get("model_profile_id") is None:
+            canonical.pop("model_profile_id", None)
+        return await self.repository.enqueue(snapshot, key, digest(canonical))
 
     async def tick(self, task_id: str | None = None) -> bool:
         claimed = await self.repository.claim(self.owner, self.lease_seconds, task_id)
@@ -164,6 +168,7 @@ class DurableService:
         journal_token = current_journal.set(journal)
         claim_token = current_workflow_claim.set(WorkflowClaim(task_id, self.owner, generation))
         stage = snapshot.stage
+        model_token = current_model_profile.set(snapshot.model_profile_id)
         status, code = "queued", None
         try:
             if job.status == "cancel_requested":
@@ -248,6 +253,7 @@ class DurableService:
                 status = "failed"
             code = str(getattr(exc, "code", "workflow_execution_failed"))
         finally:
+            current_model_profile.reset(model_token)
             current_workflow_claim.reset(claim_token)
             current_journal.reset(journal_token)
             current_budget.reset(budget_token)

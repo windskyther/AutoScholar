@@ -89,7 +89,7 @@ test('research defaults preserve the objective and explicitly disable unselected
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('资料调研', { exact: true })).toBeVisible();
   await expect(dialog.getByText('不使用 PDF', { exact: true })).toBeVisible();
-  await expect(dialog.getByLabel('训练次数上限')).toHaveCount(0);
+  await expect(dialog.getByLabel('训练次数上限', { exact: true })).toHaveCount(0);
   const objective = '2026年10月CV领域的最新研究成果';
   await dialog.getByLabel('研究目标', { exact: true }).fill(objective);
   await dialog.getByRole('checkbox', { name: consent }).check();
@@ -124,7 +124,7 @@ test('experiment selection is explicit and retains its execution budget', async 
   await kind.click();
   await kind.press('ArrowDown');
   await kind.press('Enter');
-  await expect(dialog.getByLabel('训练次数上限')).toBeVisible();
+  await expect(dialog.getByLabel('训练次数上限', { exact: true })).toBeVisible();
   await dialog.getByRole('checkbox', { name: consent }).check();
   await dialog.getByRole('button', { name: '确认提交并自动执行' }).click();
   await expect(page.getByRole('heading', { name: '任务详情', exact: true })).toBeVisible();
@@ -202,7 +202,7 @@ test('task requires cost consent, ready documents and respects server budget, ev
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('row').filter({ hasText: '失败 PDF' }).getByRole('checkbox')).toBeDisabled();
   await dialog.getByRole('row').filter({ hasText: '可用 PDF' }).getByRole('checkbox').check();
-  await expect(page.getByLabel('总 Token 预算')).toHaveValue('1000');
+  await expect(page.getByLabel('总 Token 预算', { exact: true })).toHaveValue('1000');
   await page.getByRole('checkbox', { name: consent }).check();
   await page.getByRole('button', { name: '确认提交并自动执行' }).dblclick();
   await expect(page.getByRole('heading', { name: '任务详情', exact: true })).toBeVisible();
@@ -245,7 +245,7 @@ test('task budget and explicit consent remain usable on a narrow mobile viewport
   await expect(dialog).toBeVisible();
   const bounds = await dialog.boundingBox();
   expect(bounds!.width).toBeLessThanOrEqual(390);
-  await page.getByLabel('总 Token 预算').fill('500');
+  await page.getByLabel('总 Token 预算', { exact: true }).fill('500');
   await page.getByRole('checkbox', { name: consent }).check();
   const submit = page.getByRole('button', { name: '确认提交并自动执行' });
   await submit.scrollIntoViewIfNeeded();

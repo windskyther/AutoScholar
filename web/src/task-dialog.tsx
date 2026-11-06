@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Checkbox, Collapse, Form, Input, InputNumber, Modal, Select, Space, Table } from 'antd';
+import { Alert, Button, Checkbox, Collapse, Form, Input, Modal, Select, Space, Table } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { ApiError, errorMessage, isWriteUncertain } from './api';
@@ -7,10 +7,13 @@ import { useConnection } from './auth';
 import { Loading, QueryError } from './components';
 import { DocumentState } from './documents';
 import type { BudgetLimits, PDFDocument, Project, TaskSubmission } from './types';
+import NumberSlider from './number-slider';
+import { Link } from 'react-router-dom';
 
 interface Values {
   objective: string; budget: BudgetLimits; sources: ('web' | 'paper')[];
   workflowKind: 'research' | 'experiment';
+  model_profile_id: string;
   documentMode: 'all' | 'none' | 'selected'; retrieval: TaskSubmission['retrieval_mode']; consent: boolean;
 }
 const fields: { key: keyof BudgetLimits; label: string; min: number; max: number }[] = [
@@ -44,6 +47,17 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
   const defaultKind = session?.capabilities.research_workflows ? 'research' : 'experiment';
   const workflowKind = Form.useWatch('workflowKind', form) ?? defaultKind;
   const ceiling = session?.capabilities.budget_limits;
+  const modelId = Form.useWatch('model_profile_id', form) ?? '';
+  const models = useQuery({ queryKey: ['models'], queryFn: ({ signal }) => api!.models(signal),
+    enabled: open && !!session?.capabilities.model_management });
+  const chosenModel = modelId ? models.data?.items.find((item) => item.id === modelId && item.enabled) : null;
+  const modelReady = modelId ? !!chosenModel : !!session?.capabilities.llm_configured;
+  useEffect(() => {
+    if (models.data && !session?.capabilities.llm_configured && !form.getFieldValue('model_profile_id')) {
+      const first = models.data.items.find((item) => item.enabled);
+      if (first) form.setFieldValue('model_profile_id', first.id);
+    }
+  }, [models.data, session?.capabilities.llm_configured, form]);
   const docs = useQuery({ queryKey: ['documents', project.id, page], queryFn: ({ signal }) => api!.documents(project.id, page, signal),
     enabled: open && documentMode === 'selected' });
   useEffect(() => {
@@ -68,13 +82,15 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
     } finally { inFlight.current = false; setBusy(false); }
   }
   async function submit(values: Values) {
-    if (inFlight.current || uncertain || !values.consent || !ceiling) return;
+    if (inFlight.current || uncertain || !values.consent || !ceiling || !modelReady
+      || (session?.capabilities.model_management && !models.isSuccess)) return;
     if (values.documentMode === 'selected' && (selected.length === 0 || selected.length > 100)) {
       setError(new ApiError('documents_selection_required', 422)); return;
     }
     draft.current = { key: crypto.randomUUID(), payload: structuredClone({
       objective: values.objective.trim(), mode: 'autonomous', project_id: project.id,
       ...(session?.capabilities.research_workflows ? { workflow_kind: values.workflowKind } : {}),
+      ...(session?.capabilities.model_management ? { model_profile_id: values.model_profile_id || null } : {}),
       document_ids: values.documentMode === 'all' ? null : values.documentMode === 'none' ? [] : selected,
       retrieval_mode: values.retrieval, research_sources: values.sources, budget: values.budget,
     }) };
@@ -87,7 +103,19 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
     <Form form={form} layout="vertical" disabled={busy || uncertain} onFinish={(values) => void submit(values)} initialValues={{
       budget: ceiling, sources: session?.capabilities.web_search_configured ? ['web'] : ['paper'],
       workflowKind: defaultKind, documentMode: defaultKind === 'research' ? 'none' : 'all', retrieval: 'hybrid_rerank', consent: false,
+      model_profile_id: '',
     }}>
+      {session?.capabilities.model_management && <>
+        <Form.Item name="model_profile_id" label="使用模型">
+          <Select loading={models.isPending} placeholder="选择模型连接" options={[
+            ...(models.data?.default_model ? [{ value: '', label: `默认模型 · ${models.data.default_model.model}` }] : []),
+            ...(models.data?.items.filter((item) => item.enabled).map((item) => ({ value: item.id, label: `${item.name} · ${item.model}` })) ?? []),
+          ]} />
+        </Form.Item>
+        {models.isError && <QueryError error={models.error} retry={() => void models.refetch()} />}
+        {!modelReady && models.isSuccess && <Alert type="info" title="请先添加或选择一个可用模型" />}
+        <p><Link to="/models" onClick={close}>管理模型连接</Link>；任务提交后会一直使用所选配置。</p>
+      </>}
       <Form.Item name="workflowKind" label="任务类型" rules={[{ required: true }]}>
         <Select options={[
           { value: 'research', label: '资料调研', disabled: !session?.capabilities.research_workflows },
@@ -126,7 +154,7 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
         <div className="budget-grid">{fields.filter((field) => workflowKind === 'experiment'
           || !['training_runs', 'sandbox_runs', 'code_repairs'].includes(field.key)).map((field) => <Form.Item key={field.key} name={['budget', field.key]} label={field.label}
           rules={[{ required: true, type: 'integer', min: field.min, max: Math.min(ceiling?.[field.key] ?? field.max, field.max) }]}>
-          <InputNumber min={field.min} max={Math.min(ceiling?.[field.key] ?? field.max, field.max)} precision={0} style={{ width: '100%' }} />
+          <NumberSlider label={field.label} min={field.min} max={Math.min(ceiling?.[field.key] ?? field.max, field.max)} />
         </Form.Item>)}</div> }]} />
       <Form.Item name="consent" valuePropName="checked" rules={[{ validator: (_, value) => value ? Promise.resolve() : Promise.reject(new Error('请确认自动执行及可能产生费用')) }]}>
         <Checkbox>我确认提交后自动执行研究任务，并接受可能产生的 API 费用。</Checkbox>
@@ -135,7 +163,7 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
         description={uncertain ? '请勿新建另一轮。请求内容已锁定，可使用下面的原编号确认/重试；关闭窗口会保留该请求，但刷新或断开连接将丢失内存状态，请先记录编号并核查项目任务。' : '请检查输入和文档状态，修改后再手动提交。'} />}
       {draft.current && <p className="identifier">提交编号：{draft.current.key}</p>}
       <Space wrap>
-        {!uncertain && <Button type="primary" htmlType="submit" loading={busy} disabled={!ceiling || !session?.capabilities.llm_configured}>确认提交并自动执行</Button>}
+        {!uncertain && <Button type="primary" htmlType="submit" loading={busy} disabled={!ceiling || !modelReady || (!!session?.capabilities.model_management && !models.isSuccess)}>确认提交并自动执行</Button>}
         {uncertain && <Button type="primary" loading={busy} disabled={busy} onClick={() => void send()}>用原编号确认 / 重试</Button>}
         <Button disabled={busy} onClick={close}>{uncertain ? '保留请求并关闭' : '取消'}</Button>
       </Space>

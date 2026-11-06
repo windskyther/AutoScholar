@@ -41,6 +41,7 @@ from autoscholar.api.workbench_resources import (
 )
 from autoscholar.core.errors import AppError
 from autoscholar.experiment.artifacts import ArtifactError, ArtifactManager
+from autoscholar.llm.profiles import ModelProfileCreate, ModelProfilePublic, ModelProfiles
 from autoscholar.orchestration.approvals import ApprovalDecision
 
 router = APIRouter(
@@ -66,6 +67,7 @@ async def session(request: Request) -> WorkbenchSessionResponse:
         api_version=__version__,
         capabilities={
             "llm_configured": settings.llm_configured,
+            "model_management": True,
             "web_search_configured": settings.web_search_configured,
             "research_backend": settings.research_tool_backend,
             "filesystem_backend": settings.filesystem_tool_backend,
@@ -82,6 +84,45 @@ async def session(request: Request) -> WorkbenchSessionResponse:
             "budget_limits": settings.autonomous_budget.model_dump(),
         },
     )
+
+
+def models(request: Request) -> ModelProfiles:
+    profiles = request.app.state.model_profiles
+    if not isinstance(profiles, ModelProfiles):
+        raise AppError(
+            status_code=503,
+            code="workbench_store_unavailable",
+            message="Model storage is unavailable",
+        )
+    return profiles
+
+
+@router.get("/models")
+async def list_models(request: Request) -> dict[str, object]:
+    settings = request.app.state.settings
+    return {
+        "items": await models(request).list(),
+        "default_model": {
+            "name": "默认模型",
+            "model": settings.llm_model,
+            "base_url": settings.llm_base_url,
+        }
+        if settings.llm_configured
+        else None,
+    }
+
+
+@router.post("/models", response_model=ModelProfilePublic, status_code=201)
+async def create_model(payload: ModelProfileCreate, request: Request) -> ModelProfilePublic:
+    async with models(request).lock:
+        return await models(request).create(payload)
+
+
+@router.post("/models/{profile_id}/{action}", response_model=ModelProfilePublic)
+async def model_status(
+    profile_id: str, action: Literal["enable", "disable"], request: Request
+) -> ModelProfilePublic:
+    return await models(request).enabled(profile_id, action == "enable")
 
 
 @router.get("/tasks/{task_id}/controls", response_model=WorkbenchControlState)

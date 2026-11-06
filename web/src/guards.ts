@@ -53,7 +53,8 @@ export function isSession(value: unknown): value is Session {
     && (caps.project_deletion === undefined || typeof caps.project_deletion === 'boolean')
     && (caps.research_workflows === undefined || typeof caps.research_workflows === 'boolean')
     && (caps.task_deletion === undefined || typeof caps.task_deletion === 'boolean')
-    && (caps.markdown_export === undefined || typeof caps.markdown_export === 'boolean');
+    && (caps.markdown_export === undefined || typeof caps.markdown_export === 'boolean')
+    && (caps.model_management === undefined || typeof caps.model_management === 'boolean');
 }
 export function isBudget(value: unknown): value is BudgetLimits {
   return record(value) && ['steps', 'replans', 'model_calls', 'tool_calls', 'search_queries', 'code_repairs',
@@ -106,6 +107,8 @@ export function isOverview(value: unknown): value is Overview {
       || !numbers(run.budget_used) || !(run.budget_limits === null || numbers(run.budget_limits))
       || !number(run.active_seconds) || !integer(run.pending_call_count) || !nullableString(run.error_code)) return false;
     if (run.cause_error_code !== undefined && !nullableString(run.cause_error_code)) return false;
+    if (run.model_profile_name !== undefined && !nullableString(run.model_profile_name)) return false;
+    if (run.model_name !== undefined && !nullableString(run.model_name)) return false;
   }
   return true;
 }

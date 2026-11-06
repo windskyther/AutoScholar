@@ -70,9 +70,9 @@ export function ProjectPage() {
     <Breadcrumb items={[{ title: <Link to="/">项目</Link> }, { title: project.data.name }]} />
     <PageHeading title={project.data.name} subtitle={project.data.description || '该项目尚未填写说明。'} refresh={() => void tasks.refetch()} />
     <div className="section-heading"><h2>研究任务</h2><Space><DeleteProject project={project.data} /><Button type="primary"
-      disabled={!session?.capabilities.llm_configured || !session.capabilities.budget_limits}
+      disabled={(!session?.capabilities.llm_configured && !session?.capabilities.model_management) || !session?.capabilities.budget_limits}
       onClick={() => submission.openProject(project.data)}>创建研究任务</Button></Space></div>
-    {!session?.capabilities.llm_configured && <Alert type="warning" title="研究服务尚未配置，暂时无法创建任务。" />}
+    {!session?.capabilities.llm_configured && !session?.capabilities.model_management && <Alert type="warning" title="研究服务尚未配置，暂时无法创建任务。" />}
     {!session?.capabilities.budget_limits && <Alert type="warning" title="暂时无法读取任务配置，请稍后刷新。" />}
     <Space className="filters" wrap>
       <Input.Search placeholder="搜索研究目标" aria-label="搜索研究目标" allowClear maxLength={200}
@@ -128,6 +128,7 @@ export function TaskPage() {
     </div>
     <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }} items={[
       { key: 'stage', label: '执行阶段', children: data.execution?.stage || '暂无执行信息' },
+      ...(data.execution?.model_profile_name ? [{ key: 'model', label: '使用模型', children: `${data.execution.model_profile_name} · ${data.execution.model_name}` }] : []),
       { key: 'plan', label: '计划版本', children: data.current_plan?.version ?? '尚未生成' },
       { key: 'cost', label: '金额', children: '暂不可估算' },
       { key: 'evidence', label: '证据', children: data.resources.evidence },

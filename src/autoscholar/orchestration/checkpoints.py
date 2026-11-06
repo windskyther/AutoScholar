@@ -41,6 +41,9 @@ class Snapshot(BaseModel):
     specification: ExperimentSpecification = Field(default_factory=ExperimentSpecification)
     limits: BudgetLimits = Field(default_factory=BudgetLimits)
     project_id: str | None = None
+    model_profile_id: str | None = None
+    model_profile_name: str | None = None
+    model_name: str | None = None
     document_ids: list[str] | None = None
     retrieval_mode: RetrievalMode = "hybrid_rerank"
     research_sources: list[ResearchSource] = Field(default_factory=default_sources)
