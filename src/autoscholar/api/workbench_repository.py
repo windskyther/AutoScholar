@@ -1,8 +1,9 @@
-"""Read-only, paginated views over a root task and its same-project direct children."""
+"""Paginated task views and removal of completed goals from the workbench."""
 
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any, cast
+from uuid import uuid4
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -43,11 +44,107 @@ from autoscholar.orchestration.durable_models import (
 )
 from autoscholar.orchestration.durable_repository import utc
 from autoscholar.rag.database_models import ProjectRow
+from autoscholar.tool_platform.operation_models import CoreToolCallRow
 
 
 class WorkbenchRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self.sessions = sessions
+
+    @staticmethod
+    def deleted(task_id: Any) -> Any:
+        # A durable removal event hides a goal without erasing execution receipts.
+        return (
+            select(WorkflowEventRow.id)
+            .where(
+                WorkflowEventRow.task_id == task_id,
+                WorkflowEventRow.kind == "task_deleted",
+            )
+            .exists()
+        )
+
+    async def delete_task(self, project_id: str, task_id: str) -> None:
+        terminal = {"succeeded", "partial", "failed", "budget_exceeded", "cancelled"}
+        async with self.sessions() as session:
+            project = await session.scalar(
+                select(ProjectRow).where(ProjectRow.id == project_id).with_for_update()
+            )
+            if project is None or project.deleted_at is not None:
+                raise AppError(
+                    status_code=404, code="project_not_found", message="Project not found"
+                )
+            # Follow the workflow's job-before-event/task lock order.
+            await session.scalar(
+                select(WorkflowJobRow).where(WorkflowJobRow.task_id == task_id).with_for_update()
+            )
+            root = await session.scalar(
+                select(AgentTaskRow)
+                .where(
+                    AgentTaskRow.id == task_id,
+                    AgentTaskRow.project_id == project_id,
+                    AgentTaskRow.parent_task_id.is_(None),
+                )
+                .with_for_update()
+            )
+            if root is None:
+                raise AppError(
+                    status_code=404, code="workbench_task_not_found", message="Root task not found"
+                )
+            if await session.scalar(select(self.deleted(task_id))):
+                return
+            family = (
+                select(AgentTaskRow.id)
+                .where(AgentTaskRow.id == task_id)
+                .cte("removed_task_family", recursive=True)
+            )
+            family = family.union(
+                select(AgentTaskRow.id).join(family, AgentTaskRow.parent_task_id == family.c.id)
+            )
+            ids = select(family.c.id)
+            tasks = (
+                await session.scalars(select(AgentTaskRow).where(AgentTaskRow.id.in_(ids)))
+            ).all()
+            jobs = (
+                await session.scalars(select(WorkflowJobRow).where(WorkflowJobRow.task_id.in_(ids)))
+            ).all()
+            states = {item.task_id: item.status for item in jobs}
+            unknown = await session.scalar(
+                select(func.count(CoreToolCallRow.id)).where(
+                    CoreToolCallRow.task_id.in_(ids), CoreToolCallRow.status != "completed"
+                )
+            )
+            if (
+                unknown
+                or any(item.status not in terminal or item.pending_calls for item in jobs)
+                or any(states.get(item.id, item.status) not in terminal for item in tasks)
+            ):
+                raise AppError(
+                    status_code=409,
+                    code="task_has_active_operations",
+                    message="Finish or reconcile task operations before deletion",
+                )
+            root.event_sequence += 1
+            session.add(
+                WorkflowEventRow(
+                    id=str(uuid4()),
+                    task_id=task_id,
+                    sequence=root.event_sequence,
+                    kind="task_deleted",
+                    payload={},
+                )
+            )
+            await session.commit()
+
+    async def markdown(self, task_id: str) -> tuple[str, str]:
+        async with self.sessions() as session:
+            root = await self.root(session, task_id)
+            if not root.answer:
+                raise AppError(
+                    status_code=409,
+                    code="task_output_unavailable",
+                    message="Task output is not available",
+                )
+            return root.objective, root.answer
 
     @staticmethod
     def summary(row: AgentTaskRow) -> TaskSummary:
@@ -78,7 +175,11 @@ class WorkbenchRepository:
     @staticmethod
     async def root(session: AsyncSession, task_id: str) -> AgentTaskRow:
         row = await session.get(AgentTaskRow, task_id)
-        if row is None or row.parent_task_id is not None:
+        if (
+            row is None
+            or row.parent_task_id is not None
+            or await session.scalar(select(WorkbenchRepository.deleted(task_id)))
+        ):
             raise AppError(
                 status_code=404, code="workbench_task_not_found", message="Root task was not found"
             )
@@ -93,7 +194,11 @@ class WorkbenchRepository:
                 await session.execute(
                     select(AgentTaskRow, WorkflowJobRow)
                     .outerjoin(WorkflowJobRow, WorkflowJobRow.task_id == AgentTaskRow.id)
-                    .where(AgentTaskRow.id == task_id, AgentTaskRow.parent_task_id.is_(None))
+                    .where(
+                        AgentTaskRow.id == task_id,
+                        AgentTaskRow.parent_task_id.is_(None),
+                        ~self.deleted(AgentTaskRow.id),
+                    )
                 )
             ).first()
             if result is None:
@@ -222,6 +327,7 @@ class WorkbenchRepository:
             conditions = [
                 AgentTaskRow.project_id == project_id,
                 AgentTaskRow.parent_task_id.is_(None),
+                ~self.deleted(AgentTaskRow.id),
             ]
             if status is not None:
                 conditions.append(AgentTaskRow.status == status)

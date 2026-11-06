@@ -19,7 +19,7 @@ test('evidence and report preview escape HTML; bearer export verifies real bytes
   await expect(section.getByText('公开 MNIST 证据')).toBeVisible();
   await section.getByRole('button', { name: '展开证据' }).click();
   await expect(section.getByText('公开测试主张')).toBeVisible();
-  const link = section.getByRole('link'); await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  const link = section.getByRole('link', { name: /查看引用 .* 的来源/ }); await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   await section.getByRole('tab', { name: '文件与报告' }).click();
   const row = section.getByRole('row').filter({ hasText: 'reports/report.md' });
   await row.getByRole('button', { name: '预览' }).click();

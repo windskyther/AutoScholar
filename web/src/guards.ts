@@ -51,7 +51,9 @@ export function isSession(value: unknown): value is Session {
     && (caps.task_controls === undefined || typeof caps.task_controls === 'boolean')
     && (caps.resource_browser === undefined || typeof caps.resource_browser === 'boolean')
     && (caps.project_deletion === undefined || typeof caps.project_deletion === 'boolean')
-    && (caps.research_workflows === undefined || typeof caps.research_workflows === 'boolean');
+    && (caps.research_workflows === undefined || typeof caps.research_workflows === 'boolean')
+    && (caps.task_deletion === undefined || typeof caps.task_deletion === 'boolean')
+    && (caps.markdown_export === undefined || typeof caps.markdown_export === 'boolean');
 }
 export function isBudget(value: unknown): value is BudgetLimits {
   return record(value) && ['steps', 'replans', 'model_calls', 'tool_calls', 'search_queries', 'code_repairs',

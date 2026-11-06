@@ -46,6 +46,8 @@ async function fixture(page: Page, mode: 'duplicate' | 'gap' | 'retry' | 'outage
   await page.getByRole('button', { name: '连接本地 API' }).click();
   await page.getByRole('link', { name: project.name }).click();
   await page.getByRole('link', { name: task.objective }).click();
+  await expect(page.locator('.event-section')).not.toHaveAttribute('open', '');
+  await page.getByText('执行事件', { exact: true }).click();
   return calls;
 }
 

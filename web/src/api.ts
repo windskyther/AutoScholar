@@ -21,6 +21,8 @@ const messages: Record<string, string> = {
   invalid_response: '暂时无法读取服务返回的数据，请稍后重试。',
   project_has_active_tasks: '项目中还有未结束或待核对的任务，请先处理后再删除。',
   project_has_active_documents: '项目中的文档仍在处理中，请稍后再删除。',
+  task_has_active_operations: '任务仍在执行或有待核对的调用，请先取消任务并核对执行记录。',
+  task_output_unavailable: '任务尚未产生可导出的输出。',
   response_too_large: '响应超过安全大小上限。',
   request_validation_error: '输入或查询参数不合法。',
   documents_selection_required: '请选择 1–100 个已就绪 PDF。',
@@ -171,6 +173,49 @@ export class ApiClient {
   }
   deleteProject(projectId: string): Promise<void> {
     return this.request(`/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE', empty: true });
+  }
+  deleteTask(projectId: string, taskId: string): Promise<void> {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`,
+      { method: 'DELETE', empty: true });
+  }
+  async downloadMarkdown(id: string, signal?: AbortSignal): Promise<Blob> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new ApiError('invalid_response');
+    if (!this.connected) throw new ApiError('experiment_auth_required', 401);
+    const controller = new AbortController(); this.#streams.add(controller);
+    const combined = AbortSignal.any([controller.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]);
+    let response: Response | undefined;
+    try {
+      response = await fetch(`/api/workbench/tasks/${id}/output/markdown`, {
+        headers: { Authorization: 'Bearer ' + this.#token }, signal: combined,
+        credentials: 'omit', cache: 'no-store', redirect: 'error',
+      });
+      if ([401, 403].includes(response.status)) {
+        this.clear(); this.unauthorized(); throw new ApiError('experiment_auth_required', response.status);
+      }
+      if (!response.ok) {
+        const payload = await readJSON(response) as { error?: { code?: unknown } };
+        throw new ApiError(typeof payload?.error?.code === 'string' ? payload.error.code : 'request_failed', response.status);
+      }
+      if (response.headers.get('content-type')?.split(';')[0] !== 'text/markdown') throw new ApiError('invalid_response');
+      const reader = response.body?.getReader();
+      if (!reader) throw new ApiError('invalid_response');
+      const chunks: Uint8Array<ArrayBuffer>[] = []; let size = 0;
+      try {
+        while (true) {
+          const chunk = await reader.read(); if (chunk.done) break;
+          size += chunk.value.byteLength;
+          if (size > 8 * 1024 * 1024) throw new ApiError('response_too_large');
+          chunks.push(new Uint8Array(chunk.value));
+        }
+      } finally { await reader.cancel(); reader.releaseLock(); }
+      if (!this.connected) throw new ApiError('experiment_auth_required', 401);
+      if (combined.aborted) throw combined.reason;
+      return new Blob(chunks, { type: 'text/markdown;charset=utf-8' });
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      if (signal?.aborted) throw signal.reason;
+      throw new ApiError(this.connected ? 'network_unavailable' : 'experiment_auth_required');
+    } finally { await response?.body?.cancel().catch(() => {}); this.#streams.delete(controller); }
   }
   documents(projectId: string, page: number, signal?: AbortSignal): Promise<Page<PDFDocument>> {
     return this.checked(`/projects/${encodeURIComponent(projectId)}/documents?limit=20&offset=${(page - 1) * 20}`,

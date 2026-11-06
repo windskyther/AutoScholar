@@ -14,8 +14,10 @@ function Evidence({ taskId }: { taskId: string }) {
   return query.isPending ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
     : <Table<EvidenceResource> rowKey="id" dataSource={query.data.items} scroll={{ x: 700 }} size="small"
       locale={{ emptyText: <Empty description="暂无检索证据。" /> }} columns={[
-        { title: '引用', dataIndex: 'citation_key', width: 90 },
-        { title: '来源与标题', render: (_, item) => <><Tag>{item.source_type}</Tag>{item.title}</> },
+        { title: '引用', dataIndex: 'citation_key', width: 90, render: (key: string, item) =>
+          safeExternalURL(item.url) ? <a href={item.url!} target="_blank" rel="noopener noreferrer" aria-label={`查看引用 ${key} 的来源`}>{key}</a> : key },
+        { title: '来源与标题', render: (_, item) => <><Tag>{item.source_type}</Tag>{safeExternalURL(item.url)
+          ? <a href={item.url!} target="_blank" rel="noopener noreferrer">{item.title}</a> : item.title}</> },
         { title: '所属任务', dataIndex: 'task_id', ellipsis: true },
       ]} expandable={{ expandIcon: ({ expanded, onExpand, record }) => <Button size="small"
         aria-label={expanded ? '收起证据' : '展开证据'} onClick={(event) => onExpand(record, event)}>{expanded ? '−' : '+'}</Button>, expandedRowRender: (item) => <>

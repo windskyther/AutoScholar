@@ -13,6 +13,8 @@ import Events from './events';
 import Controls from './controls';
 import Resources from './resources';
 import DeleteProject from './delete-project';
+import DeleteTask from './delete-task';
+import ExportMarkdown from './export-markdown';
 
 function failureLabel(code: string | null | undefined): string {
   const labels: Record<string, string> = {
@@ -88,6 +90,7 @@ export function ProjectPage() {
           { title: '状态', dataIndex: 'status', width: 140, render: (value: TaskStatus) => <Status value={value} /> },
           { title: 'Tokens', width: 100, render: (_, item) => (item.metrics.total_tokens ?? 0).toLocaleString('zh-CN') },
           { title: '更新时间', dataIndex: 'updated_at', width: 210, render: dateLabel },
+          { title: '操作', width: 120, render: (_, item) => <DeleteTask task={item} projectId={projectId} onDeleted={() => setPage(1)} /> },
         ]} pagination={{ current: page, pageSize: 20, total: tasks.data.total, showSizeChanger: false, onChange: setPage }} />}
     <Documents projectId={projectId} />
   </>;
@@ -145,10 +148,11 @@ export function TaskPage() {
       { title: '原因', dataIndex: 'error_code', render: (value: string | null) => failureLabel(value) },
       { title: '创建时间', dataIndex: 'created_at', width: 210, render: dateLabel },
     ]} pagination={{ current: page, pageSize: 20, total: data.children.total, showSizeChanger: false, onChange: setPage }} />
-    <h2>任务输出</h2>
+    <div className="section-heading"><h2>任务输出</h2><ExportMarkdown key={`export:${taskId}`} taskId={taskId!}
+      objective={data.task.objective} available={!!data.answer} /></div>
     {data.answer_truncated && <Alert type="warning" title="输出超过大小上限，下方仅展示部分内容。" />}
     {data.answer ? <pre className="plain-output">{data.answer}</pre> : <Empty description="任务尚未产生最终输出。" />}
-    {session?.capabilities.task_streaming && <Events taskId={taskId!} projectId={projectId!} />}
+    {session?.capabilities.task_streaming && <Events key={`events:${taskId}`} taskId={taskId!} projectId={projectId!} />}
     {session?.capabilities.resource_browser && <Resources key={`resources:${taskId}`} taskId={taskId!} />}
   </>;
 }

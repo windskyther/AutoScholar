@@ -106,8 +106,9 @@ export default function Events({ taskId, projectId }: { taskId: string; projectI
     } catch (failure) { if (!signal.aborted && api.connected) setHistoryError(failure); }
     finally { if (!signal.aborted) { historyBusy.current = false; setLoadingHistory(false); } }
   }
-  return <section className="event-section">
-    <div className="section-heading"><h2>执行事件</h2><Space wrap>
+  return <details className="event-section">
+    <summary>执行事件</summary>
+    <div className="section-heading"><Space wrap>
       <Tag color={state === 'live' ? 'success' : state === 'error' ? 'error' : 'default'}>{states[state]}</Tag>
       <Button onClick={() => setReload((value) => value + 1)}>重新加载记录</Button>
     </Space></div>
@@ -124,5 +125,5 @@ export default function Events({ taskId, projectId }: { taskId: string; projectI
         { title: '时间', dataIndex: 'created_at', width: 190, render: dateLabel },
       ]} pagination={{ pageSize: 20, showSizeChanger: false }} />
     </>}
-  </section>;
+  </details>;
 }

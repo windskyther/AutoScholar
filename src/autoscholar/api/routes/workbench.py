@@ -1,6 +1,7 @@
 """Authenticated browser facade. Legacy REST paths remain explicitly unchanged."""
 
 from typing import Annotated, Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import Response, StreamingResponse
@@ -74,6 +75,8 @@ async def session(request: Request) -> WorkbenchSessionResponse:
             "resource_browser": True,
             "project_deletion": True,
             "research_workflows": True,
+            "task_deletion": True,
+            "markdown_export": True,
             "document_max_bytes": settings.document_max_bytes,
             "document_max_pages": settings.document_max_pages,
             "budget_limits": settings.autonomous_budget.model_dump(),
@@ -148,6 +151,26 @@ async def overview(
     offset: int = Query(default=0, ge=0),
 ) -> TaskOverviewResponse:
     return await store(request).overview(task_id, limit=limit, offset=offset)
+
+
+@router.delete("/projects/{project_id}/tasks/{task_id}", status_code=204)
+async def delete_task(project_id: str, task_id: str, request: Request) -> Response:
+    await store(request).delete_task(project_id, task_id)
+    return Response(status_code=204)
+
+
+@router.get("/tasks/{task_id}/output/markdown")
+async def export_markdown(task_id: str, request: Request) -> Response:
+    objective, answer = await store(request).markdown(task_id)
+    title = " ".join(objective.split())
+    return Response(
+        content=f"# {title}\n\n{answer}" + ("" if answer.endswith("\n") else "\n"),
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": "attachment; filename=research-output.md; filename*=UTF-8''"
+            + quote(title[:80].translate(str.maketrans(r'/\:*?"<>|', "_" * 9)) + ".md", safe=""),
+        },
+    )
 
 
 @router.get("/tasks/{task_id}/events", response_model=WorkflowEventPage)
