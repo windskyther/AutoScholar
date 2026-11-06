@@ -75,7 +75,7 @@ class BaseHTTPResearchProvider:
                 if attempt + 1 == attempts:
                     raise SearchProviderError(
                         code=f"{self.name}_unavailable",
-                        message=f"{self.name} search is unavailable",
+                        message=f"{self.name} search is unavailable ({type(exc).__name__})",
                         retryable=True,
                     ) from exc
                 await self._sleep(self._retry_delays[attempt])

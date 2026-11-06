@@ -207,13 +207,24 @@ class OpenAICompatibleProvider:
                     try:
                         validator.validate(call.arguments)
                     except (ValidationError, Unresolvable) as exc:
+                        # Schema paths contain our field names, never the rejected values.
+                        feedback = (
+                            f"{exc.validator} at schema /"
+                            + "/".join(str(part) for part in exc.absolute_schema_path)
+                            if isinstance(exc, ValidationError)
+                            else "unresolvable local schema reference"
+                        )
                         raise LLMResponseError(
                             code="llm_invalid_tool_call",
-                            message="The model returned arguments outside the original tool schema",
+                            message=(
+                                "The model returned arguments outside the original tool schema: "
+                                + feedback
+                            ),
                             usage=usage,
                             model=response.model or self._model,
                             finish_reason=finish_reason,
                             validation_reason="tool_schema_violation",
+                            validation_feedback=feedback,
                         ) from exc
 
         if not content and not tool_calls:

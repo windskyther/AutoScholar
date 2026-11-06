@@ -25,6 +25,7 @@ from autoscholar.agent.tools import AgentTool
 from autoscholar.coding.agent import CodingResult
 from autoscholar.core.budget import BudgetExceeded, consume
 from autoscholar.core.errors import AppError
+from autoscholar.core.journal import current_journal
 from autoscholar.experiment.models import ExperimentSpecification
 from autoscholar.experiment.service import ExperimentResult
 from autoscholar.llm import (
@@ -37,6 +38,7 @@ from autoscholar.llm import (
     ToolDefinition,
     ToolResultMessage,
 )
+from autoscholar.llm.errors import LLMResponseError, correctable_tool_schema_error
 from autoscholar.rag.models import RetrievalMode
 from autoscholar.rag.service import RAGQueryServiceProtocol
 from autoscholar.research import SearchProviderError, SearchResponse, SearchResult, SourceType
@@ -469,6 +471,12 @@ class AgentRunner:
                 citations=persisted.citations if persisted is not None else None,
                 warnings=persisted.warnings if persisted is not None else None,
             )
+            if current_journal.get() is not None and (
+                isinstance(exc, SearchProviderError) or code == "operation_uncertain"
+            ):
+                # Preserve the transport cause for the durable coordinator. It must
+                # stop before review/replanning while an external result is unknown.
+                raise
             raise AgentRunError(
                 task_id=resolved_task_id,
                 code=str(code),
@@ -519,6 +527,60 @@ class AgentRunner:
         graph.add_edge("experiment", END)
         return graph.compile()
 
+    async def _plan_response(
+        self,
+        state: AgentState,
+        messages: list[ConversationMessage],
+        definition: ToolDefinition,
+    ) -> tuple[LLMResult, dict[str, Any]]:
+        """One correction for complete, metered local schema rejections only."""
+        progress = state.copy()
+        for attempt in range(2):
+            try:
+                result = await self._provider.generate(
+                    messages, tools=[definition], tool_choice="auto"
+                )
+            except LLMResponseError as exc:
+                progress["model_calls"] += 1
+                if exc.usage is not None:
+                    progress["input_tokens"] += exc.usage.input_tokens
+                    progress["output_tokens"] += exc.usage.output_tokens
+                    progress["total_tokens"] += exc.usage.total_tokens
+                # Persist received usage even if correction is denied or fails.
+                await self._persist_plan_progress(progress)
+                if attempt or not correctable_tool_schema_error(exc):
+                    raise
+                messages = [
+                    *messages,
+                    ChatMessage(
+                        role="user",
+                        content=(
+                            "Protocol correction: the previous complete response failed the "
+                            "original local tool schema. "
+                            f"{exc.validation_feedback or 'Check all fields and array bounds.'} "
+                            f"Return exactly one native call to {definition.name}. "
+                            "Use only these fields and obey every constraint: "
+                            + json.dumps(definition.parameters, ensure_ascii=False)
+                        ),
+                    ),
+                ]
+            else:
+                updates = self._usage_updates(progress, result)
+                progress = cast(AgentState, {**progress, **updates})
+                await self._persist_plan_progress(progress)
+                return result, updates
+        raise AssertionError("bounded plan correction exhausted")
+
+    async def _persist_plan_progress(self, state: AgentState) -> None:
+        await self._repository.update_task(
+            state["task_id"],
+            status="running",
+            plan=state["plan"],
+            answer=None,
+            metrics=self._metrics(state),
+            mode=state["resolved_mode"],
+        )
+
     async def _planner(self, state: AgentState) -> dict[str, Any]:
         available_modes = ["research", "compute"]
         if state["project_id"] is not None and self._knowledge_service is not None:
@@ -556,22 +618,21 @@ class AgentRunner:
             if requested == "auto"
             else f"The caller explicitly requires {requested} mode; return that exact mode."
         )
-        result = await self._provider.generate(
+        result, updates = await self._plan_response(
+            state,
             [
                 ChatMessage(
                     role="system",
                     content=(
                         "Create a short executable plan for the objective. "
                         f"{mode_instruction} You must call submit_plan and must not answer in "
-                        "plain text."
+                        f"plain text. Return 1 to {self._limits.max_plan_steps} nonempty steps."
                     ),
                 ),
                 ChatMessage(role="user", content=state["objective"]),
             ],
-            tools=[submit_plan],
-            tool_choice="auto",
+            submit_plan,
         )
-        updates = self._usage_updates(state, result)
         if len(result.tool_calls) != 1 or result.tool_calls[0].name != "submit_plan":
             raise AgentProtocolError(
                 code="native_tool_calling_required",
@@ -727,7 +788,8 @@ class AgentRunner:
                 "additionalProperties": False,
             },
         )
-        result = await self._provider.generate(
+        result, updates = await self._plan_response(
+            state,
             [
                 ChatMessage(
                     role="system",
@@ -751,11 +813,10 @@ class AgentRunner:
                     ),
                 ),
             ],
-            tools=[submit_queries],
-            tool_choice="auto",
+            submit_queries,
         )
         queries = self._parse_queries(result, requested_sources)
-        return {"research_queries": queries, **self._usage_updates(state, result)}
+        return {"research_queries": queries, **updates}
 
     def _parse_queries(
         self, result: LLMResult, required_sources: list[ResearchSource]
@@ -918,9 +979,15 @@ class AgentRunner:
                         provider=service.name,
                     )
                 )
+                if current_journal.get() is not None:
+                    # The journal deliberately retains failed external requests.
+                    # Never issue later queries or hide this cause behind no-evidence.
+                    raise
             except BudgetExceeded:
                 raise
-            except Exception:
+            except Exception as exc:
+                if getattr(exc, "code", None) == "operation_uncertain":
+                    raise
                 trace = await self._repository.add_tool_call(
                     task_id=state["task_id"],
                     sequence=len(traces) + 1,

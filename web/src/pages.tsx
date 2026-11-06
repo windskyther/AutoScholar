@@ -19,6 +19,11 @@ function failureLabel(code: string | null | undefined): string {
     llm_timeout: '模型服务响应超时',
     llm_unavailable: '模型服务连接失败',
     llm_rate_limited: '模型服务限流',
+    llm_invalid_tool_call: '模型返回的工具参数未通过校验',
+    tavily_unavailable: 'Tavily 检索连接失败或超时',
+    tavily_authentication_failed: 'Tavily 密钥验证失败',
+    tavily_upstream_error: 'Tavily 检索服务暂时不可用',
+    operation_uncertain: '上一次调用结果待核对，后续步骤已停止',
     dependency_failed: '前置步骤未完成，本步骤未执行',
     knowledge_base_not_ready: '没有可用的项目 PDF',
     source_quote_unverified: '原文引用未通过来源核验',
@@ -110,7 +115,7 @@ export function TaskPage() {
       <Tag>{data.task.mode}</Tag><span className="identifier">{data.task.task_id}</span></Space>
     {data.execution?.error_code === 'external_result_uncertain' && <Alert type="warning" showIcon
       title={`${failureLabel(data.execution.cause_error_code ?? data.execution.error_code)}，任务已停止`}
-      description="请求可能已经到达模型服务，实际结果和用量需要核对。系统不会自动重发；请先检查已有记录，避免重复提交。" />}
+      description="请求可能已经到达外部服务，实际结果和用量需要核对。系统不会自动重发；请先检查已有记录，避免重复提交。" />}
     {session?.capabilities.task_controls && <Controls key={`controls:${taskId}`} taskId={taskId!} projectId={projectId!} />}
     <div className="metrics-grid">
       <Metric label="模型调用" value={usage.model_calls ?? 0} limit={limits?.model_calls} />

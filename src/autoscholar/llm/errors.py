@@ -46,6 +46,7 @@ class LLMResponseError(LLMUpstreamError):
         model: str | None = None,
         finish_reason: str | None = None,
         validation_reason: str | None = None,
+        validation_feedback: str | None = None,
     ) -> None:
         super().__init__(code=code, message=message)
         self.usage = usage
@@ -53,6 +54,7 @@ class LLMResponseError(LLMUpstreamError):
         self.model = model
         self.finish_reason = finish_reason
         self.validation_reason = validation_reason
+        self.validation_feedback = validation_feedback
 
 
 class LLMUnavailableError(AppError):

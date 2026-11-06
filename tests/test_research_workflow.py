@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import update
@@ -21,6 +22,7 @@ from autoscholar.orchestration.durable import DurableService
 from autoscholar.orchestration.models import ReviewIssue, ReviewResult, TaskPlan
 from autoscholar.orchestration.review_facts import requirement_issue_error, step_facts
 from autoscholar.rag.database_models import DocumentChunkRow, DocumentRow, ProjectRow
+from autoscholar.research import ResearchSearchService, TavilySearchProvider
 from autoscholar.research.context import research_context
 from tests.test_agent_runner import ScriptedProvider
 from tests.test_autonomous import call, workflow
@@ -224,6 +226,94 @@ async def test_timeout_keeps_unknown_call_and_exposes_cause_without_replay(tmp_p
         assert after.usage == usage and after.pending_calls == job.pending_calls
     finally:
         await engine.dispose()
+
+
+@pytest.mark.parametrize("failure", ["connect", "timeout", "http429", "http401"])
+async def test_uncertain_search_stops_at_first_request_with_original_cause(
+    tmp_path: Path, failure: str
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if failure == "connect":
+            raise httpx.ConnectError("secret-key and private request body", request=request)
+        if failure == "timeout":
+            raise httpx.ReadTimeout("secret-key and private request body", request=request)
+        return httpx.Response(int(failure[4:]), json={"error": "secret-key"})
+
+    script = research_script()[:3]
+    for query in script[2].tool_calls[0].arguments["queries"]:
+        query["source_type"] = "web"
+    provider = ScriptedProvider(script)
+    # File-backed SQLite exercises checkpoint/restart behavior, never the user's DB.
+    service, engine = await workflow(
+        tmp_path / "workspace",
+        provider,
+        FakeExperimentSandbox(),
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'search.sqlite'}",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        service.runner = AgentRunner(
+            provider=service.provider,
+            repository=service.tasks,
+            tools=[],
+            research_services=[
+                ResearchSearchService(
+                    provider=TavilySearchProvider(
+                        api_key="secret-key",
+                        client=client,
+                        retry_delays=(),
+                    )
+                )
+            ],
+        )
+        try:
+            durable = DurableService(service)
+            task_id, _ = await durable.submit(
+                {
+                    "objective": OBJECTIVE,
+                    "workflow_kind": "research",
+                    "research_sources": ["web"],
+                },
+                "search-failure",
+            )
+            assert await durable.tick(task_id) and await durable.tick(task_id)
+            snapshot, job = await durable.repository.snapshot(task_id)
+            expected = {
+                "connect": "tavily_unavailable",
+                "timeout": "tavily_unavailable",
+                "http429": "tavily_upstream_error",
+                "http401": "tavily_authentication_failed",
+            }[failure]
+            assert job.status == "recovery_required" and snapshot.stage == "executor"
+            assert job.error_code == "external_result_uncertain"
+            assert len(job.pending_calls) == 1
+            assert next(iter(job.pending_calls.values())) == "search:tavily"
+            assert len(requests) == 1 and len(provider.calls) == 3
+            assert job.usage["search_queries"] == job.usage["tool_calls"] == 1
+            assert job.usage["model_calls"] == 3
+            assert job.usage["total_tokens"] == 9
+            assert not await service.workflows.history(task_id, "reviews")
+            steps = await service.workflows.history(task_id, "steps")
+            assert len(steps) == 1 and steps[0]["result"]["error_code"] == expected
+            child = await service.tasks.get_task(steps[0]["child_task_id"])
+            assert child and len(child.tool_calls) == 1
+            assert child.tool_calls[0].error_code == expected
+            diagnostic = json.dumps(steps[0]["result"])
+            assert "secret-key" not in diagnostic and "private request body" not in diagnostic
+            if failure in {"connect", "timeout"}:
+                assert ("ConnectError" if failure == "connect" else "ReadTimeout") in diagnostic
+            overview = await WorkbenchRepository(service.tasks.session_factory).overview(
+                task_id, limit=20, offset=0
+            )
+            assert overview.execution and overview.execution.cause_error_code == expected
+            assert not await DurableService(service).tick(task_id)
+            _, after = await durable.repository.snapshot(task_id)
+            assert after.usage == job.usage and after.pending_calls == job.pending_calls
+            assert len(requests) == 1 and len(provider.calls) == 3
+        finally:
+            await engine.dispose()
 
 
 async def test_valid_quote_still_allows_reviewer_to_reject_unsupported_claim(

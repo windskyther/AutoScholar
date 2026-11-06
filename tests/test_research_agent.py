@@ -700,5 +700,7 @@ async def test_auto_routed_research_failure_keeps_plan_and_mode() -> None:
     assert persisted.status == "failed"
     assert persisted.mode == "research"
     assert persisted.plan == ["Find primary sources"]
-    assert persisted.metrics["model_calls"] == 1
+    # The received query-planner response counts even when its shape is rejected.
+    assert persisted.metrics["model_calls"] == 2
+    assert persisted.metrics["total_tokens"] == 3  # second response supplied no usage
     await engine.dispose()

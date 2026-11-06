@@ -28,6 +28,7 @@ from autoscholar.core.budget import (
     current_budget,
     current_parent,
 )
+from autoscholar.core.journal import current_journal
 from autoscholar.core.rejections import LocalRequestRejected
 from autoscholar.experiment.analysis import analyze_experiment
 from autoscholar.experiment.artifacts import ArtifactManager
@@ -54,6 +55,7 @@ from autoscholar.orchestration.review_facts import (
     unsupported_source_issue,
 )
 from autoscholar.rag.models import RetrievalMode
+from autoscholar.research import SearchProviderError
 from autoscholar.research.context import research_context, today
 
 
@@ -515,6 +517,11 @@ class AutonomousService:
                     for trace in child.tool_calls[-3:]
                 ]
             await self._fail_child(child_id, outcome["error_code"])
+            if current_journal.get() is not None and (
+                isinstance(exc, SearchProviderError)
+                or outcome["error_code"] == "operation_uncertain"
+            ):
+                raise
         finally:
             current_parent.reset(parent)
             run.results[step.id] = outcome

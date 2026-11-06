@@ -85,7 +85,12 @@ test('repeated overview refresh keeps one control section alongside task resourc
   }
 });
 
-test('unknown model timeout shows the cause without offering automatic replay', async ({ page }) => {
+for (const [cause, label] of [
+  ['llm_timeout', '模型服务响应超时'],
+  ['tavily_unavailable', 'Tavily 检索连接失败或超时'],
+  ['llm_invalid_tool_call', '模型返回的工具参数未通过校验'],
+]) {
+test(`unknown external result shows ${cause} without offering automatic replay`, async ({ page }) => {
   const requests = await mockAPI(page);
   await page.route('**/api/workbench/tasks/task-a/overview?*', async (route) => {
     expect(route.request().method()).toBe('GET');
@@ -93,16 +98,17 @@ test('unknown model timeout shows the cause without offering automatic replay', 
       ...overview, task: { ...task, status: 'recovery_required', error_code: 'external_result_uncertain' },
       execution: { status: 'recovery_required', stage: 'executor', plan_version: 2, checkpoint_sequence: 8,
         budget_used: { total_tokens: 100 }, budget_limits: {}, active_seconds: 60,
-        pending_call_count: 1, error_code: 'external_result_uncertain', cause_error_code: 'llm_timeout' },
+        pending_call_count: 1, error_code: 'external_result_uncertain', cause_error_code: cause },
     }) });
   });
   await connect(page);
   await page.getByRole('link', { name: project.name }).click();
   await page.getByRole('link', { name: task.objective }).click();
-  await expect(page.getByText('模型服务响应超时，任务已停止', { exact: true })).toBeVisible();
-  await expect(page.getByText('请求可能已经到达模型服务，实际结果和用量需要核对。系统不会自动重发；请先检查已有记录，避免重复提交。')).toBeVisible();
+  await expect(page.getByText(`${label}，任务已停止`, { exact: true })).toBeVisible();
+  await expect(page.getByText('请求可能已经到达外部服务，实际结果和用量需要核对。系统不会自动重发；请先检查已有记录，避免重复提交。')).toBeVisible();
   expect(requests.every((entry) => entry.method === 'GET')).toBeTruthy();
 });
+}
 
 test('connects, navigates true records, renders Chinese safely and keeps credentials out of storage', async ({ page }) => {
   const requests = await mockAPI(page);
