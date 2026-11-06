@@ -50,7 +50,8 @@ export function isSession(value: unknown): value is Session {
     && (caps.budget_limits === undefined || isBudget(caps.budget_limits))
     && (caps.task_controls === undefined || typeof caps.task_controls === 'boolean')
     && (caps.resource_browser === undefined || typeof caps.resource_browser === 'boolean')
-    && (caps.project_deletion === undefined || typeof caps.project_deletion === 'boolean');
+    && (caps.project_deletion === undefined || typeof caps.project_deletion === 'boolean')
+    && (caps.research_workflows === undefined || typeof caps.research_workflows === 'boolean');
 }
 export function isBudget(value: unknown): value is BudgetLimits {
   return record(value) && ['steps', 'replans', 'model_calls', 'tool_calls', 'search_queries', 'code_repairs',
@@ -102,6 +103,7 @@ export function isOverview(value: unknown): value is Overview {
       || !(run.plan_version === null || integer(run.plan_version)) || !integer(run.checkpoint_sequence)
       || !numbers(run.budget_used) || !(run.budget_limits === null || numbers(run.budget_limits))
       || !number(run.active_seconds) || !integer(run.pending_call_count) || !nullableString(run.error_code)) return false;
+    if (run.cause_error_code !== undefined && !nullableString(run.cause_error_code)) return false;
   }
   return true;
 }

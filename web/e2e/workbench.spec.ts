@@ -50,6 +50,60 @@ async function connect(page: Page) {
   await page.getByRole('button', { name: '连接本地 API' }).click();
 }
 
+test('repeated overview refresh keeps one control section alongside task resources', async ({ page }) => {
+  await mockAPI(page);
+  await page.route('**/api/workbench/session', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+    ...session, capabilities: { ...session.capabilities, task_controls: true, resource_browser: true },
+  }) }));
+  await page.route('**/api/workbench/tasks/task-a/controls', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+    task_id: task.task_id, status: 'paused', actions: ['resume', 'cancel'],
+    expected: { status: 'paused', checkpoint_sequence: 1, event_sequence: 1 },
+  }) }));
+  const emptyPage = { task_id: task.task_id, items: [], total: 0, limit: 20, offset: 0 };
+  for (const path of ['approvals?*', 'resources/**']) {
+    await page.route('**/api/workbench/tasks/task-a/' + path, (route) => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify(emptyPage),
+    }));
+  }
+  let sequence = 0;
+  await page.route('**/api/workbench/tasks/task-a/overview?*', (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ ...overview, answer: `Snapshot ${++sequence}` }),
+  }));
+  await connect(page);
+  await page.getByRole('link', { name: project.name }).click();
+  await page.getByRole('link', { name: task.objective }).click();
+  const output = page.locator('pre.plain-output').filter({ hasText: /^Snapshot \d+$/ });
+  await expect(output).toBeVisible();
+  for (let index = 0; index < 5; index += 1) {
+    const before = sequence;
+    await page.getByRole('button', { name: /刷新快照$/ }).click();
+    await expect.poll(() => sequence).toBeGreaterThan(before);
+    await expect(output).toHaveText(`Snapshot ${sequence}`);
+    await expect(page.getByRole('heading', { name: '任务控制与审批', exact: true })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '恢复任务', exact: true })).toHaveCount(1);
+    await expect(page.getByRole('heading', { name: '任务资源', exact: true })).toHaveCount(1);
+  }
+});
+
+test('unknown model timeout shows the cause without offering automatic replay', async ({ page }) => {
+  const requests = await mockAPI(page);
+  await page.route('**/api/workbench/tasks/task-a/overview?*', async (route) => {
+    expect(route.request().method()).toBe('GET');
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      ...overview, task: { ...task, status: 'recovery_required', error_code: 'external_result_uncertain' },
+      execution: { status: 'recovery_required', stage: 'executor', plan_version: 2, checkpoint_sequence: 8,
+        budget_used: { total_tokens: 100 }, budget_limits: {}, active_seconds: 60,
+        pending_call_count: 1, error_code: 'external_result_uncertain', cause_error_code: 'llm_timeout' },
+    }) });
+  });
+  await connect(page);
+  await page.getByRole('link', { name: project.name }).click();
+  await page.getByRole('link', { name: task.objective }).click();
+  await expect(page.getByText('模型服务响应超时，任务已停止', { exact: true })).toBeVisible();
+  await expect(page.getByText('请求可能已经到达模型服务，实际结果和用量需要核对。系统不会自动重发；请先检查已有记录，避免重复提交。')).toBeVisible();
+  expect(requests.every((entry) => entry.method === 'GET')).toBeTruthy();
+});
+
 test('connects, navigates true records, renders Chinese safely and keeps credentials out of storage', async ({ page }) => {
   const requests = await mockAPI(page);
   await connect(page);

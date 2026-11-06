@@ -3,6 +3,9 @@
 import json
 from typing import Any
 
+from sqlalchemy import select
+
+from autoscholar.agent.records import AgentTaskRecord, EvidenceRecord
 from autoscholar.agent.repository import AgentTaskRepository
 from autoscholar.coding.workspace import WorkspaceManager
 from autoscholar.experiment.analysis import analyze_experiment
@@ -10,6 +13,77 @@ from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.models import ExperimentSpecification, RawExperimentMetrics
 from autoscholar.orchestration.contracts import REQUIREMENTS
 from autoscholar.orchestration.models import ReviewIssue
+from autoscholar.rag.database_models import DocumentChunkRow
+
+
+async def source_quote_checks(
+    child: AgentTaskRecord, tasks: AgentTaskRepository
+) -> list[dict[str, Any]]:
+    """Bind quotations to persisted search receipts or same-project PDF chunks.
+
+    A claim can paraphrase. Verbatim checks apply to quoted source text, never to
+    the wording of the claim. Semantic support remains the Reviewer's obligation.
+    """
+    sources: list[dict[str, Any]] = []
+    for trace in child.tool_calls:
+        if trace.status != "succeeded" or trace.tool_name not in {"web_search", "paper_search"}:
+            continue
+        try:
+            payload = json.loads(trace.output)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("results"), list):
+            sources.extend(
+                item
+                for item in payload["results"]
+                if isinstance(item, dict) and trace.tool_name == f"{item.get('source_type')}_search"
+            )
+    chunk_ids = {e.chunk_id for e in child.evidence if e.source_type == "document" and e.chunk_id}
+    chunks = {}
+    if chunk_ids:
+        async with tasks.session_factory() as session:
+            chunks = {
+                row.id: row
+                for row in await session.scalars(
+                    select(DocumentChunkRow).where(
+                        DocumentChunkRow.id.in_(chunk_ids),
+                        DocumentChunkRow.project_id == child.project_id,
+                    )
+                )
+            }
+
+    def verified(evidence: EvidenceRecord) -> bool:
+        if not evidence.excerpt.strip():
+            return False
+        if evidence.source_type == "document":
+            chunk = chunks.get(evidence.chunk_id or "")
+            return bool(
+                chunk
+                and chunk.document_id == evidence.document_id
+                and chunk.page == evidence.page
+                and evidence.excerpt in chunk.content
+                and evidence.url
+                == (
+                    f"/projects/{child.project_id}/documents/{chunk.document_id}/content#page={chunk.page}"
+                )
+            )
+        return any(
+            item.get("source_type") == evidence.source_type
+            and item.get("provider") == evidence.provider
+            and item.get("url") == evidence.url
+            and isinstance(item.get("content"), str)
+            and evidence.excerpt in item["content"]
+            for item in sources
+        )
+
+    return [
+        {
+            "reference": f"{child.id}:{e.citation_key}",
+            "excerpt_in_source": verified(e),
+        }
+        for e in child.evidence
+    ]
+
 
 # Compatibility for already recorded responses. New responses use the typed check field.
 _LEGACY_CHECKS = {
@@ -100,13 +174,14 @@ async def step_facts(
     if child is None:
         return facts
     if step_type in {"research", "knowledge"}:
-        evidence = [
-            {"reference": f"{child_id}:{e.citation_key}", "claim_in_excerpt": e.claim in e.excerpt}
-            for e in child.evidence
-        ]
+        evidence = await source_quote_checks(child, tasks)
         facts["citations"] = evidence
         facts["checks"]["verbatim_citation"] = bool(evidence) and all(
-            e["claim_in_excerpt"] for e in evidence
+            e["excerpt_in_source"] for e in evidence
+        )
+        facts["citation_policy"] = (
+            "verbatim_citation checks excerpts against persisted sources, not claim wording. "
+            "Claims may paraphrase; assess semantic support separately."
         )
     elif step_type == "coding":
         from autoscholar.orchestration.service import source_digest

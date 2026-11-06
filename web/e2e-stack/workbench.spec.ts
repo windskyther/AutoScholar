@@ -35,6 +35,8 @@ test('isolated PostgreSQL + Qdrant + workers + real Docker training from browser
   await page.getByRole('button', { name: '刷新文档' }).click();
   await expect(page.getByRole('row').filter({ hasText: '公开 MNIST 验收 PDF' }).getByText('已就绪', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '创建研究任务' }).click();
+  await page.getByLabel('任务类型', { exact: true }).click();
+  await page.getByTitle('MNIST CPU 实验', { exact: true }).click();
   await page.getByRole('dialog').getByLabel('研究目标', { exact: true }).fill('Public MNIST MLP CNN engineering acceptance; scripted coordinator and no external research.');
   await page.getByRole('checkbox', { name: '我确认提交后自动执行研究任务，并接受可能产生的 API 费用。' }).check();
   await page.getByRole('button', { name: '确认提交并自动执行', exact: true }).click();

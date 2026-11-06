@@ -58,6 +58,7 @@ class ExecutionSummary(BaseModel):
     active_seconds: float
     pending_call_count: int
     error_code: str | None
+    cause_error_code: str | None = None
 
 
 class ResourceCounts(BaseModel):

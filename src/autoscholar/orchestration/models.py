@@ -4,6 +4,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from autoscholar.experiment.models import ExperimentSpecification
 
+WorkflowKind = Literal["research", "experiment"]
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")

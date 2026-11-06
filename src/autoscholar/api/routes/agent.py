@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from autoscholar.agent.records import (
     AgentMode,
@@ -22,6 +22,7 @@ from autoscholar.core.budget import BudgetLimits
 from autoscholar.core.errors import AppError
 from autoscholar.experiment.models import ExperimentSpecification
 from autoscholar.orchestration.approvals import cost_units
+from autoscholar.orchestration.models import WorkflowKind
 from autoscholar.orchestration.service import AutonomousService
 from autoscholar.rag.models import RetrievalMode
 
@@ -39,6 +40,7 @@ def _default_research_sources() -> list[ResearchSource]:
 class AgentRunRequest(BaseModel):
     objective: ObjectiveText
     mode: AgentMode = "auto"
+    workflow_kind: WorkflowKind = "experiment"
     project_id: str | None = None
     document_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] | None = (
         Field(default=None, max_length=100)
@@ -49,6 +51,16 @@ class AgentRunRequest(BaseModel):
     research_sources: list[ResearchSource] = Field(
         default_factory=_default_research_sources, min_length=1, max_length=2
     )
+
+    @model_validator(mode="after")
+    def validate_workflow_kind(self) -> "AgentRunRequest":
+        if self.workflow_kind == "research" and (
+            self.mode != "autonomous" or self.experiment_specification is not None
+        ):
+            raise ValueError(
+                "Research workflows require autonomous mode and no experiment specification"
+            )
+        return self
 
     @field_validator("research_sources")
     @classmethod
@@ -271,7 +283,9 @@ def _run_response(task: AgentTaskRecord, request_id: str) -> AgentRunResponse:
 
 @router.post("/run", response_model=AgentRunResponse)
 async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunResponse:
-    if payload.mode in {"autonomous", "experiment"}:
+    if payload.mode == "experiment" or (
+        payload.mode == "autonomous" and payload.workflow_kind == "experiment"
+    ):
         require_experiment_token(request)
         specification = payload.experiment_specification or ExperimentSpecification()
         if cost_units(specification) >= request.app.state.settings.workflow_approval_threshold:
@@ -297,6 +311,7 @@ async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunRespo
             research_sources=payload.research_sources,
             experiment_specification=payload.experiment_specification,
             budget=payload.budget,
+            workflow_kind=payload.workflow_kind,
         )
         return _run_response(result.task, request.state.request_id)
     if payload.budget is not None:

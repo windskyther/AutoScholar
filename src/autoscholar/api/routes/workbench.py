@@ -73,6 +73,7 @@ async def session(request: Request) -> WorkbenchSessionResponse:
             "task_controls": True,
             "resource_browser": True,
             "project_deletion": True,
+            "research_workflows": True,
             "document_max_bytes": settings.document_max_bytes,
             "document_max_pages": settings.document_max_pages,
             "budget_limits": settings.autonomous_budget.model_dump(),

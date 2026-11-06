@@ -10,6 +10,7 @@ import type { BudgetLimits, PDFDocument, Project, TaskSubmission } from './types
 
 interface Values {
   objective: string; budget: BudgetLimits; sources: ('web' | 'paper')[];
+  workflowKind: 'research' | 'experiment';
   documentMode: 'all' | 'none' | 'selected'; retrieval: TaskSubmission['retrieval_mode']; consent: boolean;
 }
 const fields: { key: keyof BudgetLimits; label: string; min: number; max: number }[] = [
@@ -40,6 +41,8 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
   const draft = useRef<{ key: string; payload: TaskSubmission } | null>(null);
   const inFlight = useRef(false);
   const documentMode = Form.useWatch('documentMode', form) ?? 'all';
+  const defaultKind = session?.capabilities.research_workflows ? 'research' : 'experiment';
+  const workflowKind = Form.useWatch('workflowKind', form) ?? defaultKind;
   const ceiling = session?.capabilities.budget_limits;
   const docs = useQuery({ queryKey: ['documents', project.id, page], queryFn: ({ signal }) => api!.documents(project.id, page, signal),
     enabled: open && documentMode === 'selected' });
@@ -71,6 +74,7 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
     }
     draft.current = { key: crypto.randomUUID(), payload: structuredClone({
       objective: values.objective.trim(), mode: 'autonomous', project_id: project.id,
+      ...(session?.capabilities.research_workflows ? { workflow_kind: values.workflowKind } : {}),
       document_ids: values.documentMode === 'all' ? null : values.documentMode === 'none' ? [] : selected,
       retrieval_mode: values.retrieval, research_sources: values.sources, budget: values.budget,
     }) };
@@ -82,8 +86,15 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
       description="预算限制资源用量，不等同于金额；单次模型响应可能使 Token 用量超过上限。" />
     <Form form={form} layout="vertical" disabled={busy || uncertain} onFinish={(values) => void submit(values)} initialValues={{
       budget: ceiling, sources: session?.capabilities.web_search_configured ? ['web'] : ['paper'],
-      documentMode: 'all', retrieval: 'hybrid_rerank', consent: false,
+      workflowKind: defaultKind, documentMode: defaultKind === 'research' ? 'none' : 'all', retrieval: 'hybrid_rerank', consent: false,
     }}>
+      <Form.Item name="workflowKind" label="任务类型" rules={[{ required: true }]}>
+        <Select options={[
+          { value: 'research', label: '资料调研', disabled: !session?.capabilities.research_workflows },
+          { value: 'experiment', label: 'MNIST CPU 实验' },
+        ]} />
+      </Form.Item>
+      <p>{workflowKind === 'research' ? '围绕研究目标检索、阅读资料并整理带引用的报告。' : '生成和验证代码，并在 MNIST 上比较 MLP 与 CNN。'}</p>
       <Form.Item name="objective" label="研究目标" rules={[{ required: true, whitespace: true, max: 10000, message: '填写 1–10000 字符的研究目标' }]}>
         <Input.TextArea rows={3} maxLength={10000} showCount />
       </Form.Item>
@@ -112,7 +123,8 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
             pagination={{ current: page, pageSize: 20, total: docs.data.total, showSizeChanger: false, onChange: setPage }} />}
       </>}
       <Collapse className="budget-settings" defaultActiveKey={['budget']} items={[{ key: 'budget', label: '预算上限（不超过服务端配置）', children:
-        <div className="budget-grid">{fields.map((field) => <Form.Item key={field.key} name={['budget', field.key]} label={field.label}
+        <div className="budget-grid">{fields.filter((field) => workflowKind === 'experiment'
+          || !['training_runs', 'sandbox_runs', 'code_repairs'].includes(field.key)).map((field) => <Form.Item key={field.key} name={['budget', field.key]} label={field.label}
           rules={[{ required: true, type: 'integer', min: field.min, max: Math.min(ceiling?.[field.key] ?? field.max, field.max) }]}>
           <InputNumber min={field.min} max={Math.min(ceiling?.[field.key] ?? field.max, field.max)} precision={0} style={{ width: '100%' }} />
         </Form.Item>)}</div> }]} />

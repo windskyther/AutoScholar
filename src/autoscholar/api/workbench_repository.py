@@ -285,6 +285,11 @@ class WorkbenchRepository:
                     )
                 )
                 payload = checkpoint.payload if checkpoint else {}
+                results = payload.get("results", {})
+                active_result = (
+                    results.get(job.active.get("step_id"), {}) if isinstance(results, dict) else {}
+                )
+                cause = active_result.get("error_code") if isinstance(active_result, dict) else None
                 execution = ExecutionSummary.model_validate(
                     {
                         "status": job.status,
@@ -300,6 +305,9 @@ class WorkbenchRepository:
                         "active_seconds": job.active_seconds,
                         "pending_call_count": len(job.pending_calls),
                         "error_code": job.error_code,
+                        "cause_error_code": cause
+                        if isinstance(cause, str) and len(cause) <= 64
+                        else None,
                     }
                 )
             counts = {}

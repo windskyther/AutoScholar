@@ -21,6 +21,7 @@ export interface TaskSubmission {
   objective: string; mode: 'autonomous'; project_id: string; document_ids: string[] | null;
   retrieval_mode: 'dense' | 'sparse' | 'hybrid' | 'hybrid_rerank'; research_sources: ('web' | 'paper')[];
   budget: BudgetLimits;
+  workflow_kind?: 'research' | 'experiment';
 }
 export interface SubmissionReceipt { task_id: string; status: TaskStatus; created: boolean; status_url: string }
 export interface Session {
@@ -29,6 +30,7 @@ export interface Session {
     llm_configured: boolean; web_search_configured: boolean; research_backend: string;
     filesystem_backend: string; experiment_backend: string; task_streaming: boolean; task_controls?: boolean; resource_browser?: boolean;
     document_max_bytes?: number; document_max_pages?: number; budget_limits?: BudgetLimits; project_deletion?: boolean;
+    research_workflows?: boolean;
   };
 }
 export interface Task {
@@ -46,7 +48,7 @@ export interface Overview {
     status: TaskStatus; stage: string | null; plan_version: number | null;
     checkpoint_sequence: number; budget_used: Record<string, number>;
     budget_limits: Record<string, number> | null; active_seconds: number;
-    pending_call_count: number; error_code: string | null;
+    pending_call_count: number; error_code: string | null; cause_error_code?: string | null;
   } | null;
   resources: { evidence: number; experiments: number; artifacts: number };
   answer: string | null; answer_truncated: boolean; usage_scope: 'root_task_only'; monetary_cost: null;

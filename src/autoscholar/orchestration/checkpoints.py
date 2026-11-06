@@ -3,6 +3,7 @@
 import hashlib
 import json
 import time
+from datetime import date
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -10,9 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from autoscholar.agent.records import ResearchSource
 from autoscholar.core.budget import Budget, BudgetLimits
 from autoscholar.experiment.models import ExperimentSpecification
-from autoscholar.orchestration.models import ReviewResult, TaskPlan
+from autoscholar.orchestration.models import ReviewResult, TaskPlan, WorkflowKind
 from autoscholar.orchestration.service import Run
 from autoscholar.rag.models import RetrievalMode
+from autoscholar.research.context import today
 
 Stage = Literal["planner", "executor", "reviewer", "replanner", "writer", "done"]
 
@@ -34,6 +36,8 @@ class Snapshot(BaseModel):
     stage: Stage = "planner"
     task_id: str
     objective: str = Field(min_length=1, max_length=10000)
+    workflow_kind: WorkflowKind = "experiment"
+    as_of_date: date = Field(default_factory=today)
     specification: ExperimentSpecification = Field(default_factory=ExperimentSpecification)
     limits: BudgetLimits = Field(default_factory=BudgetLimits)
     project_id: str | None = None
@@ -55,6 +59,8 @@ class Snapshot(BaseModel):
         names = (
             "task_id",
             "objective",
+            "workflow_kind",
+            "as_of_date",
             "specification",
             "project_id",
             "document_ids",

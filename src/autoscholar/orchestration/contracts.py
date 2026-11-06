@@ -14,8 +14,10 @@ REQUIREMENTS: dict[str, tuple[str, str | None]] = {
     "experiment.raw_metrics": ("experiment", "raw_metrics"),
     "experiment.artifacts": ("experiment", "artifacts"),
     "experiment.source_handoff": ("experiment", "source_handoff"),
-    "research.citations": ("research", "verbatim_citation"),
-    "knowledge.citations": ("knowledge", "verbatim_citation"),
+    "research.citations": ("research", None),
+    "research.source_quotes": ("research", "verbatim_citation"),
+    "knowledge.citations": ("knowledge", None),
+    "knowledge.source_quotes": ("knowledge", "verbatim_citation"),
 }
 
 _OUTPUTS = {
@@ -31,11 +33,30 @@ _OUTPUTS = {
     "knowledge": "Supported evidence and citations from the selected project documents.",
 }
 
+_RESEARCH_OUTPUTS = {
+    "research": (
+        "Supported claims and citations from the permitted research sources. Claims may "
+        "paraphrase; source excerpts must match persisted source text verbatim."
+    ),
+    "knowledge": (
+        "Supported claims and citations from the selected project documents. Claims may "
+        "paraphrase; source excerpts must match persisted document text verbatim."
+    ),
+}
 
-def stage_contract(step_type: str) -> dict[str, Any]:
+
+def stage_contract(step_type: str, *, research_workflow: bool = False) -> dict[str, Any]:
     return {
-        "required_output": _OUTPUTS[step_type],
-        "requirement_ids": [key for key, (owner, _) in REQUIREMENTS.items() if owner == step_type],
+        "required_output": (
+            _RESEARCH_OUTPUTS.get(step_type, _OUTPUTS[step_type])
+            if research_workflow
+            else _OUTPUTS[step_type]
+        ),
+        "requirement_ids": [
+            key
+            for key, (owner, _) in REQUIREMENTS.items()
+            if owner == step_type and (research_workflow or not key.endswith(".source_quotes"))
+        ],
     }
 
 
@@ -43,9 +64,11 @@ def stage_contracts() -> dict[str, dict[str, Any]]:
     return {kind: stage_contract(kind) for kind in _OUTPUTS}
 
 
-def review_plan(plan: TaskPlan) -> dict[str, Any]:
+def review_plan(plan: TaskPlan, *, research_workflow: bool = False) -> dict[str, Any]:
     """Supply authoritative outputs to review without mutating the persisted plan."""
     value = plan.model_dump()
     for step in value["steps"]:
-        step["expected_output"] = _OUTPUTS[step["type"]]
+        step["expected_output"] = stage_contract(step["type"], research_workflow=research_workflow)[
+            "required_output"
+        ]
     return value

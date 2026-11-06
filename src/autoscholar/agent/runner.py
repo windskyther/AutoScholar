@@ -40,6 +40,7 @@ from autoscholar.llm import (
 from autoscholar.rag.models import RetrievalMode
 from autoscholar.rag.service import RAGQueryServiceProtocol
 from autoscholar.research import SearchProviderError, SearchResponse, SearchResult, SourceType
+from autoscholar.research.context import research_context
 
 
 class TaskStore(Protocol):
@@ -744,7 +745,10 @@ class AgentRunner:
                 ),
                 ChatMessage(
                     role="user",
-                    content=f"Objective: {state['objective']}\nPlan: {state['plan']}",
+                    content=(
+                        f"Objective: {state['objective']}\nPlan: {state['plan']}\n"
+                        f"Server date context: {json.dumps(research_context(state['objective']))}"
+                    ),
                 ),
             ],
             tools=[submit_queries],
@@ -936,7 +940,7 @@ class AgentRunner:
                         provider=service.name,
                     )
                 )
-        if state["project_id"] is not None:
+        if state["project_id"] is not None and state["document_ids"] != []:
             started = time.perf_counter()
             call_id = f"knowledge-{uuid4()}"
             arguments = {
@@ -1344,7 +1348,7 @@ class AgentRunner:
     @staticmethod
     def _required_evidence_sources(state: AgentState) -> set[SourceType]:
         required = set(cast(list[SourceType], state["research_sources"]))
-        if state["project_id"] is not None:
+        if state["project_id"] is not None and state["document_ids"] != []:
             required.add("document")
         return required
 
@@ -1615,7 +1619,9 @@ class AgentRunner:
             ChatMessage(
                 role="user",
                 content=(
-                    f"Objective: {state['objective']}\nVerified evidence:\n"
+                    f"Objective: {state['objective']}\n"
+                    f"Server date context: {json.dumps(research_context(state['objective']))}\n"
+                    "Verified evidence:\n"
                     f"{json.dumps(evidence_payload, ensure_ascii=False)}"
                 ),
             ),

@@ -11,7 +11,7 @@ const document = { id: 'doc-ready', project_id: project.id, original_filename: '
   embedding_model: 'fixture', index_version: 1, error_code: null, error_message: null, created_at: time, updated_at: time };
 type Entry = { method: string; path: string; key?: string; body?: string };
 
-async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProjectAck?: boolean; unauthorizedTask?: boolean } = {}) {
+async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProjectAck?: boolean; unauthorizedTask?: boolean; researchWorkflows?: boolean } = {}) {
   const calls: Entry[] = [];
   const projects = [project];
   const docs = [{ ...document }, { ...document, id: 'doc-failed', title: '失败 PDF', status: 'failed', error_code: 'pdf_text_not_extractable' }];
@@ -29,6 +29,7 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
     if (path === '/api/workbench/session') body = { status: 'connected', authentication: 'single_operator_bearer', api_version: 'fixture', capabilities: {
       llm_configured: true, web_search_configured: true, research_backend: 'native', filesystem_backend: 'native', experiment_backend: 'native',
       task_streaming: false, document_max_bytes: 1024, document_max_pages: 10, budget_limits: budget,
+      research_workflows: options.researchWorkflows ?? false,
     } };
     else if (path === '/api/workbench/projects' && method === 'POST') {
       if (options.loseProjectAck) { await route.abort(); return; }
@@ -79,6 +80,39 @@ async function draftTask(page: Page) {
   await page.getByLabel('研究目标', { exact: true }).fill('公开的 MNIST 验收目标');
 }
 const consent = '我确认提交后自动执行研究任务，并接受可能产生的 API 费用。';
+
+test('research defaults preserve the objective and explicitly disable unselected PDFs', async ({ page }) => {
+  const calls = await fixture(page, { researchWorkflows: true });
+  await draftTask(page);
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('资料调研', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('不使用 PDF', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('训练次数上限')).toHaveCount(0);
+  const objective = '2026年10月CV领域的最新研究成果';
+  await dialog.getByLabel('研究目标', { exact: true }).fill(objective);
+  await dialog.getByRole('checkbox', { name: consent }).check();
+  await dialog.getByRole('button', { name: '确认提交并自动执行' }).click();
+  await expect(page.getByRole('heading', { name: '任务详情', exact: true })).toBeVisible();
+  const submitted = calls.filter((item) => item.method === 'POST' && item.path.endsWith('/agent/tasks'));
+  expect(submitted).toHaveLength(1);
+  expect(JSON.parse(submitted[0].body!)).toMatchObject({ objective, workflow_kind: 'research', document_ids: [] });
+});
+
+test('experiment selection is explicit and retains its execution budget', async ({ page }) => {
+  const calls = await fixture(page, { researchWorkflows: true });
+  await draftTask(page);
+  const dialog = page.getByRole('dialog');
+  const kind = dialog.getByLabel('任务类型', { exact: true });
+  await kind.click();
+  await kind.press('ArrowDown');
+  await kind.press('Enter');
+  await expect(dialog.getByLabel('训练次数上限')).toBeVisible();
+  await dialog.getByRole('checkbox', { name: consent }).check();
+  await dialog.getByRole('button', { name: '确认提交并自动执行' }).click();
+  await expect(page.getByRole('heading', { name: '任务详情', exact: true })).toBeVisible();
+  const submitted = calls.find((item) => item.method === 'POST' && item.path.endsWith('/agent/tasks'))!;
+  expect(JSON.parse(submitted.body!)).toMatchObject({ workflow_kind: 'experiment', budget: { training_runs: 1 } });
+});
 
 test('creates a project after input validation and navigates to it', async ({ page }) => {
   const calls = await fixture(page);

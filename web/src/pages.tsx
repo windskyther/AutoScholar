@@ -14,6 +14,19 @@ import Controls from './controls';
 import Resources from './resources';
 import DeleteProject from './delete-project';
 
+function failureLabel(code: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    llm_timeout: '模型服务响应超时',
+    llm_unavailable: '模型服务连接失败',
+    llm_rate_limited: '模型服务限流',
+    dependency_failed: '前置步骤未完成，本步骤未执行',
+    knowledge_base_not_ready: '没有可用的项目 PDF',
+    source_quote_unverified: '原文引用未通过来源核验',
+    external_result_uncertain: '有调用结果待核对',
+  };
+  return code ? (labels[code] ?? '执行失败，请查看任务记录') : '—';
+}
+
 export function ProjectsPage() {
   const { api } = useConnection();
   const [page, setPage] = useState(1);
@@ -95,7 +108,10 @@ export function TaskPage() {
     <PageHeading title="任务详情" subtitle={data.task.objective} refresh={() => void query.refetch()} />
     <Space wrap data-testid="task-status"><Status value={data.execution?.status ?? data.task.status} />
       <Tag>{data.task.mode}</Tag><span className="identifier">{data.task.task_id}</span></Space>
-    {session?.capabilities.task_controls && <Controls key={taskId} taskId={taskId!} projectId={projectId!} />}
+    {data.execution?.error_code === 'external_result_uncertain' && <Alert type="warning" showIcon
+      title={`${failureLabel(data.execution.cause_error_code ?? data.execution.error_code)}，任务已停止`}
+      description="请求可能已经到达模型服务，实际结果和用量需要核对。系统不会自动重发；请先检查已有记录，避免重复提交。" />}
+    {session?.capabilities.task_controls && <Controls key={`controls:${taskId}`} taskId={taskId!} projectId={projectId!} />}
     <div className="metrics-grid">
       <Metric label="模型调用" value={usage.model_calls ?? 0} limit={limits?.model_calls} />
       <Metric label="总 Tokens" value={usage.total_tokens ?? 0} limit={limits?.total_tokens} />
@@ -121,12 +137,13 @@ export function TaskPage() {
       { title: '任务编号', dataIndex: 'task_id', ellipsis: true },
       { title: '模式', dataIndex: 'mode', width: 120 },
       { title: '状态', dataIndex: 'status', width: 140, render: (value: TaskStatus) => <Status value={value} /> },
+      { title: '原因', dataIndex: 'error_code', render: (value: string | null) => failureLabel(value) },
       { title: '创建时间', dataIndex: 'created_at', width: 210, render: dateLabel },
     ]} pagination={{ current: page, pageSize: 20, total: data.children.total, showSizeChanger: false, onChange: setPage }} />
     <h2>任务输出</h2>
     {data.answer_truncated && <Alert type="warning" title="输出超过大小上限，下方仅展示部分内容。" />}
     {data.answer ? <pre className="plain-output">{data.answer}</pre> : <Empty description="任务尚未产生最终输出。" />}
     {session?.capabilities.task_streaming && <Events taskId={taskId!} projectId={projectId!} />}
-    {session?.capabilities.resource_browser && <Resources key={taskId} taskId={taskId!} />}
+    {session?.capabilities.resource_browser && <Resources key={`resources:${taskId}`} taskId={taskId!} />}
   </>;
 }

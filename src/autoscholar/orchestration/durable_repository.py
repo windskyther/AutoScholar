@@ -147,9 +147,31 @@ class DurableRepository:
                 if existing.request_sha256 != request_hash:
                     raise conflict("idempotency_conflict", "Key was used with a different request")
                 return existing.task_id, False
-            if snapshot.project_id and await session.get(ProjectRow, snapshot.project_id) is None:
-                raise AppError(
-                    status_code=404, code="project_not_found", message="Project not found"
+            if snapshot.project_id:
+                project = await session.scalar(
+                    select(ProjectRow)
+                    .where(ProjectRow.id == snapshot.project_id, ProjectRow.deleted_at.is_(None))
+                    .with_for_update()
+                )
+                if project is None:
+                    raise AppError(
+                        status_code=404, code="project_not_found", message="Project not found"
+                    )
+            if (
+                snapshot.workflow_kind == "research"
+                and snapshot.project_id is not None
+                and snapshot.document_ids is None
+            ):
+                # Freeze the current ready set; an empty library is not a required source.
+                snapshot.document_ids = list(
+                    await session.scalars(
+                        select(DocumentRow.id)
+                        .where(
+                            DocumentRow.project_id == snapshot.project_id,
+                            DocumentRow.status == "ready",
+                        )
+                        .order_by(DocumentRow.id)
+                    )
                 )
             if snapshot.document_ids:
                 ready_ids = set(
