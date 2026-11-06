@@ -24,6 +24,7 @@ async function mockAPI(page: Page, sessionStatus = 200) {
   await page.route('**/api/**', async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (url.pathname === '/api/local-access') return route.fulfill({ status: 404, json: { error: { code: 'not_found' } } });
     requests.push({ method: request.method(), path: url.pathname,
       authorized: request.headers().authorization === 'Bearer ' + TOKEN });
     if (request.method() !== 'GET') throw new Error('Unexpected non-read request');

@@ -18,7 +18,7 @@ function Shell() {
   return <TaskSubmissionProvider><WorkspaceLayout /></TaskSubmissionProvider>;
 }
 function WorkspaceLayout() {
-  const { api, disconnect } = useConnection();
+  const { api, mode, disconnect } = useConnection();
   const submission = useSubmission();
   const [modal, contextHolder] = Modal.useModal();
   const location = useLocation();
@@ -34,11 +34,11 @@ function WorkspaceLayout() {
     </Layout.Sider>
     <Layout>
       <Layout.Header className="app-header"><Space><Tag color="success">已连接</Tag></Space>
-        <Button icon={<DisconnectOutlined />} onClick={() => {
+        {mode === 'manual' && <Button icon={<DisconnectOutlined />} onClick={() => {
           if (!submission.pending) disconnect();
           else modal.confirm({ title: '还有一笔结果未确认的提交', content: '断开连接会丢失内存中的提交编号和表单。请先记录编号并核查任务列表。',
             okText: '确认断开', cancelText: '返回核查', onOk: disconnect });
-        }}>断开连接</Button>
+        }}>断开连接</Button>}
       </Layout.Header>
       <Layout.Content className="app-content"><Suspense fallback={<Loading />}>
         {submission.pending && <Alert type="warning" title="有一笔任务提交结果未确认，不要直接新建另一轮。"

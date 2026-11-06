@@ -16,6 +16,7 @@ async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' | 'emp
   const calls: { method: string; path: string }[] = [];
   await page.route('**/api/**', async (route) => {
     const request = route.request(); const path = new URL(request.url()).pathname;
+    if (path === '/api/local-access') return route.fulfill({ status: 404, json: { error: { code: 'not_found' } } });
     expect(request.headers().authorization).toBe('Bearer ' + token);
     calls.push({ method: request.method(), path });
     if (request.method() === 'DELETE') {

@@ -16,6 +16,7 @@ async function fixture(page: Page, mode: 'duplicate' | 'gap' | 'retry' | 'outage
   const calls: Entry[] = []; let count = 0;
   await page.route('**/api/**', async (route) => {
     const req = route.request(); const path = new URL(req.url()).pathname;
+    if (path === '/api/local-access') return route.fulfill({ status: 404, json: { error: { code: 'not_found' } } });
     expect(req.headers().authorization).toBe('Bearer ' + TOKEN);
     calls.push({ path, cursor: req.headers()['last-event-id'], method: req.method() });
     let payload: unknown;

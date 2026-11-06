@@ -3,9 +3,10 @@ import { Alert, Button, Form, Input } from 'antd';
 import { Navigate, useLocation } from 'react-router-dom';
 import { errorMessage } from './api';
 import { useConnection } from './auth';
+import { Loading } from './components';
 
 export default function ConnectPage() {
-  const { api, connect } = useConnection();
+  const { api, mode, connectionError, connect } = useConnection();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [form] = Form.useForm<{ token: string }>();
@@ -14,14 +15,21 @@ export default function ConnectPage() {
     const destination = (location.state as { from?: string } | null)?.from;
     return <Navigate to={destination?.startsWith('/projects/') ? destination : '/'} replace />;
   }
-  async function submit({ token }: { token: string }) {
+  async function submit({ token }: { token: string | null }) {
     if (busy) return;
     setBusy(true);
     setError(null);
-    try { await connect(token.trim()); form.resetFields(); }
+    try { await connect(token === null ? null : token.trim()); if (token !== null) form.resetFields(); }
     catch (failure) { setError(failure); }
     finally { setBusy(false); }
   }
+  if (mode === 'checking' || (mode === 'automatic' && !connectionError && !error)) return <Loading />;
+  if (mode === 'automatic') return <main className="connection-screen"><section className="connection-panel">
+    <div className="wordmark">AutoScholar</div><h1>连接研究工作台</h1>
+    <p>本机后台暂时未连接，请确认一键启动器已运行。</p>
+    <Alert type="error" showIcon title={errorMessage(error ?? connectionError)} />
+    <Button type="primary" loading={busy} block onClick={() => void submit({ token: null })}>重试连接</Button>
+  </section></main>;
   return <main className="connection-screen"><section className="connection-panel">
     <div className="wordmark">AutoScholar</div>
     <h1>连接研究工作台</h1>

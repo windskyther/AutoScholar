@@ -22,6 +22,7 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
+    if (path === '/api/local-access') return route.fulfill({ status: 404, json: { error: { code: 'not_found' } } });
     const method = request.method();
     expect(request.headers().authorization).toBe('Bearer ' + TOKEN);
     calls.push({ method, path, key: request.headers()['idempotency-key'], body: request.postData() ?? undefined });

@@ -14,6 +14,8 @@ export class ApiError extends Error {
 const messages: Record<string, string> = {
   experiment_auth_required: '操作者 Token 无效，请重新连接。',
   experiment_api_not_configured: '尚未配置访问凭据，请先完成设置。',
+  local_proxy_not_configured: '本机后台配置尚未就绪，请运行一键启动器后重试。',
+  local_proxy_auth_failed: '本机后台连接尚未就绪，请重新运行一键启动器后重试。',
   project_not_found: '项目不存在。',
   workbench_task_not_found: '根任务不存在，或链接指向了子任务。',
   workbench_store_unavailable: '任务存储暂不可用。',
@@ -90,14 +92,16 @@ async function readJSON(response: Response): Promise<unknown> {
 }
 
 export class ApiClient {
-  #token: string;
+  #token: string | null;
+  #active = true;
   #streams = new Set<AbortController>();
-  constructor(token: string, private unauthorized: () => void = () => {}) {
-    if (!/^[\x21-\x7e]{1,4096}$/.test(token)) throw new ApiError('experiment_auth_required', 401);
+  constructor(token: string | null, private unauthorized: () => void = () => {}) {
+    if (token !== null && !/^[\x21-\x7e]{1,4096}$/.test(token)) throw new ApiError('experiment_auth_required', 401);
     this.#token = token;
   }
-  clear(): void { this.#token = ''; for (const stream of this.#streams) stream.abort(); this.#streams.clear(); }
-  get connected(): boolean { return this.#token.length > 0; }
+  clear(): void { this.#token = null; this.#active = false; for (const stream of this.#streams) stream.abort(); this.#streams.clear(); }
+  get connected(): boolean { return this.#active; }
+  private authorization(): Record<string, string> { return this.#token === null ? {} : { Authorization: 'Bearer ' + this.#token }; }
 
   async get<T>(path: string, signal?: AbortSignal): Promise<T> {
     return this.request(path, { signal });
@@ -106,7 +110,7 @@ export class ApiClient {
     method?: 'GET' | 'POST' | 'DELETE'; body?: Record<string, unknown> | FormData;
     key?: string; signal?: AbortSignal; timeout?: number; empty?: boolean;
   } = {}): Promise<T> {
-    if (!this.#token) throw new ApiError('experiment_auth_required', 401);
+    if (!this.connected) throw new ApiError('experiment_auth_required', 401);
     const { method = 'GET', body, key, signal, timeout = 15000, empty = false } = options;
     if (key !== undefined && !/^[A-Za-z0-9._:-]{1,128}$/.test(key)) throw new ApiError('request_validation_error', 422);
     const pathname = path.split('?')[0];
@@ -115,7 +119,7 @@ export class ApiClient {
     let response: Response;
     try {
       const deadline = AbortSignal.timeout(timeout);
-      const headers: Record<string, string> = { Authorization: 'Bearer ' + this.#token, Accept: 'application/json' };
+      const headers: Record<string, string> = { ...this.authorization(), Accept: 'application/json' };
       const multipart = body instanceof FormData;
       if (body && !multipart) headers['Content-Type'] = 'application/json';
       if (key) headers['Idempotency-Key'] = key;
@@ -154,8 +158,8 @@ export class ApiClient {
     }
     return payload as T;
   }
-  async session(): Promise<Session> {
-    return this.checked('/session', isSession);
+  async session(signal?: AbortSignal): Promise<Session> {
+    return this.checked('/session', isSession, signal);
   }
   private async checked<T>(path: string, validate: (value: unknown) => value is T, signal?: AbortSignal): Promise<T> {
     const value = await this.get<unknown>(path, signal);
@@ -186,7 +190,7 @@ export class ApiClient {
     let response: Response | undefined;
     try {
       response = await fetch(`/api/workbench/tasks/${id}/output/markdown`, {
-        headers: { Authorization: 'Bearer ' + this.#token }, signal: combined,
+        headers: this.authorization(), signal: combined,
         credentials: 'omit', cache: 'no-store', redirect: 'error',
       });
       if ([401, 403].includes(response.status)) {
@@ -288,7 +292,7 @@ export class ApiClient {
     let response: Response | undefined;
     try {
       response = await fetch(`/api/workbench/tasks/${id}/resources/artifacts/${artifact.id}/content`, {
-        headers: { Authorization: 'Bearer ' + this.#token }, signal: combined,
+        headers: this.authorization(), signal: combined,
         credentials: 'omit', cache: 'no-store', redirect: 'error',
       });
       if ([401, 403].includes(response.status)) {
@@ -367,7 +371,7 @@ export class ApiClient {
     let timer = setTimeout(abort, 15000);
     try {
       const response = await fetch(`/api/workbench/tasks/${encodeURIComponent(id)}/stream`, {
-        headers: { Authorization: 'Bearer ' + this.#token, Accept: 'text/event-stream', 'Last-Event-ID': String(after) },
+        headers: { ...this.authorization(), Accept: 'text/event-stream', 'Last-Event-ID': String(after) },
         credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
       });
       clearTimeout(timer);

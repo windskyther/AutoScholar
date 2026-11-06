@@ -11,8 +11,9 @@ async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' = 'suc
   let deletes = 0;
   await page.route('**/api/**', async (route) => {
     const request = route.request();
-    expect(request.headers().authorization).toBe('Bearer ' + token);
     const path = new URL(request.url()).pathname;
+    if (path === '/api/local-access') return route.fulfill({ status: 404, json: { error: { code: 'not_found' } } });
+    expect(request.headers().authorization).toBe('Bearer ' + token);
     if (request.method() === 'DELETE' && path === `/api/workbench/projects/${target.id}`) {
       deletes++;
       if (mode === 'active') return route.fulfill({ status: 409, json: { error: { code: 'project_has_active_tasks' } } });

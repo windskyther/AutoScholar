@@ -163,11 +163,11 @@ try {
         if ($page.Status -ne 200 -or $page.Body -notmatch '<title>AutoScholar') { throw ('Workbench did not become ready. See logs in ' + $runtimeRoot) }
         @{ pid = $webProcess.Id; url = $webUrl; started_at = [DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runtimeRoot 'workbench.json') -Encoding ASCII
     }
-    $proxySession = Read-LocalResponse -Url ($webUrl + '/api/workbench/session') -Token $apiToken
+    $proxySession = Read-LocalResponse -Url ($webUrl + '/api/workbench/session')
     if ($proxySession.Status -ne 200) { throw 'The existing workbench cannot reach this API. Close its npm/Vite process, then start again.' }
     $started = $true
     Write-Host ('Ready: ' + $webUrl)
-    Write-Host 'Sign in with EXPERIMENT_API_TOKEN from .env. You can close this launcher window.'
+    Write-Host 'The local workbench connects automatically. You can close this launcher window.'
     if (-not $NoBrowser) { Start-Process -FilePath $webUrl | Out-Null }
 } catch {
     Write-Host ('Startup failed: ' + $_.Exception.Message) -ForegroundColor Red

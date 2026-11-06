@@ -19,7 +19,7 @@ AutoScholar 是运行在本机的 AI 研究工作台。你可以围绕一个研�
 
 安装好 Docker Desktop、Node.js 24.x，并按下方说明填写一次 `.env` 后，双击项目根目录中的 **[Start-AutoScholar.cmd](Start-AutoScholar.cmd)**。
 
-启动器会自动启动 Docker、启动后台服务、按需安装界面依赖，并在后台运行工作台、打开浏览器。已有工作台会直接复用，启动窗口关闭后仍可使用。登录时输入原来的 `EXPERIMENT_API_TOKEN`。
+启动器会自动启动 Docker、启动后台服务、按需安装界面依赖，并在后台运行工作台、打开浏览器。本机工作台自动连接，无需输入 Token 或登录；刷新页面也会自动进入。已有工作台会直接复用，启动窗口关闭后仍可使用。
 
 启动失败时窗口会保留具体提示；界面进程日志保存在 `data/launcher/`。首次 MNIST 数据准备仍按下方步骤执行。启动器不会自动提交研究任务。
 
@@ -67,7 +67,7 @@ notepad .env
 | `LLM_API_KEY` | 模型服务的 API Key。 |
 | `LLM_MODEL` | 服务商提供的模型名称，需与其接口支持的名称一致。 |
 | `LLM_TIMEOUT_SECONDS` | 模型请求等待时间，默认 180 秒，最多 600 秒。响应超时后可能需要核对调用结果，系统不会自动重发。 |
-| `EXPERIMENT_API_TOKEN` | 自行生成的随机访问凭据；登录工作台时使用这一项。 |
+| `EXPERIMENT_API_TOKEN` | 本机服务内部使用的随机访问凭据，工作台代理会自动读取；无需在页面输入，已有值保留。 |
 | `SANDBOX_MANAGER_TOKEN` | 另行生成的随机凭据，至少 32 个字符；与访问 Token、各服务 API Key 均不同。后台执行环境需要它，登录时不用输入。 |
 | `TAVILY_API_KEY` | 使用网页检索时填写 Tavily Key；留空时无法选择 Tavily 网页检索。 |
 | `SEMANTIC_SCHOLAR_API_KEY` | 可选。留空时尝试匿名论文检索，可能受到共享限流影响。 |
@@ -109,9 +109,9 @@ npm run dev
 
 保持这个窗口运行，浏览器访问 **[http://127.0.0.1:5173](http://127.0.0.1:5173)**。
 
-在“操作者 Token”输入框中填写 `.env` 的 **`EXPERIMENT_API_TOKEN` 的值**，点击连接。无需添加 `Bearer` 前缀，也不要输入模型 API Key 或 `SANDBOX_MANAGER_TOKEN`。
+本机工作台会自动连接后台并进入项目列表，无需登录。后台尚未就绪时，页面会显示“重试连接”；先运行一键启动器，再点击重试即可。
 
-界面与后台需要分别启动；只运行 `docker compose up` 不会启动这个地址上的工作台。刷新页面或断开连接后需要重新输入 Token。
+界面与后台需要分别启动；只运行 `docker compose up` 不会启动这个地址上的工作台。
 
 ### 5. 需要训练实验时，准备数据
 
@@ -160,7 +160,7 @@ docker compose --profile datasets run --rm mnist-init
 docker compose up -d
 ```
 
-另开一个窗口，进入项目的 `web` 目录执行 `npm run dev`，再打开工作台并输入 Token。依赖未变化时无需重复执行 `npm ci`。
+另开一个窗口，进入项目的 `web` 目录执行 `npm run dev`，再打开工作台即可自动连接。依赖未变化时无需重复执行 `npm ci`。
 
 手动启动界面时，在运行 `npm run dev` 的窗口按 `Ctrl+C` 可停止界面。一键启动的界面进程在后台运行，可在任务管理器中按 `data/launcher/workbench.json` 记录的 PID 找到对应的 Node.js 进程并结束。**关闭界面或浏览器不会停止后台任务**；如需暂停研究，先在任务中暂停或取消。
 
@@ -177,7 +177,7 @@ docker compose down
 | 遇到的情况 | 处理方式 |
 | --- | --- |
 | 工作台页面打不开 | 确认 `npm run dev` 的窗口仍在运行，访问 `http://127.0.0.1:5173`；端口被占用时先检查是否已有工作台进程。 |
-| Token 正确但连接失败 | 确认输入的是 `EXPERIMENT_API_TOKEN` 的值；在项目根目录运行 `docker compose ps -a`，检查 `api` 是否健康。修改配置后运行 `docker compose up -d`；更新代码后使用 `docker compose up -d --build`。 |
+| 页面提示连接失败 | 重新运行一键启动器，或执行 `docker compose ps -a` 检查 `api` 是否健康，再点击“重试连接”。修改配置后运行 `docker compose up -d`；更新代码后使用 `docker compose up -d --build`。 |
 | 无法提交任务 | 检查 `.env` 中三个 `LLM_` 配置项，并确认模型支持原生工具调用。 |
 | PDF 长时间未就绪 | 首次使用需要下载检索模型；确认网络可用，文档处理服务保持运行。扫描件与加密 PDF 不受支持，单文件默认上限为 50 MiB、500 页。 |
 | 论文检索被限流 | 稍后重试，或配置自己的 Semantic Scholar Key；有 Tavily Key 时可先使用网页检索。 |
