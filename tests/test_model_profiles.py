@@ -260,6 +260,13 @@ async def test_durable_workers_route_concurrent_tasks_after_restart_without_key_
         assert job.status == "succeeded" and job.usage["total_tokens"] == 7
         assert snapshot.answer == "Offline answer"
     assert current_model_profile.get() is None
+    usage = await client.get(
+        "/workbench/usage", params={"group_by": "model", "days": 7}, headers=AUTH
+    )
+    assert usage.status_code == 200
+    assert usage.json()["totals"]["total_tokens"] == 14
+    assert usage.json()["totals"]["calls"] == 2
+    assert {row["label"] for row in usage.json()["groups"]} == {item["model"] for item in payloads}
     async with app.state.model_profiles.sessions() as session:
         jobs = await session.scalars(select(WorkflowJobRow))
         assert all(not row.pending_calls for row in jobs)

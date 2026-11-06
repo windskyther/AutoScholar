@@ -5,6 +5,8 @@ import type { ArtifactPreview, ArtifactResource, EvidenceResource, ExperimentRes
 import { isArtifact, isEvidence, isExperiment, isPreview } from './resource-guards';
 import { isModelCatalog, isModelProfile } from './model-types';
 import type { ModelCatalog, ModelProfile, ModelProfileInput } from './model-types';
+import { isUsageSummary } from './usage-types';
+import type { UsageSummary } from './usage-types';
 
 export class ApiError extends Error {
   constructor(public code: string, public status = 0, public requestId: string | null = null) {
@@ -19,6 +21,7 @@ const messages: Record<string, string> = {
   model_profile_conflict: '该配置编号已用于其他内容，请核对模型列表。',
   model_profile_limit: '最多保存 100 组模型配置。',
   model_key_unavailable: '模型密钥无法读取；若更换过内部访问凭据，请重新添加模型配置。',
+  model_usage_unavailable: '用量记录暂不可用，请确认后台存储服务正常后重试。',
   experiment_auth_required: '操作者 Token 无效，请重新连接。',
   experiment_api_not_configured: '尚未配置访问凭据，请先完成设置。',
   local_proxy_not_configured: '本机后台配置尚未就绪，请运行一键启动器后重试。',
@@ -170,6 +173,12 @@ export class ApiClient {
   }
   models(signal?: AbortSignal): Promise<ModelCatalog> {
     return this.checked('/models', isModelCatalog, signal);
+  }
+  usage(groupBy: 'api' | 'model', days: 0 | 7 | 30 | 90, apiId?: string, model?: string, signal?: AbortSignal): Promise<UsageSummary> {
+    const query = new URLSearchParams({ group_by: groupBy, days: String(days) });
+    if (apiId) query.set('api_id', apiId);
+    if (model) query.set('model', model);
+    return this.checked('/usage?' + query.toString().replace(/\*/g, '%2A'), isUsageSummary, signal);
   }
   createModel(payload: ModelProfileInput): Promise<ModelProfile> {
     return this.write('/models', isModelProfile, { ...payload });

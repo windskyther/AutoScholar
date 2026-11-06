@@ -150,6 +150,12 @@ class BudgetedLLM:
             except BudgetExceeded:
                 if usage is None:
                     raise
+            finally:
+                # Account the actual response before awaiting optional analytics I/O.
+                # Interrupted analytics must not discard known workflow token usage.
+                record_usage = getattr(self.provider, "record_usage", None)
+                if callable(record_usage):
+                    await record_usage()
         budget = current_budget.get()
         if budget is not None:
             budget.check()

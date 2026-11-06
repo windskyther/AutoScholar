@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 import httpx
+import structlog
 from cryptography.fernet import Fernet, InvalidToken
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, StringConstraints, field_validator
 from sqlalchemy import DateTime, String, Text, func, select
@@ -20,10 +21,19 @@ from autoscholar.agent.database_models import Base
 from autoscholar.core.config import Settings
 from autoscholar.core.errors import AppError
 from autoscholar.core.redaction import configure_redaction
+from autoscholar.core.rejections import LocalRequestRejected
 from autoscholar.llm.base import LLMProvider
 from autoscholar.llm.factory import create_llm_provider
-from autoscholar.llm.models import ConversationMessage, LLMResult, ToolChoice, ToolDefinition
+from autoscholar.llm.models import (
+    ConversationMessage,
+    LLMResult,
+    TokenUsage,
+    ToolChoice,
+    ToolDefinition,
+)
 from autoscholar.llm.preflight import preflight_request
+from autoscholar.llm.usage import UsageStore
+from autoscholar.tool_platform.context import current_workflow_claim
 
 current_model_profile: ContextVar[str | None] = ContextVar("model_profile", default=None)
 TextName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
@@ -109,6 +119,8 @@ class ModelProfiles:
     def __init__(self, sessions: async_sessionmaker[AsyncSession], settings: Settings) -> None:
         self.sessions, self.settings = sessions, settings
         self.providers: dict[str, LLMProvider] = {}
+        self.bindings: dict[str, tuple[str, str]] = {}
+        self.usage = UsageStore(sessions)
         self.lock = asyncio.Lock()
 
     def cipher(self) -> Fernet:
@@ -229,12 +241,27 @@ class ModelProfiles:
                     )
                     configure_redaction(config)
                     self.providers[profile_id] = create_llm_provider(config)
+                    self.bindings[profile_id] = (row.name, row.model)
             return self.providers[profile_id]
+
+    async def binding(self, profile_id: str) -> tuple[str, str]:
+        if profile_id not in self.bindings:
+            async with self.sessions() as session:
+                row = await session.get(ModelProfileRow, profile_id)
+                if row is None:
+                    raise AppError(
+                        status_code=404,
+                        code="model_profile_not_found",
+                        message="Model connection not found",
+                    )
+                self.bindings[profile_id] = (row.name, row.model)
+        return self.bindings[profile_id]
 
     async def close(self) -> None:
         for provider in self.providers.values():
             await provider.close()
         self.providers.clear()
+        self.bindings.clear()
 
 
 class RoutedLLM:
@@ -242,6 +269,10 @@ class RoutedLLM:
 
     def __init__(self, default: LLMProvider, profiles: ModelProfiles) -> None:
         self.default, self.profiles = default, profiles
+        self.completion: ContextVar[tuple[str, str, TokenUsage | None] | None] = ContextVar(
+            "model_usage_completion",
+            default=None,
+        )
 
     @property
     def configured(self) -> bool:
@@ -280,9 +311,60 @@ class RoutedLLM:
         tools: list[ToolDefinition] | None = None,
         tool_choice: ToolChoice = "none",
     ) -> LLMResult:
-        return await (await self.selected()).generate(
-            messages, tools=tools, tool_choice=tool_choice
+        from autoscholar.core.budget import current_parent
+
+        provider = await self.selected()
+        if not provider.configured:
+            return await provider.generate(messages, tools=tools, tool_choice=tool_choice)
+        profile_id = current_model_profile.get()
+        api_name, model = (
+            await self.profiles.binding(profile_id)
+            if profile_id
+            else ("默认 API", self.profiles.settings.llm_model or "未命名模型")
         )
+        claim = current_workflow_claim.get()
+        call_id = await self.profiles.usage.start(
+            profile_id or "default",
+            api_name,
+            model,
+            claim.task_id if claim else current_parent.get(),
+        )
+        try:
+            result = await provider.generate(messages, tools=tools, tool_choice=tool_choice)
+        except BaseException as error:
+            from autoscholar.llm.errors import LLMResponseError, LLMUpstreamError
+
+            outcome = (
+                "not_sent"
+                if isinstance(error, LocalRequestRejected)
+                else "failed"
+                if isinstance(error, LLMUpstreamError)
+                or getattr(error, "code", "") == "llm_rate_limited"
+                else "uncertain"
+            )
+            usage = error.usage if isinstance(error, LLMResponseError) else None
+            if isinstance(error, LLMResponseError):
+                self.completion.set((call_id, outcome, usage))
+            else:
+                await self._record_finish(call_id, outcome, usage)
+            raise
+        self.completion.set((call_id, "succeeded", result.usage))
+        return result
+
+    async def record_usage(self) -> None:
+        completion = self.completion.get()
+        self.completion.set(None)
+        if completion is not None:
+            await self._record_finish(*completion)
+
+    async def _record_finish(self, call_id: str, outcome: str, usage: TokenUsage | None) -> None:
+        try:
+            async with asyncio.timeout(2):
+                await self.profiles.usage.finish(call_id, outcome, usage)
+        except Exception:
+            # Preserve the actual response and workflow budget. The durable pending row
+            # remains visibly unconfirmed; never resend a model request to repair metrics.
+            structlog.get_logger(__name__).warning("model_usage_save_failed")
 
     async def close(self) -> None:
         await self.profiles.close()

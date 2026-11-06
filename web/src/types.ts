@@ -33,6 +33,7 @@ export interface Session {
     document_max_bytes?: number; document_max_pages?: number; budget_limits?: BudgetLimits; project_deletion?: boolean;
     research_workflows?: boolean; task_deletion?: boolean; markdown_export?: boolean;
     model_management?: boolean;
+    model_usage?: boolean;
   };
 }
 export interface Task {

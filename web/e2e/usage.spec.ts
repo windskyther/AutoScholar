@@ -1,0 +1,102 @@
+import { expect, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import type { UsageCounts, UsageSummary } from '../src/usage-types';
+
+const zero: UsageCounts = { calls: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0, unknown_usage_calls: 0, failed_calls: 0 };
+const measured: UsageCounts = { calls: 8, input_tokens: 1200, output_tokens: 800, total_tokens: 2000, unknown_usage_calls: 1, failed_calls: 1 };
+async function fixture(page: Page, empty = false, failure = false) {
+  const queries: URL[] = [];
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url());
+    expect(route.request().method()).toBe('GET');
+    expect(route.request().headers().authorization).toBeUndefined();
+    if (url.pathname === '/api/local-access') return route.fulfill({ json: { mode: 'local_proxy' } });
+    if (url.pathname.endsWith('/session')) return route.fulfill({ json: { status: 'connected', authentication: 'single_operator_bearer', api_version: 'fixture',
+      capabilities: { llm_configured: false, web_search_configured: false, task_streaming: false, research_backend: 'native', filesystem_backend: 'native', experiment_backend: 'native', model_usage: true } } });
+    if (url.pathname === '/api/workbench/projects') return route.fulfill({ json: { items: [], total: 0, limit: 20, offset: 0 } });
+    if (url.pathname === '/api/workbench/usage') {
+      queries.push(url);
+      if (failure) return route.fulfill({ status: 503, json: { error: { code: 'workbench_store_unavailable' } } });
+      const days = Number(url.searchParams.get('days')) as UsageSummary['days'];
+      const group = url.searchParams.get('group_by') as UsageSummary['group_by'];
+      const summary: UsageSummary = { group_by: group, days, utc_offset_minutes: 480, recorded_since: '2026-11-07T00:00:00Z',
+        trend_from: '2026-11-01', totals: empty ? zero : measured, groups: empty ? [] : [
+          { id: group === 'api' ? 'reader' : 'model/中文 *', label: group === 'api' ? '阅读 API' : 'model/中文 *', ...measured },
+        ], daily: Array.from({ length: days || 90 }, (_, index) => {
+          const count = days || 90; const active = index - (count - 7);
+          const tokens = active < 0 ? 0 : [100, 150, 250, 300, 400, 500, 300][active];
+          return { date: new Date(Date.UTC(2026, 10, 8 - count + index)).toISOString().slice(0, 10),
+            ...(empty || active < 0 ? zero : { calls: active === 6 ? 2 : 1, input_tokens: tokens * .6, output_tokens: tokens * .4,
+              total_tokens: tokens, unknown_usage_calls: active === 6 ? 1 : 0, failed_calls: active === 5 ? 1 : 0 }) };
+        }),
+        options: empty ? { apis: [], models: [] } : { apis: [{ id: 'reader', name: '阅读 API' }, { id: 'writer', name: '写作 API' }], models: ['model/中文 *', 'second-model'] }, has_more_groups: false };
+      return route.fulfill({ json: summary });
+    }
+    throw new Error('Unexpected usage fixture request ' + url.pathname);
+  });
+  return queries;
+}
+
+test('usage totals, dimension and API/model/date filters stay read-only and survive refresh', async ({ page }) => {
+  const queries = await fixture(page);
+  await page.goto('/usage');
+  await expect(page.getByRole('heading', { name: '用量统计', exact: true })).toBeVisible();
+  await expect(page.getByTestId('usage-totals')).toContainText('2,000');
+  await expect(page.getByText('1 次调用的用量尚未确认', { exact: true })).toBeVisible();
+  await page.getByText('按模型', { exact: true }).click();
+  await expect(page.getByRole('heading', { name: '模型用量分布' })).toBeVisible();
+  await page.getByLabel('API 配置', { exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible').getByTitle('阅读 API', { exact: true }).click();
+  await expect.poll(() => queries.at(-1)?.searchParams.get('api_id')).toBe('reader');
+  await page.getByLabel('模型筛选', { exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible').getByTitle('model/中文 *', { exact: true }).click();
+  await expect.poll(() => queries.at(-1)?.searchParams.get('model')).toBe('model/中文 *');
+  await page.getByLabel('时间范围', { exact: true }).click();
+  await page.getByText('最近 7 天', { exact: true }).click();
+  await expect.poll(() => queries.at(-1)?.searchParams.get('days')).toBe('7');
+  await expect(page.getByRole('img', { name: '每日已确认 Token趋势' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: '用量统计', exact: true })).toBeVisible();
+});
+
+test('usage charts and table fit a mobile viewport', async ({ page }) => {
+  await fixture(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/usage');
+  await expect(page.getByTestId('usage-totals')).toBeVisible();
+  await expect(page.getByRole('img', { name: '每日已确认 Token趋势' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath('usage-mobile.png'), fullPage: true });
+});
+
+test('empty usage explains historical coverage and shows no fabricated metrics', async ({ page }) => {
+  await fixture(page, true);
+  await page.goto('/usage');
+  await expect(page.getByText('暂无调用记录。执行研究任务后，这里会自动更新。')).toBeVisible();
+  await expect(page.getByText(/旧任务仍可在任务详情查看/)).toBeVisible();
+  await expect(page.getByRole('img', { name: /每日/ })).toHaveCount(0);
+});
+
+test('usage failures offer a manual reload without any model request', async ({ page }) => {
+  await fixture(page, false, true);
+  await page.goto('/usage');
+  await expect(page.getByRole('button', { name: '手动重试查询' })).toBeVisible();
+});
+
+test('route entry is brief, filters do not remount it, and reduced motion disables it', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await fixture(page);
+  await page.goto('/');
+  await page.getByRole('link', { name: '用量统计', exact: true }).click();
+  await expect(page.getByTestId('usage-totals')).toBeVisible();
+  const frame = page.locator('.page-transition');
+  await expect(frame).toHaveCSS('animation-name', 'page-enter');
+  await expect(frame).toHaveCSS('animation-duration', '0.18s');
+  const sameFrame = await frame.elementHandle();
+  await page.getByText('按模型', { exact: true }).click();
+  await expect(page.getByRole('heading', { name: '模型用量分布' })).toBeVisible();
+  expect(await frame.evaluate((element, original) => element === original, sameFrame)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath('usage-desktop.png'), fullPage: true });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(frame).toHaveCSS('animation-name', 'none');
+});

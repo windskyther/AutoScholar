@@ -1,6 +1,6 @@
 """Authenticated browser facade. Legacy REST paths remain explicitly unchanged."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, Query, Request
@@ -42,6 +42,7 @@ from autoscholar.api.workbench_resources import (
 from autoscholar.core.errors import AppError
 from autoscholar.experiment.artifacts import ArtifactError, ArtifactManager
 from autoscholar.llm.profiles import ModelProfileCreate, ModelProfilePublic, ModelProfiles
+from autoscholar.llm.usage import UsageSummary
 from autoscholar.orchestration.approvals import ApprovalDecision
 
 router = APIRouter(
@@ -68,6 +69,7 @@ async def session(request: Request) -> WorkbenchSessionResponse:
         capabilities={
             "llm_configured": settings.llm_configured,
             "model_management": True,
+            "model_usage": True,
             "web_search_configured": settings.web_search_configured,
             "research_backend": settings.research_tool_backend,
             "filesystem_backend": settings.filesystem_tool_backend,
@@ -116,6 +118,23 @@ async def list_models(request: Request) -> dict[str, object]:
 async def create_model(payload: ModelProfileCreate, request: Request) -> ModelProfilePublic:
     async with models(request).lock:
         return await models(request).create(payload)
+
+
+@router.get("/usage", response_model=UsageSummary)
+async def model_usage(
+    request: Request,
+    group_by: Literal["api", "model"] = "api",
+    days: int = Query(default=30, ge=0, le=90),
+    api_id: str | None = Query(default=None, min_length=1, max_length=64),
+    model: str | None = Query(default=None, min_length=1, max_length=200),
+) -> UsageSummary:
+    if days not in {0, 7, 30, 90}:
+        raise AppError(
+            status_code=422, code="request_validation_error", message="Select 0, 7, 30 or 90 days"
+        )
+    return await models(request).usage.summary(
+        group_by=group_by, days=cast(Literal[0, 7, 30, 90], days), api_id=api_id, model=model
+    )
 
 
 @router.post("/models/{profile_id}/{action}", response_model=ModelProfilePublic)
