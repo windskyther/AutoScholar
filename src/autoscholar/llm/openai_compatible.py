@@ -217,14 +217,15 @@ class OpenAICompatibleProvider:
                         raise LLMResponseError(
                             code="llm_invalid_tool_call",
                             message=(
-                                "The model returned arguments outside the original tool schema: "
-                                + feedback
+                                "The model returned arguments outside the original tool schema "
+                                f"for {tool.name}: " + feedback
                             ),
                             usage=usage,
                             model=response.model or self._model,
                             finish_reason=finish_reason,
                             validation_reason="tool_schema_violation",
                             validation_feedback=feedback,
+                            tool_name=tool.name,
                         ) from exc
 
         if not content and not tool_calls:

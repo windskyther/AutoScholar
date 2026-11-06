@@ -506,6 +506,13 @@ class AutonomousService:
         except Exception as exc:
             outcome["error_code"] = str(getattr(exc, "code", "workflow_step_failed"))
             outcome["error_message"] = str(getattr(exc, "message", "Step execution failed"))
+            response_error = exc if isinstance(exc, LLMResponseError) else exc.__cause__
+            if isinstance(response_error, LLMResponseError):
+                outcome["protocol_error"] = {
+                    "tool": response_error.tool_name,
+                    "validation_reason": response_error.validation_reason,
+                    "schema_constraint": response_error.validation_feedback,
+                }
             child = await self.tasks.get_task(child_id)
             if child is not None:
                 outcome["diagnostics"] = [
@@ -517,6 +524,15 @@ class AutonomousService:
                     for trace in child.tool_calls[-3:]
                 ]
             await self._fail_child(child_id, outcome["error_code"])
+            if (
+                run.workflow_kind == "research"
+                and step.type == "research"
+                and isinstance(response_error, LLMResponseError)
+                and outcome["error_code"] == "llm_invalid_tool_call"
+            ):
+                # A bounded local protocol correction already failed. Changing the
+                # research plan cannot fix this and must not repeat paid searches.
+                raise
             if current_journal.get() is not None and (
                 isinstance(exc, SearchProviderError)
                 or outcome["error_code"] == "operation_uncertain"

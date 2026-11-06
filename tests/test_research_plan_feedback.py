@@ -24,7 +24,9 @@ from tests.test_llm_provider import configured_settings
 from tests.test_research_agent import repository, search_services, successful_responses
 
 
-@pytest.mark.parametrize("stage", ["submit_plan", "submit_research_queries"])
+@pytest.mark.parametrize(
+    "stage", ["submit_plan", "submit_research_queries", "submit_evidence", "submit_research_report"]
+)
 @pytest.mark.parametrize(
     "stop", [None, "repeat", "truncated", "invalid_json", "missing_usage", "transport", "budget"]
 )
@@ -46,11 +48,17 @@ async def test_plan_feedback_is_bounded_metered_and_never_replays_unknown_result
         if name == stage and (attempts == 1 or stop == "repeat"):
             if stop == "transport":
                 raise httpx.ReadTimeout("do not log raw request", request=request)
-            bad = (
-                {"mode": "research", "steps": ["untrusted-value"] * 9}
-                if stage == "submit_plan"
-                else {"queries": []}
-            )
+            bad = {
+                "submit_plan": {"mode": "research", "steps": ["untrusted-value"] * 9},
+                "submit_research_queries": {"queries": []},
+                "submit_evidence": {
+                    "items": [
+                        {"candidate_id": "C1", "claim": "untrusted-value", "relevance": 0.9}
+                        for _ in range(13)
+                    ]
+                },
+                "submit_research_report": {"answer": "untrusted-value", "citations": []},
+            }[stage]
             response = completion([(stage, bad)])
             if stop == "truncated":
                 response["choices"][0]["finish_reason"] = "length"
@@ -75,7 +83,12 @@ async def test_plan_feedback_is_bounded_metered_and_never_replays_unknown_result
         else:
             assert pending.pop(call_id) == kind
 
-    before = 0 if stage == "submit_plan" else 1
+    before = {
+        "submit_plan": 0,
+        "submit_research_queries": 1,
+        "submit_evidence": 2,
+        "submit_research_report": 3,
+    }[stage]
     budget = Budget(BudgetLimits(model_calls=before + 1 if stop == "budget" else 20))
     budget_token = current_budget.set(budget)
     journal_token = current_journal.set(journal)
@@ -100,7 +113,9 @@ async def test_plan_feedback_is_bounded_metered_and_never_replays_unknown_result
                 assert budget.used["model_calls"] == 5 and attempts == 2
                 correction = requests[before + 1]["messages"][-1]["content"]
                 assert "Protocol correction" in correction and "untrusted-value" not in correction
-                assert ("maxItems" if stage == "submit_plan" else "minItems") in correction
+                assert (
+                    "maxItems" if stage in {"submit_plan", "submit_evidence"} else "minItems"
+                ) in correction
                 assert not pending
             else:
                 with pytest.raises((AgentRunError, BudgetExceeded)):
@@ -120,7 +135,11 @@ async def test_plan_feedback_is_bounded_metered_and_never_replays_unknown_result
                 else:
                     assert len(pending) == 1
                 task = await store.get_task("feedback")
-                assert task and not task.tool_calls and not task.evidence
+                assert task
+                assert len(task.tool_calls) == (3 if before >= 2 else 0)
+                assert len(task.evidence) == (3 if before >= 3 else 0)
+            if before >= 2:
+                assert budget.used["search_queries"] == 3  # correction never repeats searches
         finally:
             await engine.dispose()
             current_journal.reset(journal_token)

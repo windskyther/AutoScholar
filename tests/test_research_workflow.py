@@ -15,8 +15,8 @@ from autoscholar.agent.runner import AgentRunner
 from autoscholar.api.routes.agent import AgentRunRequest
 from autoscholar.api.workbench_repository import WorkbenchRepository
 from autoscholar.core.errors import AppError
-from autoscholar.llm import LLMResult
-from autoscholar.llm.errors import LLMUnavailableError
+from autoscholar.llm import LLMResult, TokenUsage
+from autoscholar.llm.errors import LLMResponseError, LLMUnavailableError
 from autoscholar.orchestration.checkpoints import Snapshot
 from autoscholar.orchestration.durable import DurableService
 from autoscholar.orchestration.models import ReviewIssue, ReviewResult, TaskPlan
@@ -314,6 +314,76 @@ async def test_uncertain_search_stops_at_first_request_with_original_cause(
             assert len(requests) == 1 and len(provider.calls) == 3
         finally:
             await engine.dispose()
+
+
+@pytest.mark.parametrize("tool", ["submit_evidence", "submit_research_report"])
+async def test_exhausted_research_protocol_correction_cannot_replan_or_repeat_searches(
+    tmp_path: Path,
+    tool: str,
+) -> None:
+    constraint = (
+        "maxItems at schema /properties/items/maxItems"
+        if tool == "submit_evidence"
+        else "minItems at schema /properties/citations/minItems"
+    )
+
+    class InvalidResponseProvider(ScriptedProvider):
+        async def generate(self, *args: Any, **kwargs: Any) -> LLMResult:
+            if kwargs.get("tools") and kwargs["tools"][0].name == tool:
+                self.calls.append({"messages": args[0], **kwargs})
+                raise LLMResponseError(
+                    code="llm_invalid_tool_call",
+                    message=f"Original tool schema for {tool}: {constraint}",
+                    usage=TokenUsage(2, 1, 3),
+                    model="test-model",
+                    finish_reason="tool_calls",
+                    validation_reason="tool_schema_violation",
+                    validation_feedback=constraint,
+                    tool_name=tool,
+                )
+            return await super().generate(*args, **kwargs)
+
+    provider = InvalidResponseProvider(research_script())
+    service, engine = await research_service(tmp_path, provider)
+    try:
+        durable = DurableService(service)
+        task_id, _ = await durable.submit(
+            {
+                "objective": OBJECTIVE,
+                "workflow_kind": "research",
+                "project_id": "research-project",
+                "document_ids": [],
+            },
+            "protocol-stop",
+        )
+        assert await durable.tick(task_id) and await durable.tick(task_id)
+        snapshot, job = await durable.repository.snapshot(task_id)
+        assert job.status == "failed" and snapshot.stage == "executor"
+        assert job.error_code == "llm_invalid_tool_call" and not job.pending_calls
+        expected = 5 if tool == "submit_evidence" else 6
+        assert len(provider.calls) == job.usage["model_calls"] == expected
+        assert job.usage["total_tokens"] == expected * 3
+        assert job.usage["search_queries"] == 3 and job.usage.get("replans", 0) == 0
+        assert not await service.workflows.history(task_id, "reviews")
+        assert len(await service.workflows.history(task_id, "plans")) == 1
+        steps = await service.workflows.history(task_id, "steps")
+        assert len(steps) == 1 and steps[0]["status"] == "failed"
+        assert steps[0]["result"]["protocol_error"] == {
+            "tool": tool,
+            "validation_reason": "tool_schema_violation",
+            "schema_constraint": constraint,
+        }
+        child = await service.tasks.get_task(steps[0]["child_task_id"])
+        assert child and child.metrics["model_calls"] == expected - 1
+        assert child.metrics["total_tokens"] == (expected - 1) * 3
+        assert len(child.tool_calls) == 3
+        assert len(child.evidence) == (0 if tool == "submit_evidence" else 3)
+        assert not await DurableService(service).tick(task_id)
+        _, after = await durable.repository.snapshot(task_id)
+        assert after.usage == job.usage and after.pending_calls == job.pending_calls
+        assert len(provider.calls) == expected
+    finally:
+        await engine.dispose()
 
 
 async def test_valid_quote_still_allows_reviewer_to_reject_unsupported_claim(

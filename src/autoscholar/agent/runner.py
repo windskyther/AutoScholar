@@ -541,37 +541,50 @@ class AgentRunner:
                     messages, tools=[definition], tool_choice="auto"
                 )
             except LLMResponseError as exc:
-                progress["model_calls"] += 1
-                if exc.usage is not None:
-                    progress["input_tokens"] += exc.usage.input_tokens
-                    progress["output_tokens"] += exc.usage.output_tokens
-                    progress["total_tokens"] += exc.usage.total_tokens
-                # Persist received usage even if correction is denied or fails.
-                await self._persist_plan_progress(progress)
+                progress = await self._response_error_progress(progress, exc)
                 if attempt or not correctable_tool_schema_error(exc):
                     raise
                 messages = [
                     *messages,
                     ChatMessage(
                         role="user",
-                        content=(
-                            "Protocol correction: the previous complete response failed the "
-                            "original local tool schema. "
-                            f"{exc.validation_feedback or 'Check all fields and array bounds.'} "
-                            f"Return exactly one native call to {definition.name}. "
-                            "Use only these fields and obey every constraint: "
-                            + json.dumps(definition.parameters, ensure_ascii=False)
-                        ),
+                        content=self._tool_schema_feedback(definition, exc),
                     ),
                 ]
             else:
                 updates = self._usage_updates(progress, result)
                 progress = cast(AgentState, {**progress, **updates})
-                await self._persist_plan_progress(progress)
+                await self._persist_model_progress(progress)
                 return result, updates
         raise AssertionError("bounded plan correction exhausted")
 
-    async def _persist_plan_progress(self, state: AgentState) -> None:
+    async def _response_error_progress(
+        self, state: AgentState, error: LLMResponseError
+    ) -> AgentState:
+        progress = state.copy()
+        progress["model"] = error.model or progress["model"]
+        progress["model_calls"] += 1
+        if error.usage is not None:
+            progress["input_tokens"] += error.usage.input_tokens
+            progress["output_tokens"] += error.usage.output_tokens
+            progress["total_tokens"] += error.usage.total_tokens
+        # Received invalid completions still count, even if correction is denied.
+        await self._persist_model_progress(progress)
+        return progress
+
+    @staticmethod
+    def _tool_schema_feedback(definition: ToolDefinition, error: LLMResponseError) -> str:
+        return (
+            "Protocol correction: the previous complete response failed the original local "
+            f"tool schema for {definition.name}. "
+            f"{error.validation_feedback or 'Check all fields and array bounds.'} "
+            "This describes a schema constraint, not an argument field to add or remove. "
+            f"Return exactly one native call to {definition.name}. "
+            "Use only these fields and obey every constraint: "
+            + json.dumps(definition.parameters, ensure_ascii=False)
+        )
+
+    async def _persist_model_progress(self, state: AgentState) -> None:
         await self._repository.update_task(
             state["task_id"],
             status="running",
@@ -1133,7 +1146,10 @@ class AgentRunner:
             )
         submit_evidence = ToolDefinition(
             name="submit_evidence",
-            description="Select source-grounded evidence from the supplied candidates.",
+            description=(
+                "Select source-grounded evidence from the supplied candidates. "
+                f"Return 1 to {self._research_limits.max_evidence} items in total."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -1183,7 +1199,10 @@ class AgentRunner:
                     "candidate from every required source type AND every required research "
                     "topic. Topics are the exact candidate topic labels, not inferred from "
                     "similar wording. Reuse a source under different candidate IDs only when "
-                    "its content supports each topic's claim. Call submit_evidence only."
+                    "its content supports each topic's claim. "
+                    f"Return 1 to {self._research_limits.max_evidence} items TOTAL across all "
+                    "topics and source types, not per topic. Prioritize coverage and the "
+                    "strongest sources; do not select every candidate. Call submit_evidence only."
                 ),
             ),
             ChatMessage(
@@ -1197,7 +1216,7 @@ class AgentRunner:
                 ),
             ),
         ]
-        results: list[LLMResult] = []
+        progress = state.copy()
         best_selections: list[EvidenceSelection] = []
         best_rejections = [EvidenceRejection(candidate_id="response", reason="invalid_response")]
         best_missing = self._required_evidence_sources(state)
@@ -1224,12 +1243,22 @@ class AgentRunner:
                         ),
                     ),
                 ]
-            result = await self._provider.generate(
-                call_messages,
-                tools=[submit_evidence],
-                tool_choice="auto",
-            )
-            results.append(result)
+            try:
+                result = await self._provider.generate(
+                    call_messages,
+                    tools=[submit_evidence],
+                    tool_choice="auto",
+                )
+            except LLMResponseError as exc:
+                progress = await self._response_error_progress(progress, exc)
+                if attempt or not correctable_tool_schema_error(exc):
+                    raise
+                # Share the existing two-attempt allowance with coverage correction;
+                # never nest another retry loop or repeat the source searches.
+                feedback = self._tool_schema_feedback(submit_evidence, exc)
+                continue
+            progress = cast(AgentState, {**progress, **self._usage_updates(progress, result)})
+            await self._persist_model_progress(progress)
             selections, rejections = self._validate_evidence_selection(state, result)
             missing = self._missing_evidence_sources(state, selections)
             missing_topics = self._missing_evidence_topics(state, selections)
@@ -1265,11 +1294,9 @@ class AgentRunner:
             if coverage_options:
                 feedback += "; available_candidate_ids_by_topic:" + json.dumps(coverage_options)
 
-        updated_state = dict(state)
-        updated_state.update(self._usage_updates_many(state, results))
         if not best_selections:
             await self._raise_research_failure(
-                cast(AgentState, updated_state),
+                progress,
                 code="research_evidence_unavailable",
                 message=(
                     "No model-selected evidence passed source validation: "
@@ -1318,7 +1345,7 @@ class AgentRunner:
             "evidence": evidence,
             "warnings": self._dedupe_warnings(warnings),
             "research_partial": partial,
-            **self._usage_updates_many(state, results),
+            **self._usage_updates_many(progress, []),
         }
 
     def _validate_evidence_selection(
@@ -1693,7 +1720,7 @@ class AgentRunner:
                 ),
             ),
         ]
-        results: list[LLMResult] = []
+        progress = state.copy()
         last_error = ""
         for attempt in range(2):
             call_messages = messages
@@ -1705,25 +1732,31 @@ class AgentRunner:
                         content=f"Correct the invalid citation response: {last_error}",
                     ),
                 ]
-            result = await self._provider.generate(
-                call_messages,
-                tools=[submit_report],
-                tool_choice="auto",
-            )
-            results.append(result)
+            try:
+                result = await self._provider.generate(
+                    call_messages,
+                    tools=[submit_report],
+                    tool_choice="auto",
+                )
+            except LLMResponseError as exc:
+                progress = await self._response_error_progress(progress, exc)
+                if attempt or not correctable_tool_schema_error(exc):
+                    raise
+                last_error = self._tool_schema_feedback(submit_report, exc)
+                continue
+            progress = cast(AgentState, {**progress, **self._usage_updates(progress, result)})
+            await self._persist_model_progress(progress)
             try:
                 answer, citations = self._validate_research_report(state, result)
                 return {
                     "answer": answer,
                     "citations": citations,
-                    **self._usage_updates_many(state, results),
+                    **self._usage_updates_many(progress, []),
                 }
             except AgentProtocolError as exc:
                 last_error = exc.message
-        failed_state = dict(state)
-        failed_state.update(self._usage_updates_many(state, results))
         await self._raise_research_failure(
-            cast(AgentState, failed_state),
+            progress,
             code="invalid_research_citations",
             message="The model did not return a valid evidence-backed research answer",
         )
