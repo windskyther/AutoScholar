@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -48,6 +48,10 @@ class ModelUsageRow(Base):
     input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     total_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    cached_input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    uncached_input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reasoning_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    stage: Mapped[str] = mapped_column(String(24), default="other", server_default="other")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -67,6 +71,20 @@ class UsageCounts(BaseModel):
     total_tokens: int = Field(ge=0)
     unknown_usage_calls: int = Field(ge=0)
     failed_calls: int = Field(ge=0)
+    cached_input_tokens: int | None = Field(default=None, ge=0)
+    uncached_input_tokens: int | None = Field(default=None, ge=0)
+    cache_known_calls: int = Field(default=0, ge=0)
+    unknown_cache_calls: int = Field(default=0, ge=0)
+    cache_known_input_tokens: int = Field(default=0, ge=0)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cache_hit_rate(self) -> float | None:
+        return (
+            self.cached_input_tokens / self.cache_known_input_tokens
+            if self.cached_input_tokens is not None and self.cache_known_input_tokens
+            else None
+        )
 
 
 class UsageGroup(UsageCounts):
@@ -99,10 +117,12 @@ class UsageSummary(BaseModel):
     daily: list[UsageDay]
     options: UsageOptions
     has_more_groups: bool = False
+    stages: list[UsageGroup] = Field(default_factory=list)
 
 
 def aggregates() -> list[ColumnElement[Any]]:
     row = ModelUsageRow
+    known = row.cached_input_tokens.is_not(None) & row.uncached_input_tokens.is_not(None)
     return [
         func.count().label("calls"),
         func.coalesce(func.sum(row.input_tokens), 0).label("input_tokens"),
@@ -114,6 +134,13 @@ def aggregates() -> list[ColumnElement[Any]]:
         func.coalesce(func.sum(case((row.outcome == "failed", 1), else_=0)), 0).label(
             "failed_calls"
         ),
+        func.sum(row.cached_input_tokens).label("cached_input_tokens"),
+        func.sum(row.uncached_input_tokens).label("uncached_input_tokens"),
+        func.coalesce(func.sum(case((known, 1), else_=0)), 0).label("cache_known_calls"),
+        func.coalesce(func.sum(case((~known, 1), else_=0)), 0).label("unknown_cache_calls"),
+        func.coalesce(func.sum(case((known, row.input_tokens), else_=0)), 0).label(
+            "cache_known_input_tokens"
+        ),
     ]
 
 
@@ -121,7 +148,9 @@ class UsageStore:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self.sessions = sessions
 
-    async def start(self, api_id: str, api_name: str, model: str, task_id: str | None) -> str:
+    async def start(
+        self, api_id: str, api_name: str, model: str, task_id: str | None, *, stage: str = "other"
+    ) -> str:
         call_id = str(uuid4())
         try:
             async with self.sessions() as session, session.begin():
@@ -132,6 +161,7 @@ class UsageStore:
                         api_name=api_name,
                         model=model,
                         task_id=task_id,
+                        stage=stage,
                         outcome="pending",
                         usage_known=False,
                         input_tokens=0,
@@ -150,6 +180,9 @@ class UsageStore:
                 input_tokens=max(0, usage.input_tokens),
                 output_tokens=max(0, usage.output_tokens),
                 total_tokens=max(0, usage.total_tokens),
+                cached_input_tokens=usage.cached_input_tokens,
+                uncached_input_tokens=usage.uncached_input_tokens,
+                reasoning_tokens=usage.reasoning_tokens,
             )
         async with self.sessions() as session, session.begin():
             await session.execute(
@@ -224,6 +257,18 @@ class UsageStore:
             since = await session.scalar(
                 select(func.min(row.created_at)).where(row.outcome != "not_sent")
             )
+            stages = (
+                (
+                    await session.execute(
+                        select(row.stage.label("id"), row.stage.label("label"), *aggregates())
+                        .where(*filters)
+                        .group_by(row.stage)
+                        .order_by(row.stage)
+                    )
+                )
+                .mappings()
+                .all()
+            )
             apis = (
                 await session.execute(
                     select(row.api_id, func.max(row.api_name).label("name"))
@@ -244,7 +289,10 @@ class UsageStore:
             )
         if since is not None and since.tzinfo is None:
             since = since.replace(tzinfo=UTC)
-        zero = {key: 0 for key in UsageCounts.model_fields}
+        zero = {
+            key: None if key in {"cached_input_tokens", "uncached_input_tokens"} else 0
+            for key in UsageCounts.model_fields
+        }
         by_day = {item["date"]: dict(item) for item in daily}
         return UsageSummary(
             group_by=group_by,
@@ -266,4 +314,5 @@ class UsageStore:
                 apis=[UsageAPI(id=item.api_id, name=item.name) for item in apis], models=models
             ),
             has_more_groups=len(groups) > 500,
+            stages=[UsageGroup.model_validate(dict(item)) for item in stages],
         )

@@ -8,6 +8,9 @@ import { usePageReady } from './page-transition';
 
 const format = (value: number) => value.toLocaleString('zh-CN');
 const short = (value: number) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+const reported = (value: number | null | undefined) => value == null ? '未提供' : format(value);
+const stageLabels: Record<string, string> = { planning: '研究规划', screening: '资料初筛',
+  reading: '精读资料', refining: '独立复筛', writing: '综合写作', review: '结论审稿', other: '其他调用' };
 
 function Trend({ daily, metric }: { daily: UsageDay[]; metric: 'total_tokens' | 'calls' }) {
   const maximum = Math.max(1, ...daily.map((day) => day[metric]));
@@ -48,6 +51,8 @@ export default function UsagePage() {
     { title: '调用次数', dataIndex: 'calls', render: format },
     { title: '用量未确认', dataIndex: 'unknown_usage_calls', render: format },
     { title: '失败响应', dataIndex: 'failed_calls', render: format },
+    { title: '已报告命中输入', dataIndex: 'cached_input_tokens', render: reported },
+    { title: '已报告未命中输入', dataIndex: 'uncached_input_tokens', render: reported },
   ];
   const maximum = Math.max(1, ...(data?.groups.map((item) => item[metric]) ?? []));
   return <>
@@ -70,6 +75,21 @@ export default function UsagePage() {
         <Metric label="输出 Tokens" value={data.totals.output_tokens} />
         <Metric label="调用次数" value={data.totals.calls} />
       </div>
+      <section className="usage-surface" aria-label="缓存复用">
+        <h2>缓存复用</h2>
+        <div className="metrics-grid">
+          <div className="metric"><span>已报告命中输入</span><strong>{reported(data.totals.cached_input_tokens)}</strong></div>
+          <div className="metric"><span>已报告未命中输入</span><strong>{reported(data.totals.uncached_input_tokens)}</strong></div>
+          <div className="metric"><span>已报告输入的命中率</span><strong>{data.totals.cache_hit_rate == null ? '未提供' : `${(data.totals.cache_hit_rate * 100).toFixed(1)}%`}</strong></div>
+          <div className="metric"><span>缓存用量未确认的调用</span><strong>{format(data.totals.unknown_cache_calls ?? data.totals.calls)}</strong></div>
+        </div>
+        <p>命中输入已包含在输入 Token 中，不重复计数。供应商未提供的缓存数据和旧记录显示为“未提供”；命中率仅计算已报告缓存明细的输入。</p>
+      </section>
+      {!!data.stages?.length && <section className="usage-surface" aria-label="研究阶段用量">
+        <h2>研究阶段用量</h2>
+        <Table<UsageGroup> rowKey="id" size="small" pagination={false} dataSource={data.stages} scroll={{ x: 1100 }}
+          columns={[{ title: '阶段', dataIndex: 'id', render: (value: string) => stageLabels[value] ?? '其他调用' }, ...columns]} />
+      </section>}
       {data.totals.unknown_usage_calls > 0 && <Alert showIcon type="warning" title={`${format(data.totals.unknown_usage_calls)} 次调用的用量尚未确认`}
         description="Token 合计只包含模型已返回的用量。进行中、中断或未返回用量的调用会单独标记，不会自动重发。" />}
       {data.totals.calls === 0 ? <Empty className="usage-empty" description={apiId || model || data.options.apis.length

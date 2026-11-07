@@ -32,6 +32,7 @@ from autoscholar.llm.models import (
     ToolDefinition,
 )
 from autoscholar.llm.preflight import preflight_request
+from autoscholar.llm.stages import stage_for_tools
 from autoscholar.llm.usage import UsageStore
 from autoscholar.tool_platform.context import current_workflow_claim
 
@@ -331,6 +332,7 @@ class RoutedLLM:
             api_name,
             model,
             claim.task_id if claim else current_parent.get(),
+            stage=stage_for_tools([tool.name for tool in tools or []]),
         )
         try:
             result = await provider.generate(messages, tools=tools, tool_choice=tool_choice)

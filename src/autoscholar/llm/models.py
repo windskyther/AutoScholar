@@ -49,6 +49,9 @@ class TokenUsage:
     input_tokens: int
     output_tokens: int
     total_tokens: int
+    cached_input_tokens: int | None = None
+    uncached_input_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

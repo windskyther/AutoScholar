@@ -4,7 +4,7 @@ import type { UsageCounts, UsageSummary } from '../src/usage-types';
 
 const zero: UsageCounts = { calls: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0, unknown_usage_calls: 0, failed_calls: 0 };
 const measured: UsageCounts = { calls: 8, input_tokens: 1200, output_tokens: 800, total_tokens: 2000, unknown_usage_calls: 1, failed_calls: 1 };
-async function fixture(page: Page, empty = false, failure = false) {
+async function fixture(page: Page, empty = false, failure = false, cache = false) {
   const queries: URL[] = [];
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
@@ -20,7 +20,10 @@ async function fixture(page: Page, empty = false, failure = false) {
       const days = Number(url.searchParams.get('days')) as UsageSummary['days'];
       const group = url.searchParams.get('group_by') as UsageSummary['group_by'];
       const summary: UsageSummary = { group_by: group, days, utc_offset_minutes: 480, recorded_since: '2026-11-07T00:00:00Z',
-        trend_from: '2026-11-01', totals: empty ? zero : measured, groups: empty ? [] : [
+        trend_from: '2026-11-01', totals: empty ? zero : { ...measured, ...(cache ? {
+          cached_input_tokens: 600, uncached_input_tokens: 400, cache_known_calls: 1,
+          unknown_cache_calls: 7, cache_known_input_tokens: 1000, cache_hit_rate: 0.6,
+        } : {}) }, ...(cache ? { stages: [{ id: 'refining', label: 'refining', ...measured }] } : {}), groups: empty ? [] : [
           { id: group === 'api' ? 'reader' : 'model/中文 *', label: group === 'api' ? '阅读 API' : 'model/中文 *', ...measured },
         ], daily: Array.from({ length: days || 90 }, (_, index) => {
           const count = days || 90; const active = index - (count - 7);
@@ -57,6 +60,23 @@ test('usage totals, dimension and API/model/date filters stay read-only and surv
   await expect(page.getByRole('img', { name: '每日已确认 Token趋势' })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: '用量统计', exact: true })).toBeVisible();
+});
+
+test('cache totals preserve unknown reports and show the known-input denominator', async ({ page }) => {
+  await fixture(page, false, false, true);
+  await page.goto('/usage');
+  const cache = page.getByRole('region', { name: '缓存复用' });
+  await expect(cache).toContainText('600');
+  await expect(cache).toContainText('400');
+  await expect(cache).toContainText('60.0%');
+  await expect(page.getByRole('region', { name: '研究阶段用量' })).toContainText('独立复筛');
+});
+
+test('a supplier without cache details displays unknown instead of zero hits', async ({ page }) => {
+  await fixture(page);
+  await page.goto('/usage');
+  const cache = page.getByRole('region', { name: '缓存复用' });
+  await expect(cache.getByText('未提供', { exact: true })).toHaveCount(3);
 });
 
 test('usage charts and table fit a mobile viewport', async ({ page }) => {

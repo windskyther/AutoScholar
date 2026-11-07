@@ -28,13 +28,13 @@ from autoscholar.llm.models import (
     ChatMessage,
     ConversationMessage,
     LLMResult,
-    TokenUsage,
     ToolCall,
     ToolChoice,
     ToolDefinition,
     ToolResultMessage,
 )
 from autoscholar.llm.tool_arguments import ToolArgumentsError, decode_tool_arguments
+from autoscholar.llm.usage_parser import parse_usage
 
 
 class OpenAICompatibleProvider:
@@ -146,11 +146,7 @@ class OpenAICompatibleProvider:
 
         usage = None
         if response.usage is not None:
-            usage = TokenUsage(
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens,
-            )
+            usage = parse_usage(response.usage)
         message = response.choices[0].message if response.choices else None
         finish_reason = response.choices[0].finish_reason if response.choices else None
         content = message.content if message is not None else None

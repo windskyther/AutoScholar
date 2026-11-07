@@ -185,7 +185,7 @@ async def test_ledger_start_failure_cannot_dispatch(
     profiles = client.fixture_app.state.model_profiles  # type: ignore[attr-defined]
     provider = Provider()
 
-    async def unavailable(*args: object) -> str:
+    async def unavailable(*args: object, **kwargs: object) -> str:
         raise UsageUnavailable()
 
     monkeypatch.setattr(profiles.usage, "start", unavailable)
