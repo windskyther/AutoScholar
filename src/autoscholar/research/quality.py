@@ -8,7 +8,7 @@ import json
 import re
 from datetime import date
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import select
 
@@ -666,8 +666,14 @@ class ResearchQuality:
             }[source.availability]
             if source.truncated:
                 access += "，内容有截断"
+            title = re.sub(r"([\\`*_{}\[\]()#+.!>|])", r"\\\1", " ".join(source.title.split()))
+            if source.kind == "document":
+                reference = title + (f" · 第 {source.page} 页" if source.page else "")
+            else:
+                url = quote(source.url, safe=":/?#[]@!$&'*+,;=%~_-")
+                reference = f"[{title}](<{url}>)"
             parts.append(
-                f"- [{identifier}] [{source.title}]({source.url}) · {access} · "
+                f"- [{identifier}] {reference} · {access} · "
                 + (source.published_at or "发表日期未确认")
             )
         return "\n".join(parts)

@@ -4,7 +4,7 @@ import json
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import pytest
@@ -12,17 +12,26 @@ import pytest
 from autoscholar.api.workbench_quality import quality_view
 from autoscholar.api.workbench_repository import WorkbenchRepository
 from autoscholar.api.workbench_resources import ResourceRepository
-from autoscholar.core.budget import Budget, BudgetLimits, current_budget
-from autoscholar.llm.models import ConversationMessage, LLMResult, ToolChoice, ToolDefinition
+from autoscholar.core.budget import Budget, BudgetedLLM, BudgetLimits, current_budget
+from autoscholar.llm.models import (
+    ChatMessage,
+    ConversationMessage,
+    LLMResult,
+    ToolChoice,
+    ToolDefinition,
+)
+from autoscholar.llm.openai_compatible import OpenAICompatibleProvider
 from autoscholar.orchestration.checkpoints import Snapshot
 from autoscholar.orchestration.durable import DurableService
 from autoscholar.rag.database_models import DocumentChunkRow, DocumentRow
 from autoscholar.research.materials import MaterialReader, public_url
 from autoscholar.research.models import SearchResponse, SearchResult
 from autoscholar.research.quality import ResearchQuality, identity
-from autoscholar.research.quality_models import QualityResponse
+from autoscholar.research.quality_models import Citation, Claim, QualityResponse, ReportSection
 from tests.test_agent_runner import ScriptedProvider
 from tests.test_autonomous import call
+from tests.test_coding_schema_feedback import completion
+from tests.test_llm_provider import configured_settings
 from tests.test_research_workflow import OBJECTIVE, research_script, research_service
 
 
@@ -326,6 +335,46 @@ def test_deduplication_and_old_snapshot_contract() -> None:
     assert Snapshot(task_id="old", objective="Old fixture").research_depth == "quick"
 
 
+def test_export_escapes_source_titles_and_hides_local_document_identifiers() -> None:
+    run = Snapshot(task_id="fixture", objective="Public research fixture").restore({}, 0)
+    sources: list[tuple[Literal["web", "document"], str, str]] = [
+        ("web", "Report](/evil)", "https://example.org/path(study)"),
+        ("document", "Local study", "document://private-internal-identifier"),
+    ]
+    for kind, title, url in sources:
+        ResearchQuality._add(
+            run.quality,
+            SearchResult(
+                source_type=kind,
+                provider="fixture",
+                title=title,
+                url=url,
+                content="Source evidence fixture for citation safety.",
+                page=2,
+            ),
+            "topic",
+        )
+    run.quality.sections = [
+        ReportSection(
+            heading="Findings",
+            claims=[
+                Claim(
+                    text="Supported finding",
+                    citations=[
+                        Citation(source_id=item.id, quote=item.text)
+                        for item in run.quality.materials
+                    ],
+                )
+            ],
+        )
+    ]
+    report = ResearchQuality.render(run)
+    assert "](/evil)" not in report
+    assert "path%28study%29" in report
+    assert "private-internal-identifier" not in report
+    assert "Local study" in report
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -497,6 +546,64 @@ async def test_document_reading_stays_in_selected_project_and_snapshot(tmp_path:
         assert source.text == "Selected document evidence."
     finally:
         await engine.dispose()
+
+
+@pytest.mark.parametrize("profile", ["generic", "deepseek"])
+async def test_quality_pipeline_uses_real_sdk_codec_and_stable_request_prefix(
+    tmp_path: Path,
+    profile: Literal["generic", "deepseek"],
+) -> None:
+    responder = QualityProvider()
+    requests: list[dict[str, Any]] = []
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append(payload)
+        result = await responder.generate(
+            [
+                ChatMessage(role="user", content=item.get("content") or "")
+                for item in payload["messages"]
+            ],
+            tools=[
+                ToolDefinition(name=item["function"]["name"], description="Fixture", parameters={})
+                for item in payload["tools"]
+            ],
+            tool_choice="auto",
+        )
+        response = completion([(item.name, item.arguments) for item in result.tool_calls])
+        response["usage"].update(prompt_cache_hit_tokens=1, prompt_cache_miss_tokens=1)
+        return httpx.Response(200, json=response)
+
+    service, engine = await setup(tmp_path, responder)
+    settings = configured_settings()
+    settings.llm_compatibility_profile = profile
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        metered = BudgetedLLM(OpenAICompatibleProvider(settings, http_client=client))
+        service.provider = service.runner._provider = service.quality.provider = metered
+        try:
+            task_id, _ = await DurableService(service).submit(
+                dict(
+                    objective=OBJECTIVE,
+                    workflow_kind="research",
+                    project_id="research-project",
+                    research_depth="standard",
+                ),
+                "sdk-quality",
+            )
+            _, job = await finish(service, task_id)
+            assert job.status == "succeeded", job.error_code
+            assert job.usage["model_calls"] == len(requests) == 9
+            assert job.usage["total_tokens"] == 27  # cache input is included, not exempt
+            quality = [
+                item
+                for item in requests
+                if item["tools"][0]["function"]["name"] == "submit_research_quality"
+            ]
+            assert len(quality) == 4
+            assert all(item["tools"] == quality[0]["tools"] for item in quality)
+            assert all(item["messages"][:2] == quality[0]["messages"][:2] for item in quality)
+        finally:
+            await engine.dispose()
 
 
 class Cache:

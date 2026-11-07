@@ -22,6 +22,8 @@ class ReadResult(BaseModel):
 
 
 def public_url(value: str) -> bool:
+    if len(value) > 2048 or "\\" in value or any(ord(char) < 33 for char in value):
+        return False
     try:
         url = urlsplit(value)
         host = (url.hostname or "").lower()

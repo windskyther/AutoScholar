@@ -33,3 +33,9 @@ default and projects source links, access limits, screening reasons and review i
 Validation is offline with synthetic models, SQLite and mocked extraction. No real
 model/Tavily calls, historical outcome changes or runtime migrations are included.
 The frontend hides new controls against a backend without the advertised capability.
+
+Follow-up verification exercises the actual SDK request/response codec for generic
+and DeepSeek-compatible providers using mock HTTP only. All quality passes retain
+the same normalized tool definitions and reusable prefix; cached input still counts
+toward total-token limits. Source titles are escaped in Markdown exports and local
+document references use titles/pages instead of exposing internal document IDs.
