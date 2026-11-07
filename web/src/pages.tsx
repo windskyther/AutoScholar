@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { Alert, Breadcrumb, Button, Descriptions, Empty, Input, Select, Space, Table, Tag } from 'antd';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -30,6 +30,7 @@ function failureLabel(code: string | null | undefined): string {
     dependency_failed: '前置步骤未完成，本步骤未执行',
     knowledge_base_not_ready: '没有可用的项目 PDF',
     source_quote_unverified: '原文引用未通过来源核验',
+    research_quality_unverified: '资料审查未通过，请核对筛选记录和草稿',
     external_result_uncertain: '有调用结果待核对',
   };
   return code ? (labels[code] ?? '执行失败，请查看任务记录') : '—';
@@ -99,6 +100,9 @@ export function ProjectPage() {
   </>;
 }
 
+const ResearchQuality = lazy(() => import('./research-quality'));
+const stageLabels: Record<string, string> = { planner: '规划任务', executor: '收集资料', quality: '资料精筛与审稿',
+  reviewer: '完成核对', replanner: '调整计划', writer: '整理输出', done: '已完成' };
 export function TaskPage() {
   const { projectId, taskId } = useParams();
   const { api, session } = useConnection();
@@ -131,7 +135,10 @@ export function TaskPage() {
       <Metric label="训练次数" value={usage.training_runs ?? 0} limit={limits?.training_runs} />
     </div>
     <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }} items={[
-      { key: 'stage', label: '执行阶段', children: data.execution?.stage || '暂无执行信息' },
+      { key: 'stage', label: '执行阶段', children: stageLabels[data.execution?.stage ?? ''] ?? '暂无执行信息' },
+      ...(data.execution?.research_depth ? [{ key: 'depth', label: '研究深度', children: {
+        quick: '快速', standard: '标准', deep: '深入',
+      }[data.execution.research_depth] }] : []),
       ...(data.execution?.model_profile_name ? [{ key: 'model', label: '使用模型', children: `${data.execution.model_profile_name} · ${data.execution.model_name}` }] : []),
       { key: 'plan', label: '计划版本', children: data.current_plan?.version ?? '尚未生成' },
       { key: 'cost', label: '金额', children: '暂不可估算' },
@@ -160,6 +167,9 @@ export function TaskPage() {
       objective={data.task.objective} available={!!data.answer} /></div>
     {data.answer_truncated && <Alert type="warning" title="输出超过大小上限，下方仅展示部分内容。" />}
     {data.answer ? <pre className="plain-output">{data.answer}</pre> : <Empty description="任务尚未产生最终输出。" />}
+    {session?.capabilities.research_quality && data.execution?.research_depth !== 'quick' && <Suspense fallback={<Loading />}>
+      <ResearchQuality taskId={taskId!} running={['queued', 'running'].includes(data.execution?.status ?? data.task.status)} />
+    </Suspense>}
     {session?.capabilities.task_streaming && <Events key={`events:${taskId}`} taskId={taskId!} projectId={projectId!} />}
     {session?.capabilities.resource_browser && <Resources key={`resources:${taskId}`} taskId={taskId!} />}
   </>;

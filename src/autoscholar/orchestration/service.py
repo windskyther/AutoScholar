@@ -58,6 +58,8 @@ from autoscholar.orchestration.task_types import is_research, task_guidance
 from autoscholar.rag.models import RetrievalMode
 from autoscholar.research import SearchProviderError
 from autoscholar.research.context import research_context, today
+from autoscholar.research.quality import ResearchQuality
+from autoscholar.research.quality_models import QualityState, ResearchDepth
 
 
 class WorkflowError(RuntimeError):
@@ -150,6 +152,8 @@ class Run:
     answer: str | None = None
     traces: int = 0
     memory_context: dict[str, Any] = field(default_factory=dict)
+    research_depth: ResearchDepth = "quick"
+    quality: QualityState = field(default_factory=QualityState)
 
 
 class FlowState(TypedDict):
@@ -169,6 +173,7 @@ class AutonomousService:
         workspace: WorkspaceManager,
         artifacts: ArtifactManager,
         limits: BudgetLimits | None = None,
+        quality: ResearchQuality | None = None,
     ) -> None:
         self.provider = provider
         self.tasks = tasks
@@ -179,10 +184,12 @@ class AutonomousService:
         self.workspace = workspace
         self.artifacts = artifacts
         self.limits = limits or BudgetLimits()
+        self.quality = quality or ResearchQuality(provider, tasks)
         graph = StateGraph(FlowState)
         for name, node in (
             ("planner", self._planner),
             ("executor", self._executor),
+            ("quality", self._quality),
             ("reviewer", self._reviewer),
             ("replanner", self._replanner),
             ("writer", self._writer),
@@ -190,7 +197,8 @@ class AutonomousService:
             graph.add_node(name, node)
         graph.add_edge(START, "planner")
         graph.add_edge("planner", "executor")
-        graph.add_edge("executor", "reviewer")
+        graph.add_conditional_edges("executor", self._after_execution)
+        graph.add_conditional_edges("quality", self._after_quality)
         graph.add_conditional_edges("reviewer", self._after_review)
         graph.add_edge("replanner", "executor")
         graph.add_edge("writer", END)
@@ -207,6 +215,7 @@ class AutonomousService:
         experiment_specification: ExperimentSpecification | None = None,
         budget: BudgetLimits | None = None,
         workflow_kind: WorkflowKind = "experiment",
+        research_depth: ResearchDepth = "quick",
     ) -> AgentRunResult:
         run = Run(
             task_id=str(uuid4()),
@@ -218,6 +227,7 @@ class AutonomousService:
             retrieval_mode=retrieval_mode,
             research_sources=research_sources or ["web", "paper"],
             workflow_kind=workflow_kind,
+            research_depth=research_depth,
         )
         await self.tasks.create_task(
             task_id=run.task_id,
@@ -256,6 +266,8 @@ class AutonomousService:
         code: str | None,
         message: str | None,
     ) -> AgentTaskRecord:
+        if status != "succeeded" and run.quality.sections and not run.answer:
+            run.answer = self.quality.render(run, accepted=False)
         run.budget.used["wall_seconds"] = round(time.monotonic() - run.budget.started)
         metrics = dict(run.budget.used)
         metrics.update(
@@ -483,6 +495,22 @@ class AutonomousService:
             await self._step(run, ready)
             pending.remove(ready)
         return state
+
+    @staticmethod
+    def _after_execution(state: FlowState) -> str:
+        run = state["run"]
+        return "quality" if (
+            is_research(run.workflow_kind) and run.research_depth != "quick"
+            and all(item.get("status") == "succeeded" for item in run.results.values())
+        ) else "reviewer"
+
+    async def _quality(self, state: FlowState) -> FlowState:
+        await self.quality.advance(state["run"])
+        return state
+
+    @staticmethod
+    def _after_quality(state: FlowState) -> str:
+        return "reviewer" if state["run"].quality.phase == "done" else "quality"
 
     async def _step(self, run: Run, step: PlanStep) -> None:
         child_id = str(uuid4())
@@ -840,6 +868,12 @@ class AutonomousService:
         run = state["run"]
         assert run.plan is not None
         issues = await self._rules(run)
+        if is_research(run.workflow_kind) and run.quality.accepted:
+            # The dedicated final-draft audit already checked semantics against
+            # frozen original sources; keep the existing deterministic guard too.
+            run.review = ReviewResult(status="REPLAN" if issues else "PASS", issues=issues)
+            await self.workflows.save_review(run.task_id, run.version, run.review)
+            return state
         facts = {
             step.id: await step_facts(
                 step_type=step.type,
@@ -964,6 +998,8 @@ class AutonomousService:
     async def _replanner(self, state: FlowState) -> FlowState:
         run = state["run"]
         assert run.plan is not None and run.review is not None
+        if is_research(run.workflow_kind) and run.research_depth != "quick":
+            run.quality = QualityState()
         self._check_retained_sources(run)
         await self._check_repeated_collection_failure(run)
         retry_steps = await self._experiment_retry_steps(run)
@@ -1261,6 +1297,10 @@ class AutonomousService:
     async def _writer(self, state: FlowState) -> FlowState:
         run = state["run"]
         assert run.plan is not None and run.review is not None
+        if is_research(run.workflow_kind) and run.quality.accepted:
+            await self.quality.persist_evidence(run)
+            run.answer = self.quality.render(run)
+            return state
         if is_research(run.workflow_kind):
             parts = [
                 "# AutoScholar 研究报告",

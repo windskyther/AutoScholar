@@ -19,6 +19,7 @@ from autoscholar.orchestration.durable_repository import DurableRepository, Leas
 from autoscholar.orchestration.memory import MemoryService
 from autoscholar.orchestration.models import ReviewResult, TaskPlan
 from autoscholar.orchestration.service import AutonomousService, FlowState, Run, source_digest
+from autoscholar.orchestration.task_types import is_research
 from autoscholar.tool_platform.context import WorkflowClaim, current_workflow_claim
 
 
@@ -47,6 +48,7 @@ class DurableService:
         request.pop("mode", None)
         requested_budget = request.pop("budget", None)
         specification = request.pop("experiment_specification", None)
+        depth = request.pop("research_depth", None)
         snapshot = Snapshot(
             **request,
             task_id=str(uuid4()),
@@ -55,10 +57,18 @@ class DurableService:
             ),
             specification=ExperimentSpecification.model_validate(specification or {}),
             approval_threshold=self.approval_threshold,
+            research_depth=depth
+            or (
+                "standard"
+                if require_managed and is_research(request.get("workflow_kind", ""))
+                else "quick"
+            ),
         )
         canonical = dict(payload)
         if canonical.get("model_profile_id") is None:
             canonical.pop("model_profile_id", None)
+        if canonical.get("research_depth") is None:
+            canonical.pop("research_depth", None)
         return await self.repository.enqueue(
             snapshot, key, digest(canonical), require_managed=require_managed
         )
@@ -261,6 +271,8 @@ class DurableService:
             current_workflow_claim.reset(claim_token)
             current_journal.reset(journal_token)
             current_budget.reset(budget_token)
+        if status in {"failed", "budget_exceeded"} and run.quality.sections and not run.answer:
+            run.answer = self.service.quality.render(run, accepted=False)
         await self.repository.save(
             task_id,
             self.owner,
@@ -313,7 +325,14 @@ class DurableService:
                 run.budget.consume("steps")
                 await persist_budget()
                 await self.service._step(run, ready)
-            return "reviewer" if len(run.results) == len(run.plan.steps) else "executor"
+            if len(run.results) == len(run.plan.steps):
+                return (
+                    "quality" if self.service._after_execution(state) == "quality" else "reviewer"
+                )
+            return "executor"
+        if stage == "quality":
+            await self.service._quality(state)
+            return "reviewer" if run.quality.phase == "done" else "quality"
         if stage == "reviewer":
             await self.service._reviewer(state)
             assert run.review is not None

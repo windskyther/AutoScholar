@@ -22,7 +22,7 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
     || !string(value.kind) || !eventKinds.has(value.kind) || !string(value.created_at) || !record(value.payload)) return false;
   return Object.entries(value.payload).every(([key, item]) => {
     if (['status', 'previous'].includes(key)) return isTaskStatus(item);
-    if (key === 'stage') return string(item) && ['planner', 'executor', 'reviewer', 'replanner', 'writer', 'done'].includes(item);
+    if (key === 'stage') return string(item) && ['planner', 'executor', 'quality', 'reviewer', 'replanner', 'writer', 'done'].includes(item);
     if (key === 'kind_name') return string(item) && ['llm', 'search', 'training', 'sandbox', 'tool', 'repair', 'embedding', 'mcp'].includes(item);
     if (key === 'decision') return string(item) && ['approve', 'reject', 'modify'].includes(item);
     if (key === 'enabled') return typeof item === 'boolean';
@@ -52,6 +52,7 @@ export function isSession(value: unknown): value is Session {
     && (caps.resource_browser === undefined || typeof caps.resource_browser === 'boolean')
     && (caps.project_deletion === undefined || typeof caps.project_deletion === 'boolean')
     && (caps.research_workflows === undefined || typeof caps.research_workflows === 'boolean')
+    && (caps.research_quality === undefined || typeof caps.research_quality === 'boolean')
     && (caps.task_deletion === undefined || typeof caps.task_deletion === 'boolean')
     && (caps.markdown_export === undefined || typeof caps.markdown_export === 'boolean')
     && (caps.model_management === undefined || typeof caps.model_management === 'boolean')
@@ -110,6 +111,10 @@ export function isOverview(value: unknown): value is Overview {
     if (run.cause_error_code !== undefined && !nullableString(run.cause_error_code)) return false;
     if (run.model_profile_name !== undefined && !nullableString(run.model_profile_name)) return false;
     if (run.model_name !== undefined && !nullableString(run.model_name)) return false;
+    if (run.research_depth !== undefined && !['quick', 'standard', 'deep'].includes(String(run.research_depth))) return false;
+    if (run.quality_phase !== undefined && !nullableString(run.quality_phase)) return false;
+    if (run.quality_accepted !== undefined && typeof run.quality_accepted !== 'boolean') return false;
+    if (['quality_sources', 'quality_reads', 'quality_rounds'].some(k => run[k] !== undefined && !integer(run[k]))) return false;
   }
   return true;
 }

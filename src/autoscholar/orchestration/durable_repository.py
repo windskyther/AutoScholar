@@ -545,7 +545,18 @@ class DurableRepository:
             task = await session.get(AgentTaskRow, task_id)
             assert task is not None
             task.plan = [step.description for step in snapshot.plan.steps] if snapshot.plan else []
-            task.answer = snapshot.answer if status == "succeeded" else None
+            task.answer = (
+                snapshot.answer
+                if (
+                    status == "succeeded"
+                    or (
+                        status in {"failed", "budget_exceeded"}
+                        and snapshot.quality.sections
+                        and not snapshot.quality.accepted
+                    )
+                )
+                else None
+            )
             children = (
                 await session.scalars(
                     select(AgentTaskRow).where(

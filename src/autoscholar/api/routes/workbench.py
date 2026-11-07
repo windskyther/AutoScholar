@@ -1,6 +1,6 @@
 """Local browser facade for projects, managed models and research tasks."""
 
-from typing import Annotated, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from urllib.parse import quote
 
 from fastapi import APIRouter, Header, Query, Request
@@ -30,6 +30,7 @@ from autoscholar.api.workbench_models import (
     WorkbenchSessionResponse,
     WorkflowEventPage,
 )
+from autoscholar.api.workbench_quality import quality_view
 from autoscholar.api.workbench_repository import WorkbenchRepository
 from autoscholar.api.workbench_resources import (
     ArtifactPreview,
@@ -81,6 +82,7 @@ async def session(request: Request) -> WorkbenchSessionResponse:
             "resource_browser": True,
             "project_deletion": True,
             "research_workflows": True,
+            "research_quality": True,
             "task_deletion": True,
             "markdown_export": True,
             "document_max_bytes": settings.document_max_bytes,
@@ -211,6 +213,11 @@ async def overview(
 async def delete_task(project_id: str, task_id: str, request: Request) -> Response:
     await store(request).delete_task(project_id, task_id)
     return Response(status_code=204)
+
+
+@router.get("/tasks/{task_id}/quality")
+async def quality(task_id: str, request: Request) -> dict[str, Any]:
+    return await quality_view(store(request), task_id)
 
 
 @router.get("/tasks/{task_id}/output/markdown")

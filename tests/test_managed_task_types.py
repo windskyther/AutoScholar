@@ -85,6 +85,39 @@ async def test_all_http_model_entrypoints_require_managed_selection(
     assert "default_model" not in catalog
     capabilities = (await client.get("/workbench/session", headers=AUTH)).json()["capabilities"]
     assert {item["id"] for item in capabilities["task_types"]} == set(TASK_TYPES)
+    assert capabilities["research_quality"] is True
+
+
+@pytest.mark.parametrize("depth", [None, "quick", "standard", "deep"])
+async def test_public_research_depth_is_frozen_and_idempotent(
+    client: httpx.AsyncClient,
+    depth: str | None,
+) -> None:
+    profile = connection()
+    assert (await client.post("/workbench/models", json=profile)).status_code == 201
+    payload = dict(
+        objective="Public research fixture",
+        mode="autonomous",
+        workflow_kind="research",
+        model_profile_id=profile["id"],
+        document_ids=[],
+    )
+    if depth is not None:
+        payload["research_depth"] = depth
+    first = await client.post(
+        "/workbench/agent/tasks", json=payload, headers={"Idempotency-Key": "quality-default"}
+    )
+    assert first.status_code == 202, first.text
+    repeated = await client.post(
+        "/workbench/agent/tasks", json=payload, headers={"Idempotency-Key": "quality-default"}
+    )
+    assert not repeated.json()["created"]
+    app = client.fixture_app  # type: ignore[attr-defined]
+    snapshot, _ = await app.state.durable_service.repository.snapshot(first.json()["task_id"])
+    assert snapshot.research_depth == (depth or "standard")
+    audit = await client.get(f"/workbench/tasks/{first.json()['task_id']}/quality")
+    assert audit.status_code == 200 and audit.json()["depth"] == (depth or "standard")
+    assert (await client.get("/workbench/tasks/does-not-exist/quality")).status_code == 404
 
 
 async def test_new_legacy_tasks_and_empty_document_analysis_are_rejected_without_calls(

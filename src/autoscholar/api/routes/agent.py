@@ -25,6 +25,7 @@ from autoscholar.orchestration.models import WorkflowKind
 from autoscholar.orchestration.service import AutonomousService
 from autoscholar.orchestration.task_types import is_research
 from autoscholar.rag.models import RetrievalMode
+from autoscholar.research.quality_models import ResearchDepth
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 ObjectiveText = Annotated[
@@ -41,6 +42,7 @@ class AgentRunRequest(BaseModel):
     objective: ObjectiveText
     mode: AgentMode = "auto"
     workflow_kind: WorkflowKind = "research"
+    research_depth: ResearchDepth | None = None
     project_id: str | None = None
     model_profile_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f-]{36}$")] | None = None
     document_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] | None = (
@@ -313,6 +315,7 @@ async def _run_agent(payload: AgentRunRequest, request: Request) -> AgentRunResp
             experiment_specification=payload.experiment_specification,
             budget=payload.budget,
             workflow_kind=payload.workflow_kind,
+            research_depth=payload.research_depth or "standard",
         )
         return _run_response(result.task, request.state.request_id)
     if payload.budget is not None:

@@ -19,10 +19,15 @@ class SearchResult:
     chunk_id: str | None = None
     page: int | None = None
     section: str | None = None
+    published_at: str | None = None
+    fulltext_url: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["authors"] = list(self.authors)
+        for name in ("published_at", "fulltext_url"):
+            if payload[name] is None:
+                payload.pop(name)
         return payload
 
     @classmethod
@@ -47,6 +52,8 @@ class SearchResult:
             chunk_id=(str(payload["chunk_id"]) if payload.get("chunk_id") is not None else None),
             page=int(payload["page"]) if payload.get("page") is not None else None,
             section=(str(payload["section"]) if payload.get("section") is not None else None),
+            published_at=str(payload["published_at"]) if payload.get("published_at") else None,
+            fulltext_url=str(payload["fulltext_url"]) if payload.get("fulltext_url") else None,
         )
 
 

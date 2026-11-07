@@ -61,6 +61,12 @@ class ExecutionSummary(BaseModel):
     pending_call_count: int
     error_code: str | None
     cause_error_code: str | None = None
+    research_depth: str = "quick"
+    quality_phase: str | None = None
+    quality_sources: int = 0
+    quality_reads: int = 0
+    quality_rounds: int = 0
+    quality_accepted: bool = False
 
 
 class ResourceCounts(BaseModel):

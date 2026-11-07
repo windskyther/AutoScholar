@@ -7,6 +7,8 @@ import { isModelCatalog, isModelProfile } from './model-types';
 import type { ModelCatalog, ModelProfile, ModelProfileInput } from './model-types';
 import { isUsageSummary } from './usage-types';
 import type { UsageSummary } from './usage-types';
+import { isQualityAudit } from './quality-types';
+import type { QualityAudit } from './quality-types';
 
 export class ApiError extends Error {
   constructor(public code: string, public status = 0, public requestId: string | null = null) {
@@ -280,6 +282,9 @@ export class ApiClient {
   }
   overview(id: string, page: number, signal?: AbortSignal): Promise<Overview> {
     return this.checked(`/tasks/${encodeURIComponent(id)}/overview?limit=20&offset=${(page - 1) * 20}`, isOverview, signal);
+  }
+  quality(id: string, signal?: AbortSignal): Promise<QualityAudit> {
+    return this.checked(`/tasks/${encodeURIComponent(id)}/quality`, isQualityAudit, signal);
   }
   private resourcePage<T>(id: string, kind: string, page: number, guard: (value: unknown) => value is T,
                           signal?: AbortSignal): Promise<ResourcePage<T>> {

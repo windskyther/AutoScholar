@@ -76,6 +76,8 @@ from autoscholar.research import (
     SemanticScholarSearchProvider,
     TavilySearchProvider,
 )
+from autoscholar.research.materials import MaterialReader
+from autoscholar.research.quality import ResearchQuality
 from autoscholar.tool_platform.artifact_spool import ArtifactSpool
 from autoscholar.tool_platform.experiment_adapter import MCPExperimentSandbox
 from autoscholar.tool_platform.experiment_contracts import EXPERIMENT_CONTRACTS
@@ -372,6 +374,15 @@ def create_app(
         )
 
     resolved_autonomous_service = None
+    material_reader = (
+        MaterialReader(
+            api_key=resolved_settings.tavily_api_key.get_secret_value(),
+            cache=resolved_redis if isinstance(resolved_redis, RedisClient) else None,
+            ttl_seconds=resolved_settings.research_cache_ttl_seconds,
+        )
+        if resolved_settings.tavily_api_key and resolved_settings.research_tool_backend == "native"
+        else None
+    )
     if (
         isinstance(resolved_agent_repository, AgentTaskRepository)
         and resolved_agent_runner is not None
@@ -397,6 +408,12 @@ def create_app(
             workspace=resolved_workspace_manager,
             artifacts=resolved_artifact_manager,
             limits=resolved_settings.autonomous_budget,
+            quality=ResearchQuality(
+                resolved_llm_provider,
+                resolved_agent_repository,
+                reader=material_reader,
+                searches=resolved_research_services,
+            ),
         )
 
     @asynccontextmanager
@@ -443,6 +460,8 @@ def create_app(
                 )
             yield
         finally:
+            if material_reader is not None:
+                await material_reader.close()
             for service in resolved_research_services:
                 await service.close()
             await resolved_llm_provider.close()

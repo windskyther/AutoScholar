@@ -15,8 +15,9 @@ from autoscholar.orchestration.models import ReviewResult, TaskPlan, WorkflowKin
 from autoscholar.orchestration.service import Run
 from autoscholar.rag.models import RetrievalMode
 from autoscholar.research.context import today
+from autoscholar.research.quality_models import QualityState, ResearchDepth
 
-Stage = Literal["planner", "executor", "reviewer", "replanner", "writer", "done"]
+Stage = Literal["planner", "executor", "quality", "reviewer", "replanner", "writer", "done"]
 
 
 def default_sources() -> list[ResearchSource]:
@@ -57,6 +58,9 @@ class Snapshot(BaseModel):
     traces: int = 0
     approval_threshold: int = Field(default=20000, ge=0)
     memory_context: dict[str, Any] = Field(default_factory=dict)
+    # Old snapshots retain the former workflow; new public tasks opt into standard.
+    research_depth: ResearchDepth = "quick"
+    quality: QualityState = Field(default_factory=QualityState)
 
     def restore(self, usage: dict[str, int], active_seconds: float) -> Run:
         names = (
@@ -78,6 +82,8 @@ class Snapshot(BaseModel):
             "answer",
             "traces",
             "memory_context",
+            "research_depth",
+            "quality",
         )
         return Run(
             **{name: getattr(self, name) for name in names},
@@ -97,6 +103,7 @@ class Snapshot(BaseModel):
             "traces",
             "specification",
             "memory_context",
+            "quality",
         ):
             values[name] = getattr(run, name)
         values["stage"] = stage

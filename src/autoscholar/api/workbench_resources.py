@@ -161,6 +161,8 @@ class ResourceRepository:
         async with self.repository.sessions() as session:
             root = await self.repository.root(session, task_id)
             conditions = [model.task_id.in_(self.repository.family(root))]
+            if model is EvidenceRow:
+                conditions = [await self.repository.evidence_scope(session, root)]
             if model is ArtifactRow:
                 conditions.append(ArtifactRow.path.in_(tuple(ArtifactManager.allowed)))
             total = await session.scalar(select(func.count()).select_from(model).where(*conditions))

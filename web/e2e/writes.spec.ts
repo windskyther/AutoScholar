@@ -11,7 +11,7 @@ const document = { id: 'doc-ready', project_id: project.id, original_filename: '
   embedding_model: 'fixture', index_version: 1, error_code: null, error_message: null, created_at: time, updated_at: time };
 type Entry = { method: string; path: string; key?: string; body?: string };
 
-async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProjectAck?: boolean; unauthorizedTask?: boolean; researchWorkflows?: boolean; tokenBudget?: number } = {}) {
+async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProjectAck?: boolean; unauthorizedTask?: boolean; researchWorkflows?: boolean; researchQuality?: boolean; tokenBudget?: number } = {}) {
   const calls: Entry[] = [];
   const limits = { ...budget, total_tokens: options.tokenBudget ?? budget.total_tokens };
   const projects = [project];
@@ -32,6 +32,7 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
       llm_configured: true, web_search_configured: true, research_backend: 'native', filesystem_backend: 'native', experiment_backend: 'native',
       task_streaming: false, document_max_bytes: 1024, document_max_pages: 10, budget_limits: limits,
       research_workflows: options.researchWorkflows ?? false,
+      research_quality: options.researchQuality ?? false,
     } };
     else if (path === '/api/workbench/models') body = { items: [{ id: '11111111-1111-4111-8111-111111111111', name: 'Managed fixture', base_url: 'https://fixture.example/v1', model: 'fixture', compatibility_profile: 'auto', enabled: true, created_at: time }] };
     else if (path === '/api/workbench/projects' && method === 'POST') {
@@ -100,6 +101,20 @@ test('document analysis requires project PDFs and hides external search options'
   await expect(page.getByText('MNIST CPU 实验', { exact: true })).toHaveCount(0);
 });
 const consent = '我确认提交后自动执行研究任务，并接受可能产生的 API 费用。';
+
+test('new quality-enabled tasks default to standard and can select deep', async ({ page }) => {
+  const calls = await fixture(page, { researchQuality: true });
+  await draftTask(page);
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('标准 · 独立复筛与审稿', { exact: true })).toBeVisible();
+  await dialog.getByLabel('研究深度', { exact: true }).click();
+  await page.getByText('深入 · 加强阅读与修订', { exact: true }).click();
+  await dialog.getByRole('checkbox', { name: consent }).check();
+  await dialog.getByRole('button', { name: '确认提交并自动执行' }).click();
+  await expect.poll(() => calls.filter(c => c.method === 'POST' && c.path.endsWith('/agent/tasks')).length).toBe(1);
+  const submitted = calls.find(c => c.method === 'POST' && c.path.endsWith('/agent/tasks'))!;
+  expect(JSON.parse(submitted.body!).research_depth).toBe('deep');
+});
 
 test('research defaults preserve the objective and explicitly disable unselected PDFs', async ({ page }) => {
   const calls = await fixture(page, { researchWorkflows: true });

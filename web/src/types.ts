@@ -23,6 +23,7 @@ export interface TaskSubmission {
   budget: BudgetLimits;
   workflow_kind?: 'research' | 'literature_review' | 'comparison' | 'research_proposal' | 'document_analysis';
   model_profile_id?: string | null;
+  research_depth?: 'quick' | 'standard' | 'deep';
 }
 export interface SubmissionReceipt { task_id: string; status: TaskStatus; created: boolean; status_url: string }
 export interface Session {
@@ -35,6 +36,7 @@ export interface Session {
     model_management?: boolean;
     task_types?: { id: string; label: string }[];
     model_usage?: boolean;
+    research_quality?: boolean;
   };
 }
 export interface Task {
@@ -54,6 +56,8 @@ export interface Overview {
     budget_limits: Record<string, number> | null; active_seconds: number;
     pending_call_count: number; error_code: string | null; cause_error_code?: string | null;
     model_profile_name?: string | null; model_name?: string | null;
+    research_depth?: 'quick' | 'standard' | 'deep'; quality_phase?: string | null;
+    quality_sources?: number; quality_reads?: number; quality_rounds?: number; quality_accepted?: boolean;
   } | null;
   resources: { evidence: number; experiments: number; artifacts: number };
   answer: string | null; answer_truncated: boolean; usage_scope: 'root_task_only'; monetary_cost: null;

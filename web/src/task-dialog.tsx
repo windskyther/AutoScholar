@@ -14,6 +14,7 @@ interface Values {
   objective: string; budget: BudgetLimits; sources: ('web' | 'paper')[];
   workflowKind: NonNullable<TaskSubmission['workflow_kind']>;
   model_profile_id: string;
+  research_depth: 'quick' | 'standard' | 'deep';
   documentMode: 'all' | 'none' | 'selected'; retrieval: TaskSubmission['retrieval_mode']; consent: boolean;
 }
 const fields: { key: keyof BudgetLimits; label: string; min: number; max: number }[] = [
@@ -91,6 +92,7 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
       objective: values.objective.trim(), mode: 'autonomous', project_id: project.id,
       workflow_kind: values.workflowKind,
       model_profile_id: values.model_profile_id,
+      ...(session?.capabilities.research_quality ? { research_depth: values.research_depth } : {}),
       document_ids: values.documentMode === 'all' ? null : values.documentMode === 'none' ? [] : selected,
       retrieval_mode: values.retrieval, research_sources: values.sources, budget: values.budget,
     }) };
@@ -104,6 +106,7 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
       budget: ceiling, sources: session?.capabilities.web_search_configured ? ['web'] : ['paper'],
       workflowKind: defaultKind, documentMode: 'none', retrieval: 'hybrid_rerank', consent: false,
       model_profile_id: '',
+      research_depth: 'standard',
     }}>
       <>
         <Form.Item name="model_profile_id" label="使用模型" rules={[{ required: true, message: '请选择模型管理中的模型' }]}>
@@ -115,6 +118,13 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
         {!modelReady && models.isSuccess && <Alert type="info" title="请先添加或选择一个可用模型" />}
         <p><Link to="/models" onClick={close}>管理模型连接</Link>；任务提交后会一直使用所选配置。</p>
       </>
+      {session?.capabilities.research_quality && <Form.Item name="research_depth" label="研究深度" extra="标准模式会复筛资料、综合写作并审稿；深入模式最多修订两轮。所有调用共用下方预算。">
+        <Select options={[
+          { value: 'quick', label: '快速 · 基础资料整理' },
+          { value: 'standard', label: '标准 · 独立复筛与审稿' },
+          { value: 'deep', label: '深入 · 加强阅读与修订' },
+        ]} />
+      </Form.Item>}
       <Form.Item name="workflowKind" label="任务类型" rules={[{ required: true }]}>
         <Select options={[
           { value: 'research', label: '资料调研' }, { value: 'literature_review', label: '论文综述' },

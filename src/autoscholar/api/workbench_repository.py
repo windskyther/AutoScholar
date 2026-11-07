@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
 from autoscholar.agent.database_models import (
     AgentTaskRow,
@@ -210,6 +211,17 @@ class WorkbenchRepository:
             )
         await WorkbenchRepository.visible_project(session, row.project_id)
         return row
+
+    @staticmethod
+    async def evidence_scope(session: AsyncSession, root: AgentTaskRow) -> ColumnElement[bool]:
+        authoritative = await session.scalar(
+            select(EvidenceRow.id)
+            .where(EvidenceRow.task_id == root.id, EvidenceRow.provider == "research_quality")
+            .limit(1)
+        )
+        if authoritative:
+            return (EvidenceRow.task_id == root.id) & (EvidenceRow.provider == "research_quality")
+        return EvidenceRow.task_id.in_(WorkbenchRepository.family(root))
 
     async def controls(self, task_id: str) -> WorkbenchControlState:
         async with self.sessions() as session:
@@ -421,10 +433,19 @@ class WorkbenchRepository:
                     results.get(job.active.get("step_id"), {}) if isinstance(results, dict) else {}
                 )
                 cause = active_result.get("error_code") if isinstance(active_result, dict) else None
+                quality = payload.get("quality", {})
+                if not isinstance(quality, dict):
+                    quality = {}
                 execution = ExecutionSummary.model_validate(
                     {
                         "status": job.status,
                         "stage": payload.get("stage"),
+                        "research_depth": payload.get("research_depth", "quick"),
+                        "quality_phase": quality.get("phase"),
+                        "quality_sources": len(quality.get("materials", [])),
+                        "quality_reads": quality.get("reads", 0),
+                        "quality_rounds": quality.get("rounds", 0),
+                        "quality_accepted": quality.get("accepted", False),
                         "model_profile_name": payload.get("model_profile_name"),
                         "model_name": payload.get("model_name"),
                         "plan_version": payload.get("version"),
@@ -444,6 +465,7 @@ class WorkbenchRepository:
                     }
                 )
             counts = {}
+            evidence_condition = await self.evidence_scope(session, root)
             for name, table in (
                 ("evidence", EvidenceRow),
                 ("experiments", ExperimentRow),
@@ -452,7 +474,11 @@ class WorkbenchRepository:
                 count = await session.scalar(
                     select(func.count())
                     .select_from(table)
-                    .where(table.task_id.in_(self.family(root)))
+                    .where(
+                        evidence_condition
+                        if table is EvidenceRow
+                        else table.task_id.in_(self.family(root))
+                    )
                 )
                 counts[name] = int(count or 0)
             return TaskOverviewResponse(
@@ -490,7 +516,9 @@ class WorkbenchRepository:
         table = tables[kind]
         async with self.sessions() as session:
             root = await self.root(session, task_id)
-            condition = table.task_id.in_(self.family(root))
+            condition: ColumnElement[bool] = table.task_id.in_(self.family(root))
+            if table is EvidenceRow:
+                condition = await self.evidence_scope(session, root)
             total = await session.scalar(select(func.count()).select_from(table).where(condition))
             rows = (
                 await session.scalars(

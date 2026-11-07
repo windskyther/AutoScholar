@@ -48,7 +48,7 @@ async def test_plan_feedback_is_bounded_metered_and_never_replays_unknown_result
         if name == stage and (attempts == 1 or stop == "repeat"):
             if stop == "transport":
                 raise httpx.ReadTimeout("do not log raw request", request=request)
-            bad = {
+            invalid_payloads: dict[str, dict[str, Any]] = {
                 "submit_plan": {"mode": "research", "steps": ["untrusted-value"] * 9},
                 "submit_research_queries": {"queries": []},
                 "submit_evidence": {
@@ -58,7 +58,8 @@ async def test_plan_feedback_is_bounded_metered_and_never_replays_unknown_result
                     ]
                 },
                 "submit_research_report": {"answer": "untrusted-value", "citations": []},
-            }[stage]
+            }
+            bad = invalid_payloads[stage]
             response = completion([(stage, bad)])
             if stop == "truncated":
                 response["choices"][0]["finish_reason"] = "length"

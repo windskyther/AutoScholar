@@ -32,6 +32,7 @@ async def test_schema_and_semantic_errors_share_the_existing_attempt_limit(
         if payload["tools"][0]["function"]["name"] == stage:
             attempts += 1
             schema_error = (attempts == 1) == (first == "schema")
+            bad: dict[str, Any]
             if stage == "submit_evidence":
                 bad = {
                     "items": [
@@ -127,6 +128,7 @@ async def test_fifteen_candidates_are_corrected_to_bounded_evidence_without_rese
         payload = json.loads(request.content)
         requests.append(payload)
         name = payload["tools"][0]["function"]["name"]
+        arguments: dict[str, Any]
         if name == "submit_plan":
             arguments = {"mode": "research", "steps": ["Research all five topics"]}
         elif name == "submit_research_queries":

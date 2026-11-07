@@ -185,6 +185,9 @@ class TavilySearchProvider(BaseHTTPResearchProvider):
                     url=url,
                     content=content,
                     relevance=float(score) if isinstance(score, int | float) else None,
+                    published_at=str(item["published_date"])[:10]
+                    if item.get("published_date")
+                    else None,
                 )
             )
         return results
@@ -222,7 +225,9 @@ class SemanticScholarSearchProvider(BaseHTTPResearchProvider):
                         # Semantic Scholar documents that hyphenated terms do not match.
                         "query": query.replace("-", " "),
                         "limit": limit,
-                        "fields": ("title,url,abstract,authors,year,externalIds,openAccessPdf"),
+                        "fields": (
+                            "title,url,abstract,authors,year,publicationDate,externalIds,openAccessPdf"
+                        ),
                     },
                 )
             finally:
@@ -267,6 +272,13 @@ class SemanticScholarSearchProvider(BaseHTTPResearchProvider):
                     year=int(year) if isinstance(year, int) else None,
                     external_id=str(doi or paper_id) or None,
                     relevance=max(0.5, 1.0 - index * 0.1),
+                    published_at=str(item["publicationDate"])
+                    if item.get("publicationDate")
+                    else None,
+                    fulltext_url=str(item["openAccessPdf"]["url"])
+                    if isinstance(item.get("openAccessPdf"), dict)
+                    and item["openAccessPdf"].get("url")
+                    else None,
                 )
             )
         return results
