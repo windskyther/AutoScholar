@@ -12,7 +12,7 @@ const labels: Record<string, string> = { submitted: '任务已提交', claimed: 
   approval_requested: '等待人工审批', approval_decided: '审批已决定', approval_consumed: '审批已消费',
   pause: '请求暂停', resume: '请求恢复', cancel: '请求取消', memory_retrieved: '已检索 Memory',
   memory_enabled_changed: 'Memory 启用状态改变', experience_recorded: '已记录经验', other: '其他事件' };
-const states = { loading: '加载事件记录', connecting: '连接事件流', live: '事件流已连接', reconnecting: '断线后补齐事件',
+const states = { loading: '加载事件记录', connecting: '连接事件流', live: '正在接收更新', reconnecting: '断线后补齐事件',
   complete: '任务已结束，事件已同步', unsupported: '此历史任务没有实时记录', error: '事件连接已停止' };
 
 function delay(ms: number, signal: AbortSignal): Promise<void> {

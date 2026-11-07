@@ -15,6 +15,7 @@ import Resources from './resources';
 import DeleteProject from './delete-project';
 import DeleteTask from './delete-task';
 import ExportMarkdown from './export-markdown';
+import { usePageReady } from './page-transition';
 
 function failureLabel(code: string | null | undefined): string {
   const labels: Record<string, string> = {
@@ -38,6 +39,7 @@ export function ProjectsPage() {
   const { api } = useConnection();
   const [page, setPage] = useState(1);
   const query = useQuery({ queryKey: ['projects', page], queryFn: ({ signal }) => api!.projects(page, signal) });
+  usePageReady(!query.isPending);
   return <>
     <PageHeading title="项目" refresh={() => void query.refetch()} />
     <div className="filters"><CreateProject /></div>
@@ -64,6 +66,7 @@ export function ProjectPage() {
   const project = useQuery({ queryKey: ['project', projectId], queryFn: ({ signal }) => api!.project(projectId, signal) });
   const tasks = useQuery({ queryKey: ['tasks', projectId, page, status, search],
     queryFn: ({ signal }) => api!.tasks(projectId, page, status, search, signal), enabled: project.isSuccess });
+  usePageReady(!project.isPending && (!project.isSuccess || !tasks.isPending));
   if (project.isPending) return <Loading />;
   if (project.isError) return <QueryError error={project.error} retry={() => void project.refetch()} />;
   return <>
@@ -105,6 +108,7 @@ export function TaskPage() {
     if (value.task.project_id !== projectId) throw new ApiError('workbench_task_not_found', 404);
     return value;
   } });
+  usePageReady(!query.isPending);
   if (query.isPending) return <Loading />;
   if (query.isError) return <QueryError error={query.error} retry={() => void query.refetch()} />;
   const data = query.data;
@@ -115,7 +119,7 @@ export function TaskPage() {
       { title: <Link to={`/projects/${encodeURIComponent(projectId!)}`}>项目任务</Link> }, { title: '任务详情' }]} />
     <PageHeading title="任务详情" subtitle={data.task.objective} refresh={() => void query.refetch()} />
     <Space wrap data-testid="task-status"><Status value={data.execution?.status ?? data.task.status} />
-      <Tag>{data.task.mode}</Tag><span className="identifier">{data.task.task_id}</span></Space>
+      <Tag>{data.task.mode}</Tag></Space>
     {data.execution?.error_code === 'external_result_uncertain' && <Alert type="warning" showIcon
       title={`${failureLabel(data.execution.cause_error_code ?? data.execution.error_code)}，任务已停止`}
       description="请求可能已经到达外部服务，实际结果和用量需要核对。系统不会自动重发；请先检查已有记录，避免重复提交。" />}
@@ -137,13 +141,16 @@ export function TaskPage() {
     ]} />
     {data.execution?.pending_call_count ? <Alert type="warning" showIcon title={`有 ${data.execution.pending_call_count} 个未完成调用，需要检查，不会自动重放。`} /> : null}
     <h2>当前计划</h2>
-    {data.current_plan ? <ol className="plan-list">{data.current_plan.plan.steps.map((step) =>
-      <li key={step.id}><Tag>{step.type}</Tag><strong>{step.id}</strong><p>{step.description}</p>
-        <span>依赖：{step.dependencies.join('、') || '无'}</span></li>)}
+    {data.current_plan ? <ol className="plan-list">{data.current_plan.plan.steps.map((step, index) =>
+      <li key={step.id}><Tag>{step.type}</Tag><strong>步骤 {index + 1}</strong><p>{step.description}</p>
+        <span>依赖：{step.dependencies.map((id) => {
+          const dependency = data.current_plan!.plan.steps.findIndex((item) => item.id === id);
+          return dependency >= 0 ? `步骤 ${dependency + 1}` : '其他步骤';
+        }).join('、') || '无'}</span></li>)}
     </ol> : <Empty description="尚未生成结构化计划。" />}
     <h2>子任务与历史尝试</h2>
     <Table<Task> rowKey="task_id" dataSource={data.children.items} scroll={{ x: 700 }} size="small" columns={[
-      { title: '任务编号', dataIndex: 'task_id', ellipsis: true },
+      { title: '执行记录', render: (_, _item, index) => `第 ${(page - 1) * 20 + index + 1} 项` },
       { title: '模式', dataIndex: 'mode', width: 120 },
       { title: '状态', dataIndex: 'status', width: 140, render: (value: TaskStatus) => <Status value={value} /> },
       { title: '原因', dataIndex: 'error_code', render: (value: string | null) => failureLabel(value) },

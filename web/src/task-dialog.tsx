@@ -162,11 +162,10 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
         <Checkbox>我确认提交后自动执行研究任务，并接受可能产生的 API 费用。</Checkbox>
       </Form.Item>
       {error !== null && <Alert type="error" showIcon title={errorMessage(error)}
-        description={uncertain ? '请勿新建另一轮。请求内容已锁定，可使用下面的原编号确认/重试；关闭窗口会保留该请求，但刷新或断开连接将丢失内存状态，请先记录编号并核查项目任务。' : '请检查输入和文档状态，修改后再手动提交。'} />}
-      {draft.current && <p className="identifier">提交编号：{draft.current.key}</p>}
+        description={uncertain ? '请求内容已锁定，请先核查项目任务，或确认并重试原提交。关闭窗口会保留请求；刷新页面会丢失本地记录，请勿直接新建另一轮。' : '请检查输入和文档状态，修改后再手动提交。'} />}
       <Space wrap>
         {!uncertain && <Button type="primary" htmlType="submit" loading={busy} disabled={!ceiling || !modelReady || (!!session?.capabilities.model_management && !models.isSuccess)}>确认提交并自动执行</Button>}
-        {uncertain && <Button type="primary" loading={busy} disabled={busy} onClick={() => void send()}>用原编号确认 / 重试</Button>}
+        {uncertain && <Button type="primary" loading={busy} disabled={busy} onClick={() => void send()}>确认 / 重试原提交</Button>}
         <Button disabled={busy} onClick={close}>{uncertain ? '保留请求并关闭' : '取消'}</Button>
       </Space>
     </Form>

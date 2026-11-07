@@ -235,12 +235,13 @@ test('lost task acknowledgement freezes the original draft and survives route ch
   const calls = await fixture(page, { loseTaskAck: true }); await draftTask(page);
   await page.getByRole('checkbox', { name: consent }).check();
   await page.getByRole('button', { name: '确认提交并自动执行' }).click();
-  await expect(page.getByRole('button', { name: '用原编号确认 / 重试' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '确认 / 重试原提交' })).toBeVisible();
+  expect(await page.getByRole('dialog').innerText()).not.toMatch(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/i);
   await expect(page.getByLabel('研究目标', { exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '保留请求并关闭' }).click();
   await page.getByRole('link', { name: '项目与任务' }).click();
   await page.getByRole('button', { name: '核查原提交' }).click();
-  await page.getByRole('button', { name: '用原编号确认 / 重试' }).click();
+  await page.getByRole('button', { name: '确认 / 重试原提交' }).click();
   await expect(page.getByRole('heading', { name: '任务详情', exact: true })).toBeVisible();
   const submissions = calls.filter((item) => item.path === '/api/workbench/agent/tasks');
   expect(submissions).toHaveLength(2);

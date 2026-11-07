@@ -35,7 +35,9 @@ test('real approval stays paused, explicit resume/pause/cancel require confirmat
   await expect(section.getByRole('button', { name: '恢复任务', exact: true })).toBeDisabled();
   await section.getByRole('button', { name: '审阅与决定' }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByText('MNIST CPU 实验', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('历史执行参数', { exact: true })).toBeVisible();
+  expect(await dialog.innerText()).not.toMatch(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/i);
+  await expect(dialog.getByText('操作指纹：', { exact: false })).toHaveCount(0);
   await dialog.locator('summary').click();
   await expect(dialog.locator('pre')).toContainText('train_samples');
   await dialog.locator('summary').click();

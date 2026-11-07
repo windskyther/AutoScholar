@@ -1,6 +1,6 @@
 import { Alert, Button, Space, Spin, Tag } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
-import { ApiError, errorMessage } from './api';
+import { errorMessage } from './api';
 import type { TaskStatus } from './types';
 
 export const statusLabels: Record<TaskStatus, string> = {
@@ -15,9 +15,7 @@ export function Status({ value }: { value: TaskStatus }) {
   return <Tag color={color}>{statusLabels[value] ?? value}</Tag>;
 }
 export function QueryError({ error, retry }: { error: unknown; retry: () => void }) {
-  const requestId = error instanceof ApiError ? error.requestId : null;
   return <Alert type="error" showIcon title={errorMessage(error)}
-    description={requestId ? `请求编号：${requestId}` : undefined}
     action={<Button onClick={retry}>手动重试查询</Button>} />;
 }
 export function Loading() { return <div className="loading" role="status"><Spin /> 正在读取数据</div>; }

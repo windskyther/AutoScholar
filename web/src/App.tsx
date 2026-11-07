@@ -1,10 +1,10 @@
 import { lazy, Suspense } from 'react';
-import { Alert, Button, Layout, Menu, Space, Tag } from 'antd';
+import { Alert, Button, Layout, Menu } from 'antd';
 import { ApiOutlined, BarChartOutlined, FolderOutlined } from '@ant-design/icons';
 import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { useConnection } from './connection';
 import ConnectPage from './connect';
-import { Loading } from './components';
+import PageTransition from './page-transition';
 import { TaskSubmissionProvider, useSubmission } from './task-submission';
 
 const ProjectsPage = lazy(() => import('./pages').then((module) => ({ default: module.ProjectsPage })));
@@ -35,14 +35,11 @@ function WorkspaceLayout() {
       ]} />
     </Layout.Sider>
     <Layout>
-      <Layout.Header className="app-header"><Space><Tag color="success">已连接</Tag></Space>
-
-      </Layout.Header>
-      <Layout.Content className="app-content"><Suspense fallback={<Loading />}>
+      <Layout.Content className="app-content">
         {submission.pending && <Alert type="warning" title="有一笔任务提交结果未确认，不要直接新建另一轮。"
           action={<Button onClick={submission.reveal}>核查原提交</Button>} />}
-        <div className="page-transition" key={location.pathname}><Outlet /></div>
-      </Suspense></Layout.Content>
+        <PageTransition key={location.pathname}><Suspense fallback={null}><Outlet /></Suspense></PageTransition>
+      </Layout.Content>
     </Layout>
   </Layout>;
 }

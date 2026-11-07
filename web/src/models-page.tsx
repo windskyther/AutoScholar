@@ -5,11 +5,13 @@ import { useConnection } from './connection';
 import { errorMessage, isWriteUncertain } from './api';
 import { dateLabel, Loading, PageHeading, QueryError } from './components';
 import type { ModelProfile, ModelProfileInput } from './model-types';
+import { usePageReady } from './page-transition';
 
 export default function ModelsPage() {
   const { api } = useConnection();
   const cache = useQueryClient();
   const catalog = useQuery({ queryKey: ['models'], queryFn: ({ signal }) => api!.models(signal) });
+  usePageReady(!catalog.isPending);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);

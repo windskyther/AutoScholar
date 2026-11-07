@@ -4,9 +4,10 @@ import { readFile } from 'node:fs/promises';
 
 const time = '2026-11-06T00:00:00Z';
 const project = { id: 'project-actions', name: '目标管理项目', description: null, created_at: time, updated_at: time };
-const goal = { task_id: 'goal-a', project_id: project.id, parent_task_id: null, objective: '中文研究 / 目标',
+const goal = { task_id: 'ff0cf6b9-e4cd-4d78-8aa4-5b864c2019c6', project_id: project.id, parent_task_id: null, objective: '中文研究 / 目标',
   mode: 'autonomous', status: 'succeeded', metrics: {}, error_code: null, created_at: time, updated_at: time };
 const keep = { ...goal, task_id: 'goal-keep', objective: '保留此研究目标' };
+const childId = 'a1b2c3d4-1234-4321-aaaa-123456789abc';
 const markdown = '# 中文研究 / 目标\n\n## 完整研究结论\n\n\\(y=x^2\\) [E1]\n\n|来源|结论|\n|---|---|\n|论文|保留完整中文与数学公式|\n';
 
 async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' | 'empty' | 'cancelled' = 'success') {
@@ -35,17 +36,21 @@ async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' | 'emp
     if (path.endsWith('/documents')) return route.fulfill({ json: { items: [], total: 0, limit: 20, offset: 0 } });
     if (path.endsWith('/tasks')) return route.fulfill({ json: { items: removed ? [keep] : [shownGoal, keep], total: removed ? 1 : 2, limit: 20, offset: 0 } });
     if (path.endsWith('/overview')) return removed ? route.fulfill({ status: 404, json: { error: { code: 'workbench_task_not_found' } } }) : route.fulfill({ json: {
-      task: shownGoal, children: { items: [], total: 0, limit: 20, offset: 0 }, current_plan: null, execution: null,
+      task: shownGoal, children: { items: [{ ...goal, task_id: childId, parent_task_id: goal.task_id, mode: 'research' }], total: 1, limit: 20, offset: 0 },
+      current_plan: { version: 1, plan: { goal: goal.objective, steps: [
+        { id: childId, type: 'research', description: '阅读论文并整理证据', dependencies: [], expected_output: '研究结论' },
+        { id: 'review', type: 'research', description: '核对研究结论', dependencies: [childId], expected_output: '核对结论' },
+      ] } }, execution: null,
       resources: { evidence: 2, experiments: 0, artifacts: 0 }, answer: mode === 'empty' ? null : '页面中的截断预览', answer_truncated: mode !== 'empty',
       usage_scope: 'root_task_only', monetary_cost: null,
     } });
     if (path.endsWith('/events')) return route.fulfill({ json: { task_id: goal.task_id, status: 'succeeded', durable: false,
       items: [], next_cursor: 0, has_more: false, has_older: false } });
     if (path.endsWith('/resources/evidence')) return route.fulfill({ json: { task_id: goal.task_id, total: 2, limit: 20, offset: 0, items: [
-      { id: 'evidence-a', task_id: 'child', citation_key: 'E1', source_type: 'web', title: '来源论文', url: 'https://example.org/paper',
+      { id: 'evidence-a', task_id: childId, citation_key: 'E1', source_type: 'web', title: '来源论文', url: 'https://example.org/paper',
         authors: [], year: 2026, claim: '公开研究结论', excerpt: '原文证据', text_truncated: false, document_id: null, page: null, section: null },
-      { id: 'evidence-b', task_id: 'child', citation_key: 'E2', source_type: 'document', title: '本地摘录', url: null,
-        authors: [], year: null, claim: '本地研究结论', excerpt: '本地证据', text_truncated: false, document_id: 'doc', page: 1, section: null },
+      { id: 'evidence-b', task_id: childId, citation_key: 'E2', source_type: 'document', title: '本地摘录', url: null,
+        authors: [], year: null, claim: '本地研究结论', excerpt: '本地证据', text_truncated: false, document_id: 'dd0cf6b9-e4cd-4d78-8aa4-5b864c2019c6', page: 1, section: null },
     ] } });
     if (path.endsWith('/output/markdown')) return route.fulfill({ contentType: 'text/markdown; charset=utf-8', body: markdown });
     throw new Error('Unexpected task action route: ' + path);
@@ -77,13 +82,24 @@ test('events start collapsed and citation links are directly available on mobile
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
+test('task, step, child and document references use readable labels without internal UUIDs', async ({ page }) => {
+  await fixture(page);
+  await page.getByRole('link', { name: goal.objective, exact: true }).click();
+  await expect(page.getByText('依赖：步骤 1', { exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '第 1 项', exact: true })).toBeVisible();
+  await page.getByRole('row').filter({ hasText: '本地摘录' }).getByRole('button', { name: '展开证据' }).click();
+  await expect(page.getByText('项目文档 · 页码：1', { exact: true })).toBeVisible();
+  expect(await page.locator('body').innerText()).not.toMatch(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/i);
+  await expect(page.getByText('已连接', { exact: true })).toHaveCount(0);
+});
+
 test('exports full UTF-8 Markdown with formulas instead of the truncated preview', async ({ page }) => {
   const calls = await fixture(page);
   await page.getByRole('link', { name: goal.objective, exact: true }).click();
   const pending = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出 Markdown', exact: true }).click();
   const download = await pending;
-  expect(download.suggestedFilename()).toBe('中文研究 _ 目标-goal-a.md');
+  expect(download.suggestedFilename()).toBe('中文研究 _ 目标.md');
   expect((await readFile((await download.path())!)).toString('utf8')).toBe(markdown);
   expect(calls.filter((call) => call.path.endsWith('/output/markdown'))).toHaveLength(1);
   expect(calls.every((call) => call.method === 'GET')).toBe(true);

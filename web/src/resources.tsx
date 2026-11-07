@@ -18,13 +18,12 @@ function Evidence({ taskId }: { taskId: string }) {
           safeExternalURL(item.url) ? <a href={item.url!} target="_blank" rel="noopener noreferrer" aria-label={`查看引用 ${key} 的来源`}>{key}</a> : key },
         { title: '来源与标题', render: (_, item) => <><Tag>{item.source_type}</Tag>{safeExternalURL(item.url)
           ? <a href={item.url!} target="_blank" rel="noopener noreferrer">{item.title}</a> : item.title}</> },
-        { title: '所属任务', dataIndex: 'task_id', ellipsis: true },
       ]} expandable={{ expandIcon: ({ expanded, onExpand, record }) => <Button size="small"
         aria-label={expanded ? '收起证据' : '展开证据'} onClick={(event) => onExpand(record, event)}>{expanded ? '−' : '+'}</Button>, expandedRowRender: (item) => <>
         <p>{item.authors.join('、')} {item.year ?? ''}</p>
         <p>主张：{item.claim}</p><pre className="plain-output">{item.excerpt}</pre>
         {item.text_truncated && <Alert type="warning" title="证据文本已截断。" />}
-        {item.document_id && <p>文档：{item.document_id} · 页码：{item.page ?? '未知'} · {item.section}</p>}
+        {item.document_id && <p>项目文档 · 页码：{item.page ?? '未知'}{item.section ? ` · ${item.section}` : ''}</p>}
         {safeExternalURL(item.url) && <a href={item.url!} target="_blank" rel="noopener noreferrer">在外部网站查看来源（离开本地工作台）</a>}
       </> }} pagination={{ current: page, total: query.data.total, pageSize: 20, showSizeChanger: false, onChange: setPage }} />;
 }
@@ -58,7 +57,7 @@ function Experiments({ taskId }: { taskId: string }) {
   return query.isPending ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
     : <Table<ExperimentResource> rowKey="id" dataSource={query.data.items} scroll={{ x: 650 }} size="small"
       columns={[{ title: '实验', dataIndex: 'name' }, { title: '状态', dataIndex: 'status' },
-        { title: '所属任务', dataIndex: 'task_id', ellipsis: true }, { title: '错误码', dataIndex: 'error_code' }]}
+        { title: '错误码', dataIndex: 'error_code' }]}
       expandable={{ expandIcon: ({ expanded, onExpand, record }) => <Button size="small"
         aria-label={expanded ? '收起实验' : '展开实验'} onClick={(event) => onExpand(record, event)}>{expanded ? '−' : '+'}</Button>,
         expandedRowRender: (item) => <Runs item={item} /> }}
@@ -101,7 +100,7 @@ function Files({ taskId }: { taskId: string }) {
       if (controller.signal.aborted) return;
       const url = URL.createObjectURL(blob); urls.current.add(url);
       const anchor = document.createElement('a'); anchor.href = url;
-      anchor.download = `${item.task_id}-${item.id}-${item.path.split('/').at(-1)}`;
+      anchor.download = item.path.split('/').at(-1) || '研究产物';
       anchor.click();
       const timer = setTimeout(() => { URL.revokeObjectURL(url); urls.current.delete(url); downloads.current.delete(timer); }, 1000);
       downloads.current.add(timer);
@@ -112,8 +111,7 @@ function Files({ taskId }: { taskId: string }) {
     {error && !selected && <Alert type="error" title={error} />}
     {query.isPending ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
       : <Table<ArtifactResource> rowKey="id" dataSource={query.data.items} scroll={{ x: 950 }} size="small" columns={[
-        { title: '登记路径', dataIndex: 'path' }, { title: '所属任务', dataIndex: 'task_id', ellipsis: true },
-        { title: '实验编号', dataIndex: 'experiment_id', ellipsis: true },
+        { title: '文件', dataIndex: 'path' },
         { title: '大小（字节）', dataIndex: 'size_bytes' },
         { title: '操作', render: (_, item) => <Space>
           {item.previewable && <Button disabled={busy} onClick={() => void open(item)}>预览</Button>}
@@ -122,7 +120,6 @@ function Files({ taskId }: { taskId: string }) {
       ]} pagination={{ current: page, total: query.data.total, pageSize: 20, showSizeChanger: false, onChange: setPage }} />}
     <Modal open={selected !== null} title={selected?.path} onCancel={close} footer={<Button onClick={close}>关闭预览</Button>}
       styles={{ body: { maxHeight: '70dvh', overflow: 'auto' } }} destroyOnHidden>
-      {selected && <p className="identifier">SHA-256：{selected.sha256}</p>}
       {busy ? <Loading /> : error ? <Alert type="error" title={error} /> : image
         ? <img src={image} alt="实验曲线" style={{ maxWidth: '100%' }} /> : <pre className="plain-output">{text}</pre>}
       {truncated && <Alert type="warning" title="预览超过 256 KiB，已截断；导出可取得完整登记产物。" />}

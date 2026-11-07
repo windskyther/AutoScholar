@@ -4,6 +4,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useConnection } from './connection';
 import { Loading, Metric, PageHeading, QueryError } from './components';
 import type { UsageDay, UsageGroup } from './usage-types';
+import { usePageReady } from './page-transition';
 
 const format = (value: number) => value.toLocaleString('zh-CN');
 const short = (value: number) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
@@ -38,6 +39,7 @@ export default function UsagePage() {
   const query = useQuery({ queryKey: ['usage', groupBy, days, apiId, model],
     queryFn: ({ signal }) => api!.usage(groupBy, days, apiId, model, signal),
     placeholderData: keepPreviousData, refetchInterval: 15000 });
+  usePageReady(!query.isPending);
   const data = query.data;
   const columns = [
     { title: '已确认 Tokens', dataIndex: 'total_tokens', render: format },

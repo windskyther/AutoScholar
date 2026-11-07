@@ -16,7 +16,7 @@ async function fixture(page: Page, empty = false, failure = false) {
     if (url.pathname === '/api/workbench/projects') return route.fulfill({ json: { items: [], total: 0, limit: 20, offset: 0 } });
     if (url.pathname === '/api/workbench/usage') {
       queries.push(url);
-      if (failure) return route.fulfill({ status: 503, json: { error: { code: 'workbench_store_unavailable' } } });
+      if (failure) return route.fulfill({ status: 503, headers: { 'X-Request-ID': 'ff0cf6b9-e4cd-4d78-8aa4-5b864c2019c6' }, json: { error: { code: 'workbench_store_unavailable' } } });
       const days = Number(url.searchParams.get('days')) as UsageSummary['days'];
       const group = url.searchParams.get('group_by') as UsageSummary['group_by'];
       const summary: UsageSummary = { group_by: group, days, utc_offset_minutes: 480, recorded_since: '2026-11-07T00:00:00Z',
@@ -81,6 +81,47 @@ test('usage failures offer a manual reload without any model request', async ({ 
   await fixture(page, false, true);
   await page.goto('/usage');
   await expect(page.getByRole('button', { name: '手动重试查询' })).toBeVisible();
+  expect(await page.locator('body').innerText()).not.toContain('ff0cf6b9-e4cd-4d78-8aa4-5b864c2019c6');
+});
+
+test('a first visit waits for both lazy code and data before animating the actual page', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.addInitScript(() => {
+    const entries: { path: string; heading: string | null }[] = [];
+    (window as unknown as { entries: typeof entries }).entries = entries;
+    document.addEventListener('animationstart', (event) => {
+      if (event.animationName === 'page-enter') entries.push({ path: location.pathname,
+        heading: (event.target as Element).querySelector('h1')?.textContent ?? null });
+    });
+  });
+  const entries = () => page.evaluate(() => (window as unknown as { entries: { path: string; heading: string | null }[] }).entries);
+  let releaseCode!: () => void; let releaseData!: () => void;
+  let codeRequested = false; let dataRequested = false;
+  const code = new Promise<void>((resolve) => { releaseCode = resolve; });
+  const data = new Promise<void>((resolve) => { releaseData = resolve; });
+  await fixture(page);
+  await page.route('**/src/usage-page.tsx*', async (route) => { codeRequested = true; await code; await route.continue(); });
+  await page.route('**/api/workbench/usage?*', async (route) => { dataRequested = true; await data; await route.fallback(); });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: '用量统计', exact: true }).click();
+  await expect.poll(() => codeRequested).toBe(true);
+  await page.waitForTimeout(250);
+  expect((await entries()).filter((entry) => entry.path === '/usage')).toHaveLength(0);
+  releaseCode();
+  await expect.poll(() => dataRequested).toBe(true);
+  await page.waitForTimeout(250);
+  await expect(page.locator('.page-transition')).toHaveCount(0);
+  expect((await entries()).filter((entry) => entry.path === '/usage')).toHaveLength(0);
+  releaseData();
+  await expect(page.getByTestId('usage-totals')).toBeVisible();
+  await expect.poll(async () => (await entries()).filter((entry) => entry.path === '/usage')).toEqual([{ path: '/usage', heading: '用量统计' }]);
+  await page.getByText('按模型', { exact: true }).click();
+  await expect(page.getByRole('heading', { name: '模型用量分布' })).toBeVisible();
+  expect((await entries()).filter((entry) => entry.path === '/usage')).toHaveLength(1);
+  await page.reload();
+  await expect(page.getByTestId('usage-totals')).toBeVisible();
+  await expect.poll(async () => (await entries()).filter((entry) => entry.path === '/usage')).toEqual([{ path: '/usage', heading: '用量统计' }]);
 });
 
 test('route entry is brief, filters do not remount it, and reduced motion disables it', async ({ page }) => {

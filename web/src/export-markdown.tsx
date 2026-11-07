@@ -4,9 +4,10 @@ import { DownloadOutlined } from '@ant-design/icons';
 import { useConnection } from './connection';
 import { errorMessage } from './api';
 
-function filename(objective: string, taskId: string): string {
+function filename(objective: string): string {
   const title = Array.from(objective.replace(/[<>:"/\\|?*\x00-\x1f\x7f]/g, '_').trim()).slice(0, 80).join('').replace(/[. ]+$/g, '');
-  return `${title || '研究报告'}-${taskId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 8)}.md`;
+  const safe = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(title) ? `_${title}` : title;
+  return `${safe || '研究报告'}.md`;
 }
 
 export default function ExportMarkdown({ taskId, objective, available }: { taskId: string; objective: string; available: boolean }) {
@@ -24,7 +25,7 @@ export default function ExportMarkdown({ taskId, objective, available }: { taskI
       if (controller.signal.aborted) return;
       release();
       const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename(objective, taskId);
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename(objective);
       anchor.click();
       download.current = { url, timer: setTimeout(release, 1000) };
     } catch (failure) { if (!controller.signal.aborted) setError(failure); }

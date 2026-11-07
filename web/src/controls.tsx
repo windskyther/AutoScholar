@@ -93,7 +93,7 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
       const state = await controls.refetch(); const review = await approvals.refetch();
       if (state.isError || review.isError || !api?.connected || !mounted.current) return;
       modal.confirm({ title: '确认已核查当前任务及审批状态？',
-        content: '解除操作锁只允许你重新选择操作，不会重复发送上一笔请求。请核对任务编号、状态和审批决定；有疑问时保持锁定。',
+        content: '解除操作锁只允许你重新选择操作，不会重复发送上一笔请求。请核对当前任务、状态和审批决定；有疑问时保持锁定。',
         okText: '已核查，解除操作锁', cancelText: '保持锁定',
         onOk: () => { if (mounted.current && api.connected) { setError(null); refresh(); } } });
     } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
@@ -118,7 +118,7 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
         {approvals.isPending ? <Loading /> : approvals.isError ? <QueryError error={approvals.error} retry={() => void approvals.refetch()} />
           : <Table<Approval> className="approval-table" rowKey="id" dataSource={approvals.data.items} scroll={{ x: 800 }} size="small"
             locale={{ emptyText: <Empty description="暂无人工审批记录。" /> }} columns={[
-              { title: '审批', dataIndex: 'step_id', render: (value: string, item) => <><span>{value}</span><br /><span className="identifier">{item.id}</span></> },
+              { title: '审批', render: (_, _item, index) => `执行参数确认 ${(page - 1) * 20 + index + 1}` },
               { title: '计划版本', dataIndex: 'plan_version', width: 100 },
               { title: '状态', dataIndex: 'status', width: 170, render: (value: Approval['status']) => <Tag>{approvalLabels[value]}</Tag> },
               { title: '过期时间', dataIndex: 'expires_at', width: 200, render: dateLabel },
@@ -141,12 +141,11 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
           <Alert type="warning" showIcon title="历史执行参数"
             description="计算量按训练轮数、样本数和模型数估算，不代表金额。批准后仍需恢复任务；修改配置会使相关代码、实验和后续结果失效。" />
           <Descriptions size="small" bordered column={2} items={[
-            { key: 'version', label: '计划 / 步骤', children: `v${dialog.approval.plan_version} / ${dialog.approval.step_id}` },
+            { key: 'version', label: '计划版本', children: dialog.approval.plan_version },
             { key: 'cost', label: '当前计算量单位', children: dialog.approval.cost_units.toLocaleString('zh-CN') },
             { key: 'status', label: '审批状态', children: approvalLabels[dialog.approval.status] },
             { key: 'expiry', label: '有效期至', children: dateLabel(dialog.approval.expires_at) },
           ]} />
-          <p className="identifier">操作指纹：{dialog.approval.operation_sha256}</p>
           <p>审批说明：{dialog.approval.reason || '未填写'}</p>
           <details><summary>原实验参数与共享预算上限</summary><pre className="plain-output">{JSON.stringify({ specification: dialog.approval.specification, budget_limits: dialog.approval.budget_limits }, null, 2)}</pre></details>
           <Space wrap className="approval-options">{dialog.approval.actions.map((action) => <Button key={action}
