@@ -167,7 +167,7 @@ class Harness:
             database_url=self.database_url,
             sandbox_manager_url=self.manager_url,
             log_level="ERROR",
-            experiment_api_token=SecretStr("isolated-acceptance-token"),
+            model_encryption_key=SecretStr("isolated-acceptance-token"),
             workflow_job_lease_seconds=6,
         )
 

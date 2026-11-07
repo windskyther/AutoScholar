@@ -5,6 +5,7 @@ import structlog
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, StringConstraints
 
+from autoscholar.api.model_selection import selected_model
 from autoscholar.llm import ChatMessage, LLMProvider
 
 router = APIRouter(tags=["chat"])
@@ -17,6 +18,7 @@ MessageText = Annotated[
 
 class ChatRequest(BaseModel):
     message: MessageText
+    model_profile_id: Annotated[str, StringConstraints(min_length=36, max_length=36)]
 
 
 class TokenUsageResponse(BaseModel):
@@ -36,7 +38,8 @@ class ChatResponse(BaseModel):
 async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     provider: LLMProvider = request.app.state.llm_provider
     started_at = time.perf_counter()
-    result = await provider.generate([ChatMessage(role="user", content=payload.message)])
+    async with selected_model(request, payload.model_profile_id):
+        result = await provider.generate([ChatMessage(role="user", content=payload.message)])
     duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
 
     usage = None

@@ -124,7 +124,7 @@ class ModelProfiles:
         self.lock = asyncio.Lock()
 
     def cipher(self) -> Fernet:
-        token = self.settings.experiment_api_token
+        token = self.settings.model_encryption_key
         if not token:
             raise AppError(
                 status_code=503,
@@ -286,7 +286,13 @@ class RoutedLLM:
 
     async def selected(self) -> LLMProvider:
         profile_id = current_model_profile.get()
-        return await self.profiles.provider(profile_id) if profile_id else self.default
+        if not profile_id:
+            raise AppError(
+                status_code=422,
+                code="model_selection_required",
+                message="Choose an enabled model connection from model management",
+            )
+        return await self.profiles.provider(profile_id)
 
     async def preflight(
         self,
@@ -317,14 +323,11 @@ class RoutedLLM:
         if not provider.configured:
             return await provider.generate(messages, tools=tools, tool_choice=tool_choice)
         profile_id = current_model_profile.get()
-        api_name, model = (
-            await self.profiles.binding(profile_id)
-            if profile_id
-            else ("默认 API", self.profiles.settings.llm_model or "未命名模型")
-        )
+        assert profile_id is not None
+        api_name, model = await self.profiles.binding(profile_id)
         claim = current_workflow_claim.get()
         call_id = await self.profiles.usage.start(
-            profile_id or "default",
+            profile_id,
             api_name,
             model,
             claim.task_id if claim else current_parent.get(),

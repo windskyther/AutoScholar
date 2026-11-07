@@ -79,7 +79,7 @@ async def resources(tmp_path: Path) -> AsyncIterator[tuple[httpx.AsyncClient, An
             }
             await session.commit()
     app = offline_app(
-        Settings(_env_file=None, experiment_api_token=SecretStr("public-resource-test-token")),  # type: ignore[call-arg]
+        Settings(_env_file=None, model_encryption_key=SecretStr("public-resource-test-token")),  # type: ignore[call-arg]
         database=FakeDependency(),
         redis=FakeDependency(),
         qdrant=FakeDependency(),
@@ -104,7 +104,9 @@ async def resources(tmp_path: Path) -> AsyncIterator[tuple[httpx.AsyncClient, An
 async def test_resources_scoped_paginated_and_authenticated(resources: Any, kind: str) -> None:
     client, _, _, _ = resources
     path = "/workbench/tasks/root/resources/" + kind
-    assert (await client.get(path)).status_code == 401
+    assert (
+        await client.get(path, headers={"Origin": "https://foreign.invalid"})
+    ).status_code == 403
     response = await client.get(path, headers=AUTH, params={"limit": 1})
     assert response.status_code == 200
     data = response.json()
@@ -142,8 +144,11 @@ async def test_foreign_or_missing_artifact_not_exported(resources: Any, suffix: 
         )
         assert response.status_code == 404
     assert (
-        await client.get(f"/workbench/tasks/root/resources/artifacts/{artifact}/{suffix}")
-    ).status_code == 401
+        await client.get(
+            f"/workbench/tasks/root/resources/artifacts/{artifact}/{suffix}",
+            headers={"Origin": "https://foreign.invalid"},
+        )
+    ).status_code == 403
 
 
 @pytest.mark.parametrize("suffix", ["preview", "content"])

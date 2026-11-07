@@ -2,8 +2,7 @@ import { expect, test } from '@playwright/test';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
-const TOKEN = process.env.PRODUCTION_TEST_TOKEN!;
-const headers = { Authorization: 'Bearer ' + TOKEN };
+const headers = {};
 const consent = '我确认提交后自动执行研究任务，并接受可能产生的 API 费用。';
 test.describe.configure({ mode: 'serial' });
 
@@ -15,8 +14,6 @@ async function state(request: APIRequestContext) {
 async function connect(page: Page) {
   const seeded = await state(page.request);
   await page.goto('/');
-  await page.getByLabel('操作者 Token', { exact: true }).fill(TOKEN);
-  await page.getByRole('button', { name: '连接本地 API' }).click();
   await page.locator(`a[href="/projects/${seeded.project_id}"]`).click();
 }
 
@@ -33,7 +30,7 @@ test('static SPA, real API errors, private-file denial, host/origin and security
   for (const path of ['/.env', '/.git/config', '/uv.lock', '/src/main.py', '/assets/missing.js']) {
     expect((await request.get(path)).status(), path).toBe(404);
   }
-  expect((await request.get('/api/workbench/session')).status()).toBe(401);
+  expect((await request.get('/api/workbench/session')).status()).toBe(200);
   expect((await request.get('/api/workbench/session', { headers: { ...headers, Host: 'untrusted.invalid' } })).status()).toBe(400);
   expect((await request.get('/api/workbench/session', { headers: { ...headers, Origin: 'https://untrusted.invalid', 'X-Forwarded-Proto': 'https' } })).status()).toBe(403);
   expect((await request.get('/api/workbench/session', { headers })).status()).toBe(200);
@@ -78,11 +75,11 @@ test('real PDF upload, asynchronous worker indexing and verified download throug
 test('SSE delivers immediately, heartbeats and reconnects after the committed cursor', async ({ page, request }) => {
   const seeded = await state(request);
   await page.goto('/');
-  const result = await page.evaluate(async ({ token, task }) => {
+  const result = await page.evaluate(async ({ task }) => {
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), 18000);
     const start = performance.now();
-    const response = await fetch(`/api/workbench/tasks/${task}/stream`, { headers: { Authorization: 'Bearer ' + token }, signal: controller.signal });
+    const response = await fetch(`/api/workbench/tasks/${task}/stream`, { signal: controller.signal });
     const reader = response.body!.getReader(); const decoder = new TextDecoder();
     let text = ''; let first = -1;
     try {
@@ -94,7 +91,7 @@ test('SSE delivers immediately, heartbeats and reconnects after the committed cu
       }
     } finally { controller.abort(); clearTimeout(deadline); }
     return { text, first, status: response.status, contentType: response.headers.get('content-type') };
-  }, { token: TOKEN, task: seeded.task_id });
+  }, { task: seeded.task_id });
   expect(result.status).toBe(200);
   expect(result.contentType).toContain('text/event-stream');
   expect(result.first).toBeLessThan(5000);
@@ -103,15 +100,15 @@ test('SSE delivers immediately, heartbeats and reconnects after the committed cu
   const cursor = Math.max(...Array.from(result.text.matchAll(/^id: (\d+)/gm), item => Number(item[1])));
   expect(cursor).toBeGreaterThan(0);
   expect((await request.post('/api/__fixture/event', { headers })).status()).toBe(200);
-  const next = await page.evaluate(async ({ token, task, cursor }) => {
+  const next = await page.evaluate(async ({ task, cursor }) => {
     const controller = new AbortController(); const deadline = setTimeout(() => controller.abort(), 5000);
     try {
-      const response = await fetch(`/api/workbench/tasks/${task}/stream`, { headers: { Authorization: 'Bearer ' + token, 'Last-Event-ID': String(cursor) }, signal: controller.signal });
+      const response = await fetch(`/api/workbench/tasks/${task}/stream`, { headers: { 'Last-Event-ID': String(cursor) }, signal: controller.signal });
       const reader = response.body!.getReader(); let text = ''; const decoder = new TextDecoder();
       while (!/^id: /m.test(text)) { const item = await reader.read(); if (item.done) break; text += decoder.decode(item.value, { stream: true }); }
       return text;
     } finally { controller.abort(); clearTimeout(deadline); }
-  }, { token: TOKEN, task: seeded.task_id, cursor });
+  }, { task: seeded.task_id, cursor });
   expect(Array.from(next.matchAll(/^id: (\d+)/gm), item => Number(item[1]))).toEqual([cursor + 1]);
 });
 
@@ -129,9 +126,8 @@ test('Chinese report preview and real authenticated browser export retain bytes 
   const download = await waiting;
   expect((await readFile((await download.path())!)).toString('utf8')).toContain('# 中文报告');
   const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage }, cookies: document.cookie }));
-  expect(stored).not.toContain(TOKEN);
-  await page.getByRole('button', { name: '断开连接' }).click();
-  await expect(page.getByLabel('操作者 Token', { exact: true })).toHaveValue('');
+  expect(stored).not.toContain('Authorization');
+  await expect(page.getByLabel('操作者 Token', { exact: true })).toHaveCount(0);
 });
 
 test('real task submission retains an idempotent durable receipt with execution held', async ({ page, request }) => {

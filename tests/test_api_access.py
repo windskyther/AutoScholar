@@ -11,7 +11,8 @@ from pydantic import SecretStr, ValidationError
 
 from autoscholar.core.config import Settings
 from tests.api_credentials import AUTH, TOKEN, TOKEN_SECRET
-from tests.governance import offline_app
+from tests.managed_fixture import MODEL_ID
+from tests.managed_fixture import managed_offline_app as offline_app
 from tests.test_chat import SuccessfulProvider
 from tests.test_health import FakeDependency, FakeSandbox
 from tests.test_projects_api import FakeKnowledgeStore
@@ -22,7 +23,7 @@ def client_for(
 ) -> tuple[TestClient, SuccessfulProvider, FakeKnowledgeStore]:
     provider, knowledge = SuccessfulProvider(), FakeKnowledgeStore()
     app = offline_app(
-        Settings(experiment_api_token=token, **config),  # type: ignore[arg-type]
+        Settings(model_encryption_key=token, **config),  # type: ignore[arg-type]
         database=FakeDependency(),
         redis=FakeDependency(),
         qdrant=FakeDependency(),
@@ -49,12 +50,16 @@ def test_every_business_route_rejects_before_validation_or_dispatch() -> None:
                     method,
                     path,
                     content=b"{invalid JSON",
-                    headers={"content-type": "application/json", "X-Request-ID": "denied"},
+                    headers={
+                        "Origin": "https://foreign.invalid",
+                        "content-type": "application/json",
+                        "X-Request-ID": "denied",
+                    },
                 )
-                assert response.status_code == 401, (method, path, response.text)
+                assert response.status_code == 403, (method, path, response.text)
                 assert response.json()["request_id"] == "denied"
                 assert response.headers["cache-control"] == "private, no-store"
-                assert response.headers["www-authenticate"] == "Bearer"
+                assert "www-authenticate" not in response.headers
     assert not provider.messages and not store.projects and not store.documents
 
 
@@ -73,53 +78,24 @@ async def test_denied_upload_does_not_consume_body_stream() -> None:
         response = await api.post(
             "/projects/missing/documents",
             content=body(),
-            headers={"Content-Type": "multipart/form-data; boundary=invalid"},
+            headers={
+                "Content-Type": "multipart/form-data; boundary=invalid",
+                "Origin": "https://foreign.invalid",
+            },
         )
-    assert response.status_code == 401 and reads == 0
+    assert response.status_code == 403 and reads == 0
     assert not provider.messages and not store.documents
 
 
-@pytest.mark.parametrize("authorization", ["", "Basic abc", "Bearer", "Bearer wrong", "Bearer "])
-def test_bad_credentials_never_invoke_provider(authorization: str) -> None:
-    client, provider, _ = client_for()
+def test_local_calls_need_no_login_or_encryption_key() -> None:
+    client, provider, store = client_for(token=None)
     with client:
         assert (
             client.post(
-                "/chat", json={"message": "hello"}, headers={"Authorization": authorization}
+                "/chat", json={"model_profile_id": MODEL_ID, "message": "hello"}
             ).status_code
-            == 401
+            == 200
         )
-    assert not provider.messages
-
-
-def test_repeated_authorization_headers_are_rejected() -> None:
-    client, provider, _ = client_for()
-    with client:
-        response = client.post(
-            "/chat",
-            json={"message": "hello"},
-            headers=[
-                ("Authorization", AUTH["Authorization"]),
-                ("Authorization", AUTH["Authorization"]),
-            ],
-        )
-        assert response.status_code == 401
-    assert not provider.messages
-
-
-def test_liveness_is_public_but_dependencies_and_documents_are_not() -> None:
-    client, provider, _ = client_for(token=None)
-    with client:
-        assert client.get("/health/live").status_code == 200
-        for path in ("/health/ready", "/projects", "/docs", "/openapi.json"):
-            assert client.get(path).status_code == 503
-    assert not provider.messages
-
-
-def test_valid_token_preserves_legacy_chat_and_project_behavior() -> None:
-    client, provider, store = client_for()
-    with client:
-        assert client.post("/chat", json={"message": "hello"}, headers=AUTH).status_code == 200
         assert (
             client.post("/projects", json={"name": "public test"}, headers=AUTH).status_code == 201
         )
@@ -134,7 +110,9 @@ def test_disallowed_origin_is_rejected_even_with_credentials(origin: str) -> Non
     with client:
         assert (
             client.post(
-                "/chat", json={"message": "hello"}, headers={**AUTH, "Origin": origin}
+                "/chat",
+                json={"model_profile_id": MODEL_ID, "message": "hello"},
+                headers={**AUTH, "Origin": origin},
             ).status_code
             == 403
         )
@@ -156,8 +134,17 @@ def test_cors_preflight_does_not_authorize_business_requests() -> None:
         assert preflight.status_code == 200
         assert preflight.headers["access-control-allow-origin"] == headers["Origin"]
         assert "access-control-allow-credentials" not in preflight.headers
-        assert client.post("/chat", json={"message": "hello"}, headers=headers).status_code == 401
-        response = client.post("/chat", json={"message": "hello"}, headers={**headers, **AUTH})
+        assert (
+            client.post(
+                "/chat", json={"model_profile_id": MODEL_ID, "message": "hello"}, headers=headers
+            ).status_code
+            == 200
+        )
+        response = client.post(
+            "/chat",
+            json={"model_profile_id": MODEL_ID, "message": "hello"},
+            headers={**headers, **AUTH},
+        )
         assert response.status_code == 200
         assert response.headers["access-control-allow-origin"] == headers["Origin"]
     assert provider.messages
@@ -169,7 +156,7 @@ def test_forwarded_headers_do_not_bypass_host_or_origin_boundaries() -> None:
         assert (
             client.post(
                 "/chat",
-                json={"message": "hello"},
+                json={"model_profile_id": MODEL_ID, "message": "hello"},
                 headers={**AUTH, "Host": "evil.example", "X-Forwarded-Host": "testserver"},
             ).status_code
             == 400
@@ -177,14 +164,16 @@ def test_forwarded_headers_do_not_bypass_host_or_origin_boundaries() -> None:
         assert (
             client.post(
                 "/chat",
-                json={"message": "hello"},
+                json={"model_profile_id": MODEL_ID, "message": "hello"},
                 headers={**AUTH, "Origin": "https://testserver", "X-Forwarded-Proto": "https"},
             ).status_code
             == 403
         )
         assert (
             client.post(
-                "/chat", json={"message": "hello"}, headers={**AUTH, "Origin": "http://testserver"}
+                "/chat",
+                json={"model_profile_id": MODEL_ID, "message": "hello"},
+                headers={**AUTH, "Origin": "http://testserver"},
             ).status_code
             == 200
         )
@@ -194,7 +183,7 @@ def test_forwarded_headers_do_not_bypass_host_or_origin_boundaries() -> None:
 def production() -> dict[str, object]:
     return {
         "app_env": "production",
-        "experiment_api_token": SecretStr("q9Vb3Wx7Lk2Rh8Ep4Tn6Jc5Ys1Dz0FuA"),
+        "model_encryption_key": SecretStr("q9Vb3Wx7Lk2Rh8Ep4Tn6Jc5Ys1Dz0FuA"),
         "api_allowed_hosts": ["testserver"],
         "database_url": "postgresql+asyncpg://autoscholar:Q7Vr9pW2eK5nB8dX3zM6@postgres/autoscholar",
     }
@@ -203,9 +192,9 @@ def production() -> dict[str, object]:
 @pytest.mark.parametrize(
     "change",
     [
-        {"experiment_api_token": None},
-        {"experiment_api_token": SecretStr("short")},
-        {"experiment_api_token": SecretStr("a" * 40)},
+        {"model_encryption_key": None},
+        {"model_encryption_key": SecretStr("short")},
+        {"model_encryption_key": SecretStr("a" * 40)},
         {"api_allowed_hosts": ["*"]},
         {"database_url": "postgresql+asyncpg://autoscholar:autoscholar@postgres/autoscholar"},
         {"database_url": "not a URL"},
@@ -223,7 +212,7 @@ def test_production_disables_api_docs_and_separates_access_credentials() -> None
     values = production()
     settings = Settings(**values)  # type: ignore[arg-type]
     assert "Q7Vr9pW2" not in repr(settings)
-    token = values.pop("experiment_api_token")
+    token = values.pop("model_encryption_key")
     assert isinstance(token, SecretStr)
     client, _, _ = client_for(token=token, **values)
     with client:
@@ -241,7 +230,7 @@ def test_production_disables_api_docs_and_separates_access_credentials() -> None
 @pytest.mark.parametrize(
     "name",
     [
-        "experiment_api_token",
+        "model_encryption_key",
         "llm_api_key",
         "embedding_api_key",
         "tavily_api_key",
@@ -287,5 +276,5 @@ def test_invalid_boundary_configuration_is_rejected(values: dict[str, object]) -
 
 def test_public_example_loads_with_empty_optional_secret_files() -> None:
     settings = Settings(_env_file=Path(__file__).resolve().parents[1] / ".env.example")  # type: ignore[call-arg]
-    assert settings.llm_api_key_file is None and settings.experiment_api_token_file is None
-    assert not settings.experiment_api_configured and not settings.llm_configured
+    assert settings.llm_api_key_file is None and settings.model_encryption_key_file is None
+    assert not settings.model_encryption_key and not settings.llm_configured

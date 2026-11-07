@@ -1,7 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-const token = 'public-test-fixture-token';
 const time = '2026-11-05T00:00:00Z';
 const target = { id: 'project-delete', name: '可删除项目', description: null, created_at: time, updated_at: time };
 const kept = { ...target, id: 'project-keep', name: '保留项目' };
@@ -13,7 +12,7 @@ async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' = 'suc
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (path === '/api/local-access') return route.fulfill({ status: 404, json: { error: { code: 'not_found' } } });
-    expect(request.headers().authorization).toBe('Bearer ' + token);
+    expect(request.headers().authorization).toBeUndefined();
     if (request.method() === 'DELETE' && path === `/api/workbench/projects/${target.id}`) {
       deletes++;
       if (mode === 'active') return route.fulfill({ status: 409, json: { error: { code: 'project_has_active_tasks' } } });
@@ -23,7 +22,7 @@ async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' = 'suc
     }
     expect(request.method()).toBe('GET');
     if (path === '/api/workbench/session') return route.fulfill({ json: {
-      status: 'connected', authentication: 'single_operator_bearer', api_version: 'fixture',
+      status: 'connected', authentication: 'local', api_version: 'fixture',
       capabilities: { llm_configured: false, web_search_configured: false, research_backend: 'native',
         filesystem_backend: 'native', experiment_backend: 'native', task_streaming: false, project_deletion: true },
     } });
@@ -38,8 +37,6 @@ async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' = 'suc
     throw new Error('Unmocked project request');
   });
   await page.goto('/');
-  await page.getByLabel('操作者 Token', { exact: true }).fill(token);
-  await page.getByRole('button', { name: '连接本地 API' }).click();
   await expect(page.getByRole('link', { name: target.name, exact: true })).toBeVisible();
   return { deletes: () => deletes };
 }

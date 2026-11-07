@@ -3,7 +3,7 @@ import { Alert, Breadcrumb, Button, Descriptions, Empty, Input, Select, Space, T
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError } from './api';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 import { dateLabel, Loading, Metric, PageHeading, QueryError, Status, statusLabels } from './components';
 import type { Project, Task, TaskStatus } from './types';
 import CreateProject from './create-project';

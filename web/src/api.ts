@@ -18,14 +18,14 @@ export class ApiError extends Error {
 const messages: Record<string, string> = {
   model_profile_not_found: '模型配置不存在，请刷新模型列表。',
   model_profile_unavailable: '所选模型已停用或不存在，请重新选择。',
+  model_selection_required: '请先在模型管理中添加并选择模型。',
+  task_type_removed: '旧实验任务类型已移除，请选择当前支持的任务类型。',
+  documents_selection_required: '项目文档分析至少需要一份已就绪的项目 PDF。',
   model_profile_conflict: '该配置编号已用于其他内容，请核对模型列表。',
   model_profile_limit: '最多保存 100 组模型配置。',
-  model_key_unavailable: '模型密钥无法读取；若更换过内部访问凭据，请重新添加模型配置。',
+  model_key_unavailable: '模型密钥无法读取，请检查本地加密配置或重新添加模型。',
   model_usage_unavailable: '用量记录暂不可用，请确认后台存储服务正常后重试。',
-  experiment_auth_required: '操作者 Token 无效，请重新连接。',
-  experiment_api_not_configured: '尚未配置访问凭据，请先完成设置。',
-  local_proxy_not_configured: '本机后台配置尚未就绪，请运行一键启动器后重试。',
-  local_proxy_auth_failed: '本机后台连接尚未就绪，请重新运行一键启动器后重试。',
+  local_access_denied: '本机访问请求被拒绝，请通过本地工作台地址访问。',
   project_not_found: '项目不存在。',
   workbench_task_not_found: '根任务不存在，或链接指向了子任务。',
   workbench_store_unavailable: '任务存储暂不可用。',
@@ -37,7 +37,6 @@ const messages: Record<string, string> = {
   task_output_unavailable: '任务尚未产生可导出的输出。',
   response_too_large: '响应超过安全大小上限。',
   request_validation_error: '输入或查询参数不合法。',
-  documents_selection_required: '请选择 1–100 个已就绪 PDF。',
   write_result_unknown: '请求结果未确认，请先核查；不会自动重试。',
   duplicate_document: '该 PDF 已存在于此项目，请刷新文档列表。',
   invalid_pdf: '文件内容不是 PDF。',
@@ -102,16 +101,11 @@ async function readJSON(response: Response): Promise<unknown> {
 }
 
 export class ApiClient {
-  #token: string | null;
   #active = true;
   #streams = new Set<AbortController>();
-  constructor(token: string | null, private unauthorized: () => void = () => {}) {
-    if (token !== null && !/^[\x21-\x7e]{1,4096}$/.test(token)) throw new ApiError('experiment_auth_required', 401);
-    this.#token = token;
-  }
-  clear(): void { this.#token = null; this.#active = false; for (const stream of this.#streams) stream.abort(); this.#streams.clear(); }
+  constructor(private unauthorized: () => void = () => {}) {}
+  clear(): void { this.#active = false; for (const stream of this.#streams) stream.abort(); this.#streams.clear(); }
   get connected(): boolean { return this.#active; }
-  private authorization(): Record<string, string> { return this.#token === null ? {} : { Authorization: 'Bearer ' + this.#token }; }
 
   async get<T>(path: string, signal?: AbortSignal): Promise<T> {
     return this.request(path, { signal });
@@ -120,7 +114,7 @@ export class ApiClient {
     method?: 'GET' | 'POST' | 'DELETE'; body?: Record<string, unknown> | FormData;
     key?: string; signal?: AbortSignal; timeout?: number; empty?: boolean;
   } = {}): Promise<T> {
-    if (!this.connected) throw new ApiError('experiment_auth_required', 401);
+    if (!this.connected) throw new ApiError('local_access_denied', 401);
     const { method = 'GET', body, key, signal, timeout = 15000, empty = false } = options;
     if (key !== undefined && !/^[A-Za-z0-9._:-]{1,128}$/.test(key)) throw new ApiError('request_validation_error', 422);
     const pathname = path.split('?')[0];
@@ -129,7 +123,7 @@ export class ApiClient {
     let response: Response;
     try {
       const deadline = AbortSignal.timeout(timeout);
-      const headers: Record<string, string> = { ...this.authorization(), Accept: 'application/json' };
+      const headers: Record<string, string> = { Accept: 'application/json' };
       const multipart = body instanceof FormData;
       if (body && !multipart) headers['Content-Type'] = 'application/json';
       if (key) headers['Idempotency-Key'] = key;
@@ -145,10 +139,10 @@ export class ApiClient {
     if (response.status === 401 || response.status === 403) {
       this.clear();
       this.unauthorized();
-      throw new ApiError('experiment_auth_required', response.status,
+      throw new ApiError('local_access_denied', response.status,
                          response.headers.get('x-request-id'));
     }
-    if (!this.connected) throw new ApiError('experiment_auth_required', 401);
+    if (!this.connected) throw new ApiError('local_access_denied', 401);
     if (response.ok && empty) {
       await response.body?.cancel();
       return undefined as T;
@@ -209,17 +203,17 @@ export class ApiClient {
   }
   async downloadMarkdown(id: string, signal?: AbortSignal): Promise<Blob> {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new ApiError('invalid_response');
-    if (!this.connected) throw new ApiError('experiment_auth_required', 401);
+    if (!this.connected) throw new ApiError('local_access_denied', 401);
     const controller = new AbortController(); this.#streams.add(controller);
     const combined = AbortSignal.any([controller.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]);
     let response: Response | undefined;
     try {
       response = await fetch(`/api/workbench/tasks/${id}/output/markdown`, {
-        headers: this.authorization(), signal: combined,
+        headers: {}, signal: combined,
         credentials: 'omit', cache: 'no-store', redirect: 'error',
       });
       if ([401, 403].includes(response.status)) {
-        this.clear(); this.unauthorized(); throw new ApiError('experiment_auth_required', response.status);
+        this.clear(); this.unauthorized(); throw new ApiError('local_access_denied', response.status);
       }
       if (!response.ok) {
         const payload = await readJSON(response) as { error?: { code?: unknown } };
@@ -237,13 +231,13 @@ export class ApiClient {
           chunks.push(new Uint8Array(chunk.value));
         }
       } finally { await reader.cancel(); reader.releaseLock(); }
-      if (!this.connected) throw new ApiError('experiment_auth_required', 401);
+      if (!this.connected) throw new ApiError('local_access_denied', 401);
       if (combined.aborted) throw combined.reason;
       return new Blob(chunks, { type: 'text/markdown;charset=utf-8' });
     } catch (error) {
       if (error instanceof ApiError) throw error;
       if (signal?.aborted) throw signal.reason;
-      throw new ApiError(this.connected ? 'network_unavailable' : 'experiment_auth_required');
+      throw new ApiError(this.connected ? 'network_unavailable' : 'local_access_denied');
     } finally { await response?.body?.cancel().catch(() => {}); this.#streams.delete(controller); }
   }
   documents(projectId: string, page: number, signal?: AbortSignal): Promise<Page<PDFDocument>> {
@@ -311,17 +305,17 @@ export class ApiClient {
     if (!isArtifact(artifact) || !/^[A-Za-z0-9_-]{1,64}$/.test(id) || !/^[A-Za-z0-9_-]{1,64}$/.test(artifact.id)) {
       throw new ApiError('artifact_manifest_invalid');
     }
-    if (!this.connected) throw new ApiError('experiment_auth_required', 401);
+    if (!this.connected) throw new ApiError('local_access_denied', 401);
     const controller = new AbortController(); this.#streams.add(controller);
     const combined = AbortSignal.any([controller.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]);
     let response: Response | undefined;
     try {
       response = await fetch(`/api/workbench/tasks/${id}/resources/artifacts/${artifact.id}/content`, {
-        headers: this.authorization(), signal: combined,
+        headers: {}, signal: combined,
         credentials: 'omit', cache: 'no-store', redirect: 'error',
       });
       if ([401, 403].includes(response.status)) {
-        this.clear(); this.unauthorized(); throw new ApiError('experiment_auth_required', response.status);
+        this.clear(); this.unauthorized(); throw new ApiError('local_access_denied', response.status);
       }
       if (!response.ok) {
         const payload = await readJSON(response) as { error?: { code?: unknown } };
@@ -344,13 +338,13 @@ export class ApiClient {
       const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
         .map((byte) => byte.toString(16).padStart(2, '0')).join('');
       if (size !== artifact.size_bytes || digest !== artifact.sha256) throw new ApiError('artifact_integrity_failed');
-      if (!this.connected) throw new ApiError('experiment_auth_required', 401);
+      if (!this.connected) throw new ApiError('local_access_denied', 401);
       if (combined.aborted) throw combined.reason;
       return new Blob([bytes], { type: artifact.media_type });
     } catch (error) {
       if (error instanceof ApiError) throw error;
       if (signal?.aborted) throw signal.reason;
-      throw new ApiError(this.connected ? 'network_unavailable' : 'experiment_auth_required');
+      throw new ApiError(this.connected ? 'network_unavailable' : 'local_access_denied');
     } finally {
       await response?.body?.cancel().catch(() => {});
       this.#streams.delete(controller);
@@ -387,7 +381,7 @@ export class ApiClient {
         && (before === undefined || value.items.every((item) => item.sequence < before)), signal);
   }
   async stream(id: string, after: number, signal: AbortSignal, receive: (message: StreamMessage) => void): Promise<void> {
-    if (!this.connected) throw new ApiError('experiment_auth_required', 401);
+    if (!this.connected) throw new ApiError('local_access_denied', 401);
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || !Number.isSafeInteger(after) || after < 0) throw new ApiError('event_cursor_invalid', 422);
     const controller = new AbortController(); this.#streams.add(controller);
     const abort = () => controller.abort();
@@ -396,12 +390,12 @@ export class ApiClient {
     let timer = setTimeout(abort, 15000);
     try {
       const response = await fetch(`/api/workbench/tasks/${encodeURIComponent(id)}/stream`, {
-        headers: { ...this.authorization(), Accept: 'text/event-stream', 'Last-Event-ID': String(after) },
+        headers: { Accept: 'text/event-stream', 'Last-Event-ID': String(after) },
         credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
       });
       clearTimeout(timer);
       timer = setTimeout(abort, 35000);
-      if (response.status === 401 || response.status === 403) { this.clear(); this.unauthorized(); throw new ApiError('experiment_auth_required', response.status); }
+      if (response.status === 401 || response.status === 403) { this.clear(); this.unauthorized(); throw new ApiError('local_access_denied', response.status); }
       if (!this.connected || signal.aborted) throw new DOMException('Aborted', 'AbortError');
       if (!response.ok) {
         const payload = await readJSON(response) as { error?: { code?: unknown } };

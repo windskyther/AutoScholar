@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Descriptions, Empty, Modal, Space, Table, Tabs, Tag } from 'antd';
 import { useQuery } from '@tanstack/react-query';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 import { errorMessage } from './api';
 import { Loading, QueryError } from './components';
 import { safeExternalURL } from './resource-guards';

@@ -10,8 +10,6 @@ test.describe.configure({ mode: 'serial' });
 
 async function connect(page: Page) {
   await page.goto('/');
-  await page.getByLabel('操作者 Token', { exact: true }).fill(TOKEN);
-  await page.getByRole('button', { name: '连接本地 API' }).click();
   await expect(page.getByRole('link', { name: '中文研究项目' })).toBeVisible();
 }
 async function process(request: APIRequestContext) {

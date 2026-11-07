@@ -65,6 +65,11 @@ async def ready(request: Request) -> ReadyResponse | JSONResponse:
     llm_status: Literal["ok", "not_configured"] = (
         "ok" if request.app.state.llm_provider.configured else "not_configured"
     )
+    profiles = getattr(request.app.state, "model_profiles", None)
+    if profiles is not None and database_status.status == "ok":
+        llm_status = (
+            "ok" if any(item.enabled for item in await profiles.list()) else "not_configured"
+        )
     research_services = request.app.state.research_services
     research_capabilities = {
         f"{service.source_type}_search": DependencyStatus(

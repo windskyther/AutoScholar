@@ -14,7 +14,7 @@ x-runtime: &runtime
     QDRANT_URL: http://qdrant:6333
     QDRANT_COLLECTION: phase9_public_fixture
     EMBEDDING_DIMENSIONS: '8'
-    EXPERIMENT_API_TOKEN: public-phase9g-token
+    MODEL_ENCRYPTION_KEY: public-phase9g-token
     LLM_API_KEY: public-offline-placeholder
     LLM_MODEL: offline-scripted-coordinator
     LLM_BASE_URL: http://unreachable.invalid

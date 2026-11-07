@@ -20,7 +20,8 @@ from autoscholar.core.config import Settings
 from autoscholar.experiment.models import ExperimentSpecification
 from autoscholar.rag.models import RetrievalMode
 from tests.api_credentials import AUTH, TOKEN_SECRET
-from tests.governance import offline_app
+from tests.managed_fixture import MODEL_ID
+from tests.managed_fixture import managed_offline_app as offline_app
 from tests.test_chat import SuccessfulProvider
 from tests.test_health import FakeDependency
 
@@ -223,7 +224,7 @@ class FailingAgentBackend(FakeAgentBackend):
 def client_with_backend(backend: FakeAgentBackend) -> TestClient:
     return TestClient(
         offline_app(
-            Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
+            Settings(llm_api_key=None, llm_model=None, model_encryption_key=TOKEN_SECRET),
             database=FakeDependency(),
             redis=FakeDependency(),
             llm_provider=SuccessfulProvider(),
@@ -239,7 +240,7 @@ def test_post_agent_run_returns_plan_answer_trace_and_metrics() -> None:
     with client_with_backend(backend) as client:
         response = client.post(
             "/agent/run",
-            json={"objective": "  Calculate 2+2  "},
+            json={"model_profile_id": MODEL_ID, "objective": "  Calculate 2+2  "},
             headers={"X-Request-ID": "agent-request"},
         )
 
@@ -265,6 +266,7 @@ def test_post_agent_run_passes_explicit_mode_to_runner() -> None:
         response = client.post(
             "/agent/run",
             json={
+                "model_profile_id": MODEL_ID,
                 "objective": "Research LoRA",
                 "mode": "research",
                 "research_sources": ["web"],
@@ -281,7 +283,11 @@ def test_post_agent_run_accepts_coding_mode() -> None:
     with client_with_backend(backend) as client:
         response = client.post(
             "/agent/run",
-            json={"objective": "Create a tested Python module", "mode": "coding"},
+            json={
+                "model_profile_id": MODEL_ID,
+                "objective": "Create a tested Python module",
+                "mode": "coding",
+            },
         )
 
     assert response.status_code == 200
@@ -289,10 +295,10 @@ def test_post_agent_run_accepts_coding_mode() -> None:
     assert backend.mode == "coding"
 
 
-def test_post_agent_run_requires_token_for_experiment_mode() -> None:
+def test_retired_experiment_mode_is_rejected_without_execution() -> None:
     backend = FakeAgentBackend(replace(completed_task(), mode="experiment"))
     app = offline_app(
-        Settings(experiment_api_token=SecretStr("long-test-token")),
+        Settings(model_encryption_key=SecretStr("long-test-token")),
         database=FakeDependency(),
         redis=FakeDependency(),
         llm_provider=SuccessfulProvider(),
@@ -318,14 +324,14 @@ def test_post_agent_run_requires_token_for_experiment_mode() -> None:
         )
         invalid_mode = client.post(
             "/agent/run",
-            json={**payload, "mode": "compute"},
+            json={"model_profile_id": MODEL_ID, **payload, "mode": "compute"},
             headers={"Authorization": "Bearer long-test-token"},
         )
 
-    assert unauthorized.status_code == 401
-    assert authorized.status_code == 200
-    assert authorized.json()["mode"] == "experiment"
-    assert backend.mode == "experiment"
+    assert unauthorized.status_code == 422
+    assert authorized.status_code == 422
+    assert authorized.json()["error"]["code"] == "task_type_removed"
+    assert backend.mode is None
     assert invalid_mode.status_code == 422
 
 
@@ -333,11 +339,19 @@ def test_post_agent_run_rejects_duplicate_or_empty_research_sources() -> None:
     with client_with_backend(FakeAgentBackend(completed_task())) as client:
         duplicate = client.post(
             "/agent/run",
-            json={"objective": "Research LoRA", "research_sources": ["web", "web"]},
+            json={
+                "model_profile_id": MODEL_ID,
+                "objective": "Research LoRA",
+                "research_sources": ["web", "web"],
+            },
         )
         empty = client.post(
             "/agent/run",
-            json={"objective": "Research LoRA", "research_sources": []},
+            json={
+                "model_profile_id": MODEL_ID,
+                "objective": "Research LoRA",
+                "research_sources": [],
+            },
         )
 
     assert duplicate.status_code == 422
@@ -381,7 +395,9 @@ def test_get_agent_task_returns_stable_404() -> None:
 
 def test_post_agent_run_validates_objective() -> None:
     with client_with_backend(FakeAgentBackend(completed_task())) as client:
-        response = client.post("/agent/run", json={"objective": "   "})
+        response = client.post(
+            "/agent/run", json={"model_profile_id": MODEL_ID, "objective": "   "}
+        )
 
     assert response.status_code == 422
 
@@ -390,7 +406,7 @@ def test_post_agent_run_rejects_unknown_mode() -> None:
     with client_with_backend(FakeAgentBackend(completed_task())) as client:
         response = client.post(
             "/agent/run",
-            json={"objective": "Research LoRA", "mode": "unknown"},
+            json={"model_profile_id": MODEL_ID, "objective": "Research LoRA", "mode": "unknown"},
         )
 
     assert response.status_code == 422
@@ -399,7 +415,9 @@ def test_post_agent_run_rejects_unknown_mode() -> None:
 
 def test_agent_error_response_carries_persisted_task_id() -> None:
     with client_with_backend(FailingAgentBackend(None)) as client:
-        response = client.post("/agent/run", json={"objective": "Calculate 2+2"})
+        response = client.post(
+            "/agent/run", json={"model_profile_id": MODEL_ID, "objective": "Calculate 2+2"}
+        )
 
     assert response.status_code == 502
     assert response.json()["error"] == {
@@ -417,7 +435,9 @@ def test_agent_response_explicitly_declares_utf8_and_preserves_chinese() -> None
         answer="函数严格递增",
     )
     with client_with_backend(FakeAgentBackend(task)) as client:
-        response = client.post("/agent/run", json={"objective": "分析函数"})
+        response = client.post(
+            "/agent/run", json={"model_profile_id": MODEL_ID, "objective": "分析函数"}
+        )
 
     assert response.headers["content-type"] == "application/json; charset=utf-8"
     decoded = response.content.decode("utf-8")
@@ -432,7 +452,7 @@ def test_coding_workspace_manifest_and_utf8_file_api(tmp_path: Path) -> None:
     manager.initialize(task.id)
     created = manager.write_text(task.id, "模型.py", "print('训练完成')\n")
     app = offline_app(
-        Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
+        Settings(llm_api_key=None, llm_model=None, model_encryption_key=TOKEN_SECRET),
         database=FakeDependency(),
         redis=FakeDependency(),
         llm_provider=SuccessfulProvider(),

@@ -6,8 +6,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from autoscholar.agent.records import ResolvedAgentMode, TaskStatus
+from autoscholar.api.artifact_models import ArtifactResponse, ExperimentResponse
 from autoscholar.api.routes.agent import AgentMetricsResponse, EvidenceResponse
-from autoscholar.api.routes.experiments import ArtifactResponse, ExperimentResponse
 from autoscholar.core.budget import BudgetLimits
 from autoscholar.experiment.models import ExperimentSpecification
 from autoscholar.orchestration.approvals import ApprovalDecision
@@ -112,7 +112,7 @@ class FamilyArtifactResponse(BaseModel):
 
 class WorkbenchSessionResponse(BaseModel):
     status: str = "connected"
-    authentication: str = "single_operator_bearer"
+    authentication: str = "local"
     api_version: str
     capabilities: dict[str, Any]
 

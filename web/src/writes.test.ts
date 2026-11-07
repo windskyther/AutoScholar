@@ -21,22 +21,22 @@ describe('explicit browser writes', () => {
   it('deletes a project with authentication and accepts an empty success response', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetcher);
-    await new ApiClient('test-token').deleteProject('project-a');
+    await new ApiClient().deleteProject('project-a');
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls[0][0]).toBe('/api/workbench/projects/project-a');
-    expect(fetcher.mock.calls[0][1]).toMatchObject({ method: 'DELETE', credentials: 'omit', headers: { Authorization: 'Bearer test-token' } });
+    expect(fetcher.mock.calls[0][1]).toMatchObject({ method: 'DELETE', credentials: 'omit', headers: { } });
   });
   it('retains an uncertain delete outcome without retrying the request', async () => {
     const fetcher = vi.fn().mockResolvedValue(json({ error: { code: 'internal_error' } }, 500));
     vi.stubGlobal('fetch', fetcher);
-    try { await new ApiClient('test-token').deleteProject('project-a'); throw new Error('Expected failure'); }
+    try { await new ApiClient().deleteProject('project-a'); throw new Error('Expected failure'); }
     catch (error) { expect(isWriteUncertain(error)).toBe(true); }
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it('creates projects using authenticated JSON without automatic retries', async () => {
     const fetcher = vi.fn().mockResolvedValue(json({ id: 'project-a', name: '中文项目', description: null, created_at: time, updated_at: time }, 201));
     vi.stubGlobal('fetch', fetcher);
-    await new ApiClient('test-token').createProject(' 中文项目 ', ' ');
+    await new ApiClient().createProject(' 中文项目 ', ' ');
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls[0][1]).toMatchObject({ method: 'POST', credentials: 'omit', cache: 'no-store' });
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ name: '中文项目', description: null });
@@ -45,13 +45,13 @@ describe('explicit browser writes', () => {
     const fetcher = vi.fn().mockResolvedValue(json(document, 202));
     vi.stubGlobal('fetch', fetcher);
     const file = new File(['%PDF-1.4\npublic'], 'paper.pdf', { type: 'application/pdf' });
-    await new ApiClient('test-token').uploadPDF('project-a', file, ' 中文标题 ', 1024);
+    await new ApiClient().uploadPDF('project-a', file, ' 中文标题 ', 1024);
     const options = fetcher.mock.calls[0][1];
     expect(options.method).toBe('POST');
     expect(options.body).toBeInstanceOf(FormData);
     expect(options.body.get('title')).toBe('中文标题');
     expect(options.headers['Content-Type']).toBeUndefined();
-    expect(options.headers.Authorization).toBe('Bearer test-token');
+    expect(options.headers.Authorization).toBeUndefined();
   });
   it.each([
     [new File(['secret'], '.env'), 'unsupported_document_type'],
@@ -60,17 +60,17 @@ describe('explicit browser writes', () => {
     [new File(['%PDF-1.4'], 'wrong.pdf', { type: 'text/html' }), 'unsupported_document_type'],
   ])('rejects invalid upload locally without a request', async (file, code) => {
     const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
-    await expect(new ApiClient('test-token').uploadPDF('project-a', file as File, '', 1024)).rejects.toMatchObject({ code });
+    await expect(new ApiClient().uploadPDF('project-a', file as File, '', 1024)).rejects.toMatchObject({ code });
     expect(fetcher).not.toHaveBeenCalled();
   });
   it('rejects documents belonging to another project before rendering', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ items: [{ ...document, project_id: 'foreign' }], total: 1, limit: 20, offset: 0 })));
-    await expect(new ApiClient('test-token').documents('project-a', 1)).rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(new ApiClient().documents('project-a', 1)).rejects.toMatchObject({ code: 'invalid_response' });
   });
   it('handles the empty asynchronous delete response', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
     vi.stubGlobal('fetch', fetcher);
-    await expect(new ApiClient('test-token').deleteDocument('project-a', 'doc-a')).resolves.toBeUndefined();
+    await expect(new ApiClient().deleteDocument('project-a', 'doc-a')).resolves.toBeUndefined();
     expect(fetcher.mock.calls[0][0]).toBe('/api/workbench/projects/project-a/documents/doc-a');
     expect(fetcher.mock.calls[0][1].method).toBe('DELETE');
   });
@@ -79,7 +79,7 @@ describe('explicit browser writes', () => {
       task_id: 'task-a', status: 'queued', created: false, status_url: '/workbench/agent/tasks/task-a',
     }, 202));
     vi.stubGlobal('fetch', fetcher);
-    const client = new ApiClient('test-token');
+    const client = new ApiClient();
     await expect(client.submitTask(payload, 'original-key')).rejects.toMatchObject({ code: 'write_result_unknown' });
     expect(fetcher).toHaveBeenCalledTimes(1);
     await expect(client.submitTask(payload, 'original-key')).resolves.toMatchObject({ task_id: 'task-a', created: false });
@@ -90,18 +90,18 @@ describe('explicit browser writes', () => {
   });
   it.each([{}, { task_id: 'task-a' }])('treats invalid success receipts as uncertain, not safe failure', async (value) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(value, 202)));
-    await expect(new ApiClient('test-token').submitTask(payload, 'key')).rejects.toMatchObject({ code: 'write_result_unknown' });
+    await expect(new ApiClient().submitTask(payload, 'key')).rejects.toMatchObject({ code: 'write_result_unknown' });
   });
   it('marks server failures as uncertain without automatic re-execution', async () => {
     const fetcher = vi.fn().mockResolvedValue(json({ error: { code: 'internal_error' } }, 500));
     vi.stubGlobal('fetch', fetcher);
-    try { await new ApiClient('test-token').submitTask(payload, 'key'); throw new Error('Expected error'); }
+    try { await new ApiClient().submitTask(payload, 'key'); throw new Error('Expected error'); }
     catch (error) { expect(isWriteUncertain(error)).toBe(true); }
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it('rejects invalid idempotency headers before network access', async () => {
     const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
-    await expect(new ApiClient('test-token').submitTask(payload, 'bad\nkey')).rejects.toMatchObject({ code: 'request_validation_error' });
+    await expect(new ApiClient().submitTask(payload, 'bad\nkey')).rejects.toMatchObject({ code: 'request_validation_error' });
     expect(fetcher).not.toHaveBeenCalled();
   });
 });

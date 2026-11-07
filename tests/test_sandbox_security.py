@@ -135,7 +135,7 @@ def test_separate_secret_file_is_bounded_and_never_echoed(tmp_path: Path) -> Non
         ManagerSettings(sandbox_manager_token_file=path, sandbox_manager_token=TOKEN_SECRET)
     assert TOKEN not in str(exc.value)
     with pytest.raises(ValidationError):
-        Settings(sandbox_manager_token=TOKEN_SECRET, experiment_api_token=TOKEN_SECRET)
+        Settings(sandbox_manager_token=TOKEN_SECRET, model_encryption_key=TOKEN_SECRET)
     path.write_bytes(b"a" * 4097)
     with pytest.raises(ValidationError):
         ManagerSettings(sandbox_manager_token_file=path)

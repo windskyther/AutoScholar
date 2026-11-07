@@ -53,7 +53,7 @@ async def context(tmp_path: Path) -> AsyncIterator[tuple[httpx.AsyncClient, Dura
         )
         await session.commit()
     app = offline_app(
-        Settings(_env_file=None, experiment_api_token=SecretStr("public-control-test-token")),  # type: ignore[call-arg]
+        Settings(_env_file=None, model_encryption_key=SecretStr("public-control-test-token")),  # type: ignore[call-arg]
         database=FakeDependency(),
         redis=FakeDependency(),
         qdrant=FakeDependency(),
@@ -94,10 +94,16 @@ async def test_header_auth_and_root_scope(
 ) -> None:
     client, _, task_id = context
     path = f"/workbench/tasks/{task_id}/{endpoint}"
-    assert (await client.get(path)).status_code == 401
     assert (
-        await client.get(path, params={"token": "public-control-test-token"})
-    ).status_code == 401
+        await client.get(path, headers={"Origin": "https://foreign.invalid"})
+    ).status_code == 403
+    assert (
+        await client.get(
+            path,
+            params={"token": "public-control-test-token"},
+            headers={"Origin": "https://foreign.invalid"},
+        )
+    ).status_code == 403
     for task in ("child", "missing"):
         assert (
             await client.get(f"/workbench/tasks/{task}/{endpoint}", headers=AUTH)
@@ -114,7 +120,9 @@ async def test_legacy_no_controls_and_auth_on_mutations(
         f"/workbench/tasks/{task_id}/control/cancel",
         f"/workbench/tasks/{task_id}/approvals/fake/decision",
     ):
-        assert (await client.post(path, json={})).status_code == 401
+        assert (
+            await client.post(path, json={}, headers={"Origin": "https://foreign.invalid"})
+        ).status_code == 403
     assert (
         await client.post(
             "/workbench/tasks/child/control/cancel",

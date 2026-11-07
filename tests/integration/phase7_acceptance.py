@@ -29,7 +29,7 @@ async def main(prepare: bool, task_id: str | None) -> None:
     token = secrets.token_urlsafe(32)
     settings = Settings().model_copy(
         update={
-            "experiment_api_token": SecretStr(token),
+            "model_encryption_key": SecretStr(token),
             "workflow_approval_threshold": 0,
         }
     )

@@ -5,7 +5,6 @@ from urllib.parse import urlsplit
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from autoscholar.api.experiment_auth import require_experiment_token
 from autoscholar.core.config import Settings
 from autoscholar.core.errors import AppError
 from autoscholar.core.responses import UTF8JSONResponse
@@ -39,7 +38,6 @@ async def _reject(request: Request, exc: AppError, receive: Receive, send: Send)
             "error": {"code": exc.code, "message": exc.message},
             "request_id": getattr(request.state, "request_id", "unknown"),
         },
-        headers={"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None,
     )(request.scope, receive, send)
 
 
@@ -90,33 +88,4 @@ class APIBoundaryMiddleware:
                 )
                 return
         # Forwarded/X-Forwarded-* never replace Host or Origin at this boundary.
-        await self.app(scope, receive, send)
-
-
-class APIAuthenticationMiddleware:
-    def __init__(self, app: ASGIApp, *, settings: Settings) -> None:
-        self.app, self.settings = app, settings
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-        public = scope["path"] == "/health/live" and scope["method"] in {"GET", "HEAD"}
-        if public:
-            await self.app(scope, receive, send)
-            return
-        request = Request(scope)
-        try:
-            if len(request.headers.getlist("authorization")) != 1:
-                # Preserve the existing unconfigured-service diagnostic.
-                require_experiment_token(request)
-                raise AppError(
-                    status_code=401,
-                    code="experiment_auth_required",
-                    message="A single Bearer token is required",
-                )
-            require_experiment_token(request)
-        except AppError as exc:
-            await _reject(request, exc, receive, send)
-            return
         await self.app(scope, receive, send)

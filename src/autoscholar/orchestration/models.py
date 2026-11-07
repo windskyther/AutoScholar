@@ -4,7 +4,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from autoscholar.experiment.models import ExperimentSpecification
 
-WorkflowKind = Literal["research", "experiment"]
+WorkflowKind = Literal[
+    "research",
+    "literature_review",
+    "comparison",
+    "research_proposal",
+    "document_analysis",
+    "experiment",
+]
 
 
 class StrictModel(BaseModel):

@@ -19,6 +19,7 @@ from autoscholar.orchestration.durable_models import (
     WorkflowEventRow,
     WorkflowJobRow,
 )
+from autoscholar.orchestration.task_types import is_research
 from autoscholar.rag.database_models import DocumentRow, ProjectRow
 
 TERMINAL = {"succeeded", "failed", "budget_exceeded", "cancelled"}
@@ -139,7 +140,9 @@ class DurableRepository:
             )
         )
 
-    async def enqueue(self, snapshot: Snapshot, key: str, request_hash: str) -> tuple[str, bool]:
+    async def enqueue(
+        self, snapshot: Snapshot, key: str, request_hash: str, *, require_managed: bool = False
+    ) -> tuple[str, bool]:
         async with self.sessions() as session:
             existing = await session.scalar(
                 select(WorkflowJobRow).where(WorkflowJobRow.idempotency_key == key)
@@ -148,6 +151,27 @@ class DurableRepository:
                 if existing.request_sha256 != request_hash:
                     raise conflict("idempotency_conflict", "Key was used with a different request")
                 return existing.task_id, False
+            if require_managed:
+                if not snapshot.model_profile_id:
+                    raise AppError(
+                        status_code=422,
+                        code="model_selection_required",
+                        message="Select a managed model",
+                    )
+                if not is_research(snapshot.workflow_kind):
+                    raise AppError(
+                        status_code=422,
+                        code="task_type_removed",
+                        message="Choose a supported task type",
+                    )
+                if snapshot.workflow_kind == "document_analysis" and (
+                    not snapshot.project_id or snapshot.document_ids == []
+                ):
+                    raise AppError(
+                        status_code=422,
+                        code="documents_selection_required",
+                        message="Select project documents",
+                    )
             if snapshot.model_profile_id:
                 profile = await session.scalar(
                     select(ModelProfileRow)
@@ -176,7 +200,7 @@ class DurableRepository:
                         status_code=404, code="project_not_found", message="Project not found"
                     )
             if (
-                snapshot.workflow_kind == "research"
+                is_research(snapshot.workflow_kind)
                 and snapshot.project_id is not None
                 and snapshot.document_ids is None
             ):
@@ -207,6 +231,16 @@ class DurableRepository:
                         code="selected_documents_unavailable",
                         message="Selected documents must be ready and belong to the project",
                     )
+            if (
+                require_managed
+                and snapshot.workflow_kind == "document_analysis"
+                and not snapshot.document_ids
+            ):
+                raise AppError(
+                    status_code=422,
+                    code="documents_selection_required",
+                    message="Project documents are required",
+                )
             session.add(
                 AgentTaskRow(
                     id=snapshot.task_id,

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     )
 
     app_env: Literal["development", "test", "production"] = "development"
-    app_host: str = "0.0.0.0"
+    app_host: str = "127.0.0.1"
     app_port: int = Field(default=8000, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     api_allowed_hosts: list[str] = Field(default_factory=lambda: ["*"])
@@ -104,7 +104,7 @@ class Settings(BaseSettings):
     mcp_research_url: str = "http://research-mcp:8091/mcp"
     mcp_service_token: SecretStr | None = None
     mcp_timeout_seconds: float = Field(default=25, gt=0, le=120)
-    experiment_api_token_file: Path | None = None
+    model_encryption_key_file: Path | None = None
     llm_api_key_file: Path | None = None
     embedding_api_key_file: Path | None = None
     tavily_api_key_file: Path | None = None
@@ -113,7 +113,7 @@ class Settings(BaseSettings):
     mcp_service_token_file: Path | None = None
 
     @field_validator(
-        "experiment_api_token_file",
+        "model_encryption_key_file",
         "llm_api_key_file",
         "embedding_api_key_file",
         "tavily_api_key_file",
@@ -129,7 +129,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def load_secret_files(self) -> "Settings":
         for name in (
-            "experiment_api_token",
+            "model_encryption_key",
             "llm_api_key",
             "embedding_api_key",
             "tavily_api_key",
@@ -259,7 +259,7 @@ class Settings(BaseSettings):
         if self.sandbox_manager_token is not None:
             value = self.sandbox_manager_token.get_secret_value()
             for name in (
-                "experiment_api_token",
+                "model_encryption_key",
                 "llm_api_key",
                 "embedding_api_key",
                 "tavily_api_key",
@@ -275,7 +275,7 @@ class Settings(BaseSettings):
     sandbox_timeout_seconds: int = Field(default=300, ge=1, le=600)
     sandbox_max_repairs: int = Field(default=3, ge=0, le=10)
     experiment_timeout_seconds: int = Field(default=600, ge=30, le=600)
-    experiment_api_token: SecretStr | None = None
+    model_encryption_key: SecretStr | None = None
     autonomous_budget: BudgetLimits = Field(default_factory=BudgetLimits)
     workflow_worker_poll_seconds: float = Field(default=2, gt=0, le=60)
     workflow_job_lease_seconds: int = Field(default=30, ge=6, le=300)
@@ -285,14 +285,14 @@ class Settings(BaseSettings):
     def validate_production_security(self) -> "Settings":
         if self.app_env != "production":
             return self
-        token = self.experiment_api_token.get_secret_value() if self.experiment_api_token else ""
+        token = self.model_encryption_key.get_secret_value() if self.model_encryption_key else ""
         if (
             len(token) < 32
             or len(set(token)) < 8
             or any(char.isspace() for char in token)
             or any(word in token.casefold() for word in ("changeme", "placeholder", "replace-me"))
         ):
-            raise ValueError("Production requires a strong EXPERIMENT_API_TOKEN (32+ characters)")
+            raise ValueError("Production requires a strong MODEL_ENCRYPTION_KEY (32+ characters)")
         if "*" in self.api_allowed_hosts:
             raise ValueError("Production requires explicit API_ALLOWED_HOSTS")
         try:
@@ -314,7 +314,7 @@ class Settings(BaseSettings):
                 "Production requires PostgreSQL with a non-default strong password"
             ) from None
         if password == token:
-            raise ValueError("The API access token must be distinct from database credentials")
+            raise ValueError("The model encryption key must be distinct from database credentials")
         for origin in self.api_allowed_origins:
             parsed = urlsplit(origin)
             if parsed.scheme != "https" and parsed.hostname not in {
@@ -333,12 +333,10 @@ class Settings(BaseSettings):
         ):
             secret = getattr(self, name)
             if secret is not None and secret.get_secret_value() == token:
-                raise ValueError("The API access token must be distinct from service credentials")
+                raise ValueError(
+                    "The model encryption key must be distinct from service credentials"
+                )
         return self
-
-    @property
-    def experiment_api_configured(self) -> bool:
-        return bool(self.experiment_api_token and self.experiment_api_token.get_secret_value())
 
     @property
     def llm_configured(self) -> bool:

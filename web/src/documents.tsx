@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { Alert, Button, Empty, Form, Input, Modal, Space, Table, Tag } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { errorMessage, isWriteUncertain } from './api';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 import { dateLabel, Loading, QueryError } from './components';
 import type { DocumentStatus, PDFDocument } from './types';
 

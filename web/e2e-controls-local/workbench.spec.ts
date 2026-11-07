@@ -9,8 +9,6 @@ async function connect(page: Page, request: APIRequestContext): Promise<string> 
   const seeded = await request.post(base + '/__fixture/control-seed', { headers }); expect(seeded.status()).toBe(200);
   const id: string = (await seeded.json()).task_id;
   await page.goto('/');
-  await page.getByLabel('操作者 Token', { exact: true }).fill(TOKEN);
-  await page.getByRole('button', { name: '连接本地 API' }).click();
   await page.getByRole('link', { name: '中文研究项目' }).click();
   await page.locator(`a[href="/projects/project-a/tasks/${id}"]`).click();
   await expect(page.getByRole('heading', { name: '任务控制与审批' })).toBeVisible();

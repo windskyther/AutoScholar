@@ -3,7 +3,7 @@ import { Alert, Button, Form, Input, Modal } from 'antd';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { errorMessage, isWriteUncertain } from './api';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 
 export default function CreateProject() {
   const { api } = useConnection();

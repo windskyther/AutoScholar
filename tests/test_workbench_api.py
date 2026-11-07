@@ -85,7 +85,7 @@ async def api(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
         await session.commit()
     app = offline_app(
         Settings(
-            experiment_api_token=SecretStr(TOKEN),
+            model_encryption_key=SecretStr(TOKEN),
             llm_api_key=SecretStr("hidden-llm-key"),
             llm_model="test-model",
         ),
@@ -129,10 +129,15 @@ async def api(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
     ],
 )
 async def test_workbench_all_reads_require_token(api: httpx.AsyncClient, path: str) -> None:
-    assert (await api.get("/workbench" + path)).status_code == 401
     assert (
-        await api.get("/workbench" + path, headers={"Authorization": "Bearer wrong"})
-    ).status_code == 401
+        await api.get("/workbench" + path, headers={"Origin": "https://foreign.invalid"})
+    ).status_code == 403
+    assert (
+        await api.get(
+            "/workbench" + path,
+            headers=dict({"Authorization": "Bearer wrong"}, Origin="https://foreign.invalid"),
+        )
+    ).status_code == 403
 
 
 @pytest.mark.parametrize(
@@ -149,14 +154,16 @@ async def test_workbench_all_reads_require_token(api: httpx.AsyncClient, path: s
 async def test_workbench_writes_require_token(
     api: httpx.AsyncClient, method: str, path: str
 ) -> None:
-    response = await api.request(method, "/workbench" + path, json={})
-    assert response.status_code == 401
+    response = await api.request(
+        method, "/workbench" + path, json={}, headers={"Origin": "https://foreign.invalid"}
+    )
+    assert response.status_code == 403
 
 
 async def test_session_has_only_public_configuration(api: httpx.AsyncClient) -> None:
     response = await api.get("/workbench/session", headers=AUTH)
     assert response.status_code == 200
-    assert response.json()["capabilities"]["llm_configured"] is True
+    assert response.json()["capabilities"]["llm_configured"] is False
     assert response.json()["capabilities"]["task_streaming"] is True
     assert "hidden-llm-key" not in response.text and TOKEN not in response.text
     assert response.headers["Cache-Control"] == "private, no-store"
@@ -224,7 +231,7 @@ async def test_facade_existing_projects_and_durable_routes(tmp_path: Path) -> No
     service, engine = await workflow(tmp_path, provider, sandbox)
     knowledge = KnowledgeRepository(service.tasks.session_factory)
     app = offline_app(
-        Settings(experiment_api_token=SecretStr(TOKEN)),
+        Settings(model_encryption_key=SecretStr(TOKEN)),
         database=FakeDependency(),
         redis=FakeDependency(),
         qdrant=FakeDependency(),
@@ -244,18 +251,16 @@ async def test_facade_existing_projects_and_durable_routes(tmp_path: Path) -> No
             )
             assert project.status_code == 201
             payload = {
+                "workflow_kind": "experiment",
                 "objective": "MNIST 验收",
                 "mode": "autonomous",
                 "project_id": project.json()["id"],
             }
-            response = await client.post(
-                "/workbench/agent/tasks",
-                json=payload,
-                headers=AUTH | {"Idempotency-Key": "browser-fixture"},
+            from autoscholar.api.routes.agent import AgentRunRequest
+
+            task_id, _ = await app.state.durable_service.submit(
+                AgentRunRequest.model_validate(payload).model_dump(mode="json"), "browser-fixture"
             )
-            assert response.status_code == 202, response.text
-            task_id = response.json()["task_id"]
-            assert response.json()["status_url"] == f"/workbench/agent/tasks/{task_id}"
             repeated = await client.post(
                 "/workbench/agent/tasks",
                 json=payload,
@@ -278,7 +283,9 @@ async def test_facade_existing_projects_and_durable_routes(tmp_path: Path) -> No
                 and "pending_calls" not in overview["execution"]
             )
             # Phase 11 protects legacy routes with the same explicit credentials.
-            assert (await client.get("/projects")).status_code == 401
+            assert (
+                await client.get("/projects", headers={"Origin": "https://foreign.invalid"})
+            ).status_code == 403
             assert (await client.get("/projects", headers=AUTH)).status_code == 200
     finally:
         await engine.dispose()

@@ -4,7 +4,6 @@ export interface ModelProfile {
 }
 export interface ModelCatalog {
   items: ModelProfile[];
-  default_model: { name: string; base_url: string; model: string } | null;
 }
 export interface ModelProfileInput {
   id: string; name: string; base_url: string; model: string; api_key: string;
@@ -20,7 +19,5 @@ export function isModelProfile(value: unknown): value is ModelProfile {
 export function isModelCatalog(value: unknown): value is ModelCatalog {
   if (!value || typeof value !== 'object') return false;
   const catalog = value as Record<string, unknown>;
-  const fallback = catalog.default_model as Record<string, unknown> | null;
-  return Array.isArray(catalog.items) && catalog.items.length <= 100 && catalog.items.every(isModelProfile)
-    && (fallback === null || (!!fallback && ['name', 'model', 'base_url'].every((key) => typeof fallback[key] === 'string')));
+  return Array.isArray(catalog.items) && catalog.items.length <= 100 && catalog.items.every(isModelProfile);
 }

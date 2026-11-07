@@ -17,8 +17,8 @@ Copy-Item .env.production.example .env.production
 ```
 
 秘密初始化只接受全新空目录，默认生成 `data/deployment/secrets`。数据库、Redis、
-Qdrant、操作者和管理器各用独立随机凭据；不会覆盖旧文件，也不会修改开发 `.env`。
-`api_token` 是工作台登录使用的 Token，只在本地读取和保管。目录与真实配置都被 Git
+Qdrant、模型加密和管理器各用独立随机凭据；不会覆盖旧文件，也不会修改开发 `.env`。
+`model_encryption_key` 仅用于加密模型密钥，不用于登录，只在本地读取和保管。目录与真实配置都被 Git
 忽略。Linux 父目录权限为 0700；Windows 部署时应使用当前操作者专属的 NTFS ACL。
 文件为显式挂载给非 root 容器保留读权限；不要把它们复制到公共共享目录。
 
@@ -26,12 +26,11 @@ Qdrant、操作者和管理器各用独立随机凭据；不会覆盖旧文件�
 
 | 本地文件 | 环境项的值 |
 |---|---|
-| `llm_api_key` | `LLM_API_KEY_FILE=/run/secrets/llm_api_key` |
 | `embedding_api_key` | `EMBEDDING_API_KEY_FILE=/run/secrets/embedding_api_key` |
 | `tavily_api_key` | `TAVILY_API_KEY_FILE=/run/secrets/tavily_api_key` |
 | `semantic_scholar_api_key` | `SEMANTIC_SCHOLAR_API_KEY_FILE=/run/secrets/semantic_scholar_api_key` |
 
-同时填写 `LLM_BASE_URL` 和 `LLM_MODEL`。未配置模型时，页面可以管理已有资料，但不会
+语言模型全部通过工作台的模型管理添加。未配置模型时，页面可以管理已有资料，但不会
 开放需要模型的任务提交。默认使用本地嵌入与重排模型，需要首次下载公开模型并写入
 独立模型缓存卷。若改用远程嵌入，需单独配置现有 Settings 对应项并保持向量维度一致；
 不要直接复用维度不匹配的旧 Qdrant 集合。
@@ -63,7 +62,7 @@ docker compose --env-file .env.production -f compose.production.yaml ps -a
 API/业务 Worker 的独立 egress 网络用于已授权的供应商与公开模型访问。
 
 先完成空卷初始化和迁移，再启动 API/Worker。健康检查分别覆盖进程存活、Worker 心跳
-与依赖进程；带 Bearer 访问 `/api/health/ready` 才能查看实际依赖状态和能力。心跳不保证
+与依赖进程；访问 `/api/health/ready` 才能查看实际依赖状态和能力。心跳不保证
 任务正在取得进展，不能代替任务状态、Journal 和错误诊断。应用停止宽限为 45 秒。
 
 Nginx 对 API/SSE 禁用缓存和响应缓冲，禁止失败后的上游请求重发；保留事件游标和心跳。
@@ -123,7 +122,7 @@ node web/scripts/browser.mjs install chromium
 TLS 测试需要本机 OpenSSL；不在 PATH 时用 `--openssl "D:/path/to/openssl.exe"`。
 脚本随机生成 `phase11e-*` 项目、独立凭据和空卷，只读取公开配置，拒绝继承真实应用
 环境变量。API/Worker 网络断开外网，向量使用确定性公开夹具，工作流 Worker 保持等待。
-测试覆盖真实 PostgreSQL/Redis/Qdrant、PDF 解析索引、浏览器登录与断开、中文报告
+测试覆盖真实 PostgreSQL/Redis/Qdrant、PDF 解析索引、浏览器无登录连接与刷新、中文报告
 下载、SSE 心跳与游标重连、幂等提交和审批控制。夹具路由只通过测试挂载存在，正式
 镜像不含测试代码。
 

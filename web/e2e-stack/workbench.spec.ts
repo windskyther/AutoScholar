@@ -15,8 +15,6 @@ test('isolated PostgreSQL + Qdrant + workers + real Docker training from browser
     if (response.url().endsWith('/agent/tasks') && response.request().method() === 'POST') receipts.push(response.url());
   });
   await page.goto('/');
-  await page.getByLabel('操作者 Token', { exact: true }).fill(token);
-  await page.getByRole('button', { name: '连接本地 API' }).click();
   await page.getByRole('button', { name: '新建项目' }).click();
   await page.getByLabel('项目名称').fill('9G 独立整栈验收');
   await page.getByRole('button', { name: '创建项目', exact: true }).click();

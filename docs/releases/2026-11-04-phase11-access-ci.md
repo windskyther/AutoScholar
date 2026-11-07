@@ -1,21 +1,12 @@
+> Historical release note: the user access-token layer described below has since
+> been removed for local-only operation. See [current access](../security/access.md).
+
 # Phase 11 first batch: API access and basic CI
 
-All business API routes now require the existing `EXPERIMENT_API_TOKEN`, including
-legacy chat, project/document, RAG, Agent and resource endpoints. Authentication
-runs before routing/body parsing; denied requests do not consume an upload stream
-or dispatch a model/tool. Minimal liveness remains public; readiness requires the
-token. Production API docs are disabled.
-
-Host and Origin admission, explicit CORS origins, production credential checks,
-bounded optional secret files and input-hidden configuration errors are added.
-Secret files and direct values cannot conflict; empty optional `_FILE` entries in
-the public example remain unconfigured. The default API image disables proxy
-header trust, and Compose readiness supplies the configured access token.
-
-Existing manual API examples now include explicit credentials. The browser keeps
-its current in-memory token flow; local integration fixture management requests
-also authenticate. See [the access and configuration guide](../security/access.md)
-for compatibility, startup and rotation instructions.
+The original API access-token layer was removed for local-only operation.
+Host/Origin boundaries, bounded requests and secret-file handling remain.
+Language models are now registered exclusively in model management; their keys
+are encrypted independently of HTTP access. See the current access guide.
 
 Checks defines Linux backend, Windows file/auth compatibility and frontend jobs.
 Dependencies are locked, Actions use verified immutable commits, job permissions

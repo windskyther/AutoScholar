@@ -1,8 +1,8 @@
 import { lazy, Suspense } from 'react';
-import { Alert, Button, Layout, Menu, Modal, Space, Tag } from 'antd';
-import { ApiOutlined, BarChartOutlined, DisconnectOutlined, FolderOutlined } from '@ant-design/icons';
+import { Alert, Button, Layout, Menu, Space, Tag } from 'antd';
+import { ApiOutlined, BarChartOutlined, FolderOutlined } from '@ant-design/icons';
 import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 import ConnectPage from './connect';
 import { Loading } from './components';
 import { TaskSubmissionProvider, useSubmission } from './task-submission';
@@ -20,13 +20,11 @@ function Shell() {
   return <TaskSubmissionProvider><WorkspaceLayout /></TaskSubmissionProvider>;
 }
 function WorkspaceLayout() {
-  const { api, mode, disconnect } = useConnection();
+  const { api } = useConnection();
   const submission = useSubmission();
-  const [modal, contextHolder] = Modal.useModal();
   const location = useLocation();
   if (!api) return <Navigate to="/connect" state={{ from: location.pathname }} replace />;
   return <Layout className="workbench-shell">
-    {contextHolder}
     <Layout.Sider width={212} breakpoint="lg" collapsedWidth={0} className="sidebar" theme="light">
       <Link to="/" className="wordmark sidebar-brand">AutoScholar</Link>
       <div className="sidebar-label">研究工作台</div>
@@ -38,11 +36,7 @@ function WorkspaceLayout() {
     </Layout.Sider>
     <Layout>
       <Layout.Header className="app-header"><Space><Tag color="success">已连接</Tag></Space>
-        {mode === 'manual' && <Button icon={<DisconnectOutlined />} onClick={() => {
-          if (!submission.pending) disconnect();
-          else modal.confirm({ title: '还有一笔结果未确认的提交', content: '断开连接会丢失内存中的提交编号和表单。请先记录编号并核查任务列表。',
-            okText: '确认断开', cancelText: '返回核查', onOk: disconnect });
-        }}>断开连接</Button>}
+
       </Layout.Header>
       <Layout.Content className="app-content"><Suspense fallback={<Loading />}>
         {submission.pending && <Alert type="warning" title="有一笔任务提交结果未确认，不要直接新建另一轮。"

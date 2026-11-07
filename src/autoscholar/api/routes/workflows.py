@@ -5,7 +5,6 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Header, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from autoscholar.api.experiment_auth import require_experiment_token
 from autoscholar.api.routes.agent import AgentRunRequest
 from autoscholar.core.errors import AppError
 from autoscholar.orchestration.approvals import ApprovalDecision
@@ -20,7 +19,7 @@ class RecoveryRequest(BaseModel):
 
 
 def service(request: Request) -> DurableService:
-    require_experiment_token(request)
+
     result: DurableService | None = request.app.state.durable_service
     if result is None:
         raise AppError(status_code=503, code="workflow_unavailable", message="Workflow unavailable")
@@ -42,7 +41,9 @@ async def submit(
             code="autonomous_mode_required",
             message="Durable submission requires explicit autonomous mode",
         )
-    task_id, created = await durable.submit(payload.model_dump(mode="json"), idempotency_key)
+    task_id, created = await durable.submit(
+        payload.model_dump(mode="json"), idempotency_key, require_managed=True
+    )
     _, job = await durable.repository.snapshot(task_id)
     return {
         "task_id": task_id,

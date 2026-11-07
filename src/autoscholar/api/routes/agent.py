@@ -16,14 +16,14 @@ from autoscholar.agent.records import (
     ToolCallStatus,
 )
 from autoscholar.agent.runner import AgentService, TaskStore
-from autoscholar.api.experiment_auth import require_experiment_token
+from autoscholar.api.model_selection import selected_model
 from autoscholar.coding.workspace import WorkspaceError, WorkspaceFile, WorkspaceManager
 from autoscholar.core.budget import BudgetLimits
 from autoscholar.core.errors import AppError
 from autoscholar.experiment.models import ExperimentSpecification
-from autoscholar.orchestration.approvals import cost_units
 from autoscholar.orchestration.models import WorkflowKind
 from autoscholar.orchestration.service import AutonomousService
+from autoscholar.orchestration.task_types import is_research
 from autoscholar.rag.models import RetrievalMode
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -40,7 +40,7 @@ def _default_research_sources() -> list[ResearchSource]:
 class AgentRunRequest(BaseModel):
     objective: ObjectiveText
     mode: AgentMode = "auto"
-    workflow_kind: WorkflowKind = "experiment"
+    workflow_kind: WorkflowKind = "research"
     project_id: str | None = None
     model_profile_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f-]{36}$")] | None = None
     document_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] | None = (
@@ -55,8 +55,9 @@ class AgentRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_workflow_kind(self) -> "AgentRunRequest":
-        if self.workflow_kind == "research" and (
-            self.mode != "autonomous" or self.experiment_specification is not None
+        if is_research(self.workflow_kind) and (
+            (self.mode == "autonomous" and self.experiment_specification is not None)
+            or ("workflow_kind" in self.model_fields_set and self.mode != "autonomous")
         ):
             raise ValueError(
                 "Research workflows require autonomous mode and no experiment specification"
@@ -284,25 +285,18 @@ def _run_response(task: AgentTaskRecord, request_id: str) -> AgentRunResponse:
 
 @router.post("/run", response_model=AgentRunResponse)
 async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunResponse:
-    if payload.model_profile_id is not None:
-        raise AppError(
-            status_code=422,
-            code="durable_model_required",
-            message="Model selection requires POST /agent/tasks",
-        )
     if payload.mode == "experiment" or (
         payload.mode == "autonomous" and payload.workflow_kind == "experiment"
     ):
-        require_experiment_token(request)
-        specification = payload.experiment_specification or ExperimentSpecification()
-        if cost_units(specification) >= request.app.state.settings.workflow_approval_threshold:
-            raise AppError(
-                status_code=409,
-                code="durable_approval_required",
-                message="This experiment requires approval; submit via POST /agent/tasks",
-            )
+        raise AppError(
+            status_code=422, code="task_type_removed", message="The legacy task type was removed"
+        )
+    async with selected_model(request, payload.model_profile_id):
+        return await _run_agent(payload, request)
+
+
+async def _run_agent(payload: AgentRunRequest, request: Request) -> AgentRunResponse:
     if payload.mode == "autonomous":
-        require_experiment_token(request)
         service: AutonomousService | None = request.app.state.autonomous_service
         if service is None:
             raise AppError(
@@ -334,32 +328,20 @@ async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunRespo
             code="agent_not_available",
             message="Agent execution is unavailable without database and LLM configuration",
         )
-    if payload.mode == "experiment":
-        require_experiment_token(request)
-        result = await runner.run(
-            payload.objective,
-            mode=payload.mode,
-            project_id=payload.project_id,
-            document_ids=payload.document_ids,
-            retrieval_mode=payload.retrieval_mode,
-            research_sources=payload.research_sources,
-            experiment_specification=payload.experiment_specification,
+    if payload.experiment_specification is not None:
+        raise AppError(
+            status_code=422,
+            code="experiment_mode_required",
+            message="Experiment specifications are not accepted for this task type",
         )
-    else:
-        if payload.experiment_specification is not None:
-            raise AppError(
-                status_code=422,
-                code="experiment_mode_required",
-                message="experiment_specification requires experiment mode",
-            )
-        result = await runner.run(
-            payload.objective,
-            mode=payload.mode,
-            project_id=payload.project_id,
-            document_ids=payload.document_ids,
-            retrieval_mode=payload.retrieval_mode,
-            research_sources=payload.research_sources,
-        )
+    result = await runner.run(
+        payload.objective,
+        mode=payload.mode,
+        project_id=payload.project_id,
+        document_ids=payload.document_ids,
+        retrieval_mode=payload.retrieval_mode,
+        research_sources=payload.research_sources,
+    )
     return _run_response(result.task, request.state.request_id)
 
 
@@ -379,8 +361,6 @@ async def get_agent_task(task_id: str, request: Request) -> AgentTaskResponse:
             code="agent_task_not_found",
             message="Agent task was not found",
         )
-    if task.mode in {"experiment", "autonomous"} or task.parent_task_id is not None:
-        require_experiment_token(request)
     return AgentTaskResponse(
         parent_task_id=task.parent_task_id,
         task_id=task.id,
@@ -425,8 +405,6 @@ async def get_agent_evidence(
             code="agent_task_not_found",
             message="Agent task was not found",
         )
-    if task.mode in {"experiment", "autonomous"} or task.parent_task_id is not None:
-        require_experiment_token(request)
     items, total = await repository.list_evidence(task_id, limit=limit, offset=offset)
     return EvidenceListResponse(
         task_id=task_id,
@@ -452,8 +430,6 @@ async def _coding_task(task_id: str, request: Request) -> AgentTaskRecord:
             code="coding_workspace_not_found",
             message="Coding task workspace was not found",
         )
-    if task.parent_task_id is not None:
-        require_experiment_token(request)
     return task
 
 
@@ -470,7 +446,7 @@ async def get_workflow_history(
     kind: Literal["plans", "steps", "reviews"],
     request: Request,
 ) -> dict[str, Any]:
-    require_experiment_token(request)
+
     service: AutonomousService | None = request.app.state.autonomous_service
     if service is None:
         raise AppError(

@@ -234,7 +234,7 @@ async def test_autonomous_and_child_routes_require_token(tmp_path: Path) -> None
     provider = ScriptedProvider(script())
     service, engine = await workflow(tmp_path, provider, FakeExperimentSandbox())
     app = offline_app(
-        Settings(experiment_api_token=SecretStr("workflow-test-token")),
+        Settings(model_encryption_key=SecretStr("workflow-test-token")),
         database=FakeDependency(),
         redis=FakeDependency(),
         qdrant=FakeDependency(),
@@ -251,11 +251,18 @@ async def test_autonomous_and_child_routes_require_token(tmp_path: Path) -> None
             base_url="http://test",
         ) as client:
             payload = {"objective": "Compare models", "mode": "autonomous"}
-            assert (await client.post("/agent/run", json=payload)).status_code == 401
+            assert (
+                await client.post(
+                    "/agent/run", json=payload, headers={"Origin": "https://foreign.invalid"}
+                )
+            ).status_code == 403
             assert not provider.calls
             response = await client.post("/agent/run", json=payload, headers=auth)
-            assert response.status_code == 200, response.text
-            task_id = response.json()["task_id"]
+            assert response.status_code == 422, response.text
+            # Historical jobs remain readable, while new HTTP submissions need a
+            # managed model and cannot create fixed experiment workflows.
+            archived = await service.run("Compare models")
+            task_id = archived.task.id
             steps = await service.workflows.history(task_id, "steps")
             coding = next(item for item in steps if item["step_id"] == "code")
             paths = [
@@ -269,7 +276,9 @@ async def test_autonomous_and_child_routes_require_token(tmp_path: Path) -> None
                 f"/agent/tasks/{coding['child_task_id']}/workspace/files/source/train.py",
             ]
             for path in paths:
-                assert (await client.get(path)).status_code == 401
+                assert (
+                    await client.get(path, headers={"Origin": "https://foreign.invalid"})
+                ).status_code == 403
                 assert (await client.get(path, headers=auth)).status_code == 200
             rejected = await client.post(
                 "/agent/run",

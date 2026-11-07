@@ -243,7 +243,7 @@ async def test_authenticated_delete_is_repeatable_and_deleted_project_is_not_bro
     project = await knowledge.create_project(name="Public fixture", description=None)
     app = offline_app(
         Settings(
-            experiment_api_token=TOKEN_SECRET,
+            model_encryption_key=TOKEN_SECRET,
             workspace_root=tmp_path / "workspaces",
             document_storage_path=tmp_path / "documents",
         ),
@@ -258,7 +258,9 @@ async def test_authenticated_delete_is_repeatable_and_deleted_project_is_not_bro
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         path = f"/workbench/projects/{project.id}"
-        assert (await client.delete(path)).status_code == 401
+        assert (
+            await client.delete(path, headers={"Origin": "https://foreign.invalid"})
+        ).status_code == 403
         assert await knowledge.get_project(project.id) is not None
         assert (await client.delete(path, headers=AUTH)).status_code == 204
         assert (await client.delete(path, headers=AUTH)).status_code == 204

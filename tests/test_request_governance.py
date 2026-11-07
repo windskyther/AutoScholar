@@ -15,7 +15,7 @@ from sqlalchemy import Table, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.types import ASGIApp
 
-from autoscholar.api.access import APIAuthenticationMiddleware
+from autoscholar.api.access import APIBoundaryMiddleware
 from autoscholar.api.governance import (
     GovernanceError,
     RequestGovernance,
@@ -41,7 +41,7 @@ def application(
     **settings: object,
 ) -> tuple[FastAPI, MemoryAdmission, MemoryAudit, list[str]]:
     app = FastAPI()
-    config = Settings(experiment_api_token=TOKEN_SECRET, **settings)  # type: ignore[arg-type]
+    config = Settings(model_encryption_key=TOKEN_SECRET, **settings)  # type: ignore[arg-type]
     store, sink, calls = admission or MemoryAdmission(), audit or MemoryAudit(), []
     app.state.settings = config
     app.state.governance = RequestGovernance(store, sink)
@@ -55,7 +55,7 @@ def application(
     app.add_middleware(
         RequestGovernanceMiddleware, settings=config, governance=app.state.governance
     )
-    app.add_middleware(APIAuthenticationMiddleware, settings=config)
+    app.add_middleware(APIBoundaryMiddleware, settings=config)
     return app, store, sink, calls
 
 
@@ -229,8 +229,8 @@ async def test_unknown_usage_stays_null_and_audit_excludes_request_text() -> Non
             headers={"Idempotency-Key": "private-idempotency"},
         )
         assert response.status_code == 200
-        denial = await api.post("/chat", headers={"Authorization": "Bearer private-token"})
-        assert denial.status_code == 401
+        denial = await api.post("/chat", headers={"Origin": "https://foreign.invalid"})
+        assert denial.status_code == 403
     encoded = json.dumps([asdict(event) for event in sink.events])
     for secret in ("private-query", "private-body", "private-idempotency", "private-token"):
         assert secret not in encoded
@@ -331,7 +331,7 @@ async def test_production_factory_has_no_implicit_offline_bypass() -> None:
 
     provider = SuccessfulProvider()
     app = create_app(
-        Settings(experiment_api_token=TOKEN_SECRET),
+        Settings(model_encryption_key=TOKEN_SECRET),
         database=FakeDependency(),
         redis=FakeDependency(),
         qdrant=FakeDependency(),

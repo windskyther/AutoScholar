@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field, StringConstraints
 
+from autoscholar.api.model_selection import selected_model
 from autoscholar.api.routes.agent import (
     CitationResponse,
     EvidenceResponse,
@@ -22,6 +23,7 @@ QuestionText = Annotated[
 
 class RAGQueryRequest(BaseModel):
     question: QuestionText
+    model_profile_id: Annotated[str, StringConstraints(min_length=36, max_length=36)]
     document_ids: list[str] | None = None
     retrieval_mode: RetrievalMode = "hybrid_rerank"
     top_k: int | None = Field(default=None, ge=1, le=50)
@@ -49,13 +51,14 @@ async def query_knowledge_base(
             code="rag_not_available",
             message="Knowledge-base querying is unavailable",
         )
-    result = await service.query(
-        payload.question,
-        project_id=project_id,
-        document_ids=payload.document_ids,
-        retrieval_mode=payload.retrieval_mode,
-        top_k=payload.top_k,
-    )
+    async with selected_model(request, payload.model_profile_id):
+        result = await service.query(
+            payload.question,
+            project_id=project_id,
+            document_ids=payload.document_ids,
+            retrieval_mode=payload.retrieval_mode,
+            top_k=payload.top_k,
+        )
     task = result.task
     return RAGQueryResponse(
         task_id=task.id,

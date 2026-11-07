@@ -14,7 +14,7 @@ uv run python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 Place it in the local `.env` as `SANDBOX_MANAGER_TOKEN`. API, Workflow Worker,
 experiment MCP and manager must share this value. Keep it distinct from
-`EXPERIMENT_API_TOKEN`, `MCP_SERVICE_TOKEN` and supplier keys. The application does
+`MODEL_ENCRYPTION_KEY`, `MCP_SERVICE_TOKEN` and supplier keys. The application does
 not generate or overwrite your local credentials automatically. This module does not
 restart or deploy the normal installation.
 

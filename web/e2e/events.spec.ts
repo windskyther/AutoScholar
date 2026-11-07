@@ -1,7 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-const TOKEN = 'public-test-fixture-token';
 const time = '2026-10-06T00:00:00Z';
 const project = { id: 'project-a', name: '公开事件项目', description: null, created_at: time, updated_at: time };
 const task = { task_id: 'task-a', project_id: project.id, parent_task_id: null, objective: '公开事件目标', mode: 'autonomous',
@@ -17,7 +16,7 @@ async function fixture(page: Page, mode: 'duplicate' | 'gap' | 'retry' | 'outage
   await page.route('**/api/**', async (route) => {
     const req = route.request(); const path = new URL(req.url()).pathname;
     if (path === '/api/local-access') return route.fulfill({ status: 404, json: { error: { code: 'not_found' } } });
-    expect(req.headers().authorization).toBe('Bearer ' + TOKEN);
+    expect(req.headers().authorization).toBeUndefined();
     calls.push({ path, cursor: req.headers()['last-event-id'], method: req.method() });
     let payload: unknown;
     if (path.endsWith('/stream')) {
@@ -29,7 +28,7 @@ async function fixture(page: Page, mode: 'duplicate' | 'gap' | 'retry' | 'outage
         : count === 1 ? ready + event(1) : ready + event(1) + event(2) + end;
       await route.fulfill({ status: 200, contentType: 'text/event-stream; charset=utf-8', body }); return;
     }
-    if (path.endsWith('/session')) payload = { status: 'connected', authentication: 'single_operator_bearer', api_version: 'fixture', capabilities: {
+    if (path.endsWith('/session')) payload = { status: 'connected', authentication: 'local', api_version: 'fixture', capabilities: {
       llm_configured: false, web_search_configured: false, research_backend: 'native', filesystem_backend: 'native', experiment_backend: 'native', task_streaming: true,
     } };
     else if (path === '/api/workbench/projects') payload = { items: [project], total: 1, limit: 20, offset: 0 };
@@ -43,8 +42,6 @@ async function fixture(page: Page, mode: 'duplicate' | 'gap' | 'retry' | 'outage
     await route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(payload) });
   });
   await page.goto('/');
-  await page.getByLabel('操作者 Token', { exact: true }).fill(TOKEN);
-  await page.getByRole('button', { name: '连接本地 API' }).click();
   await page.getByRole('link', { name: project.name }).click();
   await page.getByRole('link', { name: task.objective }).click();
   await expect(page.locator('.event-section')).not.toHaveAttribute('open', '');

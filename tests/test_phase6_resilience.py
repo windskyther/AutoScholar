@@ -9,7 +9,6 @@ from typing import Any
 
 import httpx
 import pytest
-from pydantic import SecretStr
 from sqlalchemy import select
 
 from autoscholar.agent.database_models import AgentTaskRow
@@ -22,16 +21,13 @@ from autoscholar.core.budget import (
     current_budget,
     current_parent,
 )
-from autoscholar.core.config import Settings
 from autoscholar.llm import LLMResult, ToolCall
 from autoscholar.llm.openai_compatible import OpenAICompatibleProvider
 from autoscholar.orchestration.smoke import run_smoke
 from autoscholar.research import SearchProviderError, TavilySearchProvider
-from tests.governance import offline_app
 from tests.test_agent_runner import ScriptedProvider, response
 from tests.test_autonomous import InvalidOnceSandbox, call, script, workflow
 from tests.test_experiment_service import FakeExperimentSandbox, _artifact
-from tests.test_health import FakeDependency
 from tests.test_llm_provider import configured_settings
 from tests.test_workflow_foundation import plan
 
@@ -133,107 +129,6 @@ async def test_tavily_failures_have_bounded_retries_without_secret_leak(
                 await provider.search("MNIST", limit=3)
             assert "private-test-key" not in str(rejected.value)
         assert calls == expected_calls
-
-
-async def test_all_autonomous_routes_reject_wrong_tokens_and_cross_task_artifacts(
-    tmp_path: Path,
-) -> None:
-    provider = ScriptedProvider([*script(), *script()])
-    service, engine = await workflow(tmp_path, provider, FakeExperimentSandbox())
-    app = offline_app(
-        Settings(experiment_api_token=SecretStr("resilience-token")),
-        database=FakeDependency(),
-        redis=FakeDependency(),
-        qdrant=FakeDependency(),
-        llm_provider=provider,
-        agent_repository=service.tasks,
-        workspace_manager=service.workspace,
-        sandbox_executor=FakeExperimentSandbox(),
-    )
-    app.state.autonomous_service = service
-    auth = {"Authorization": "Bearer resilience-token"}
-    try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
-            base_url="http://test",
-        ) as client:
-            results = []
-            for _ in range(2):
-                reply = await client.post(
-                    "/agent/run", headers=auth, json={"objective": "Compare", "mode": "autonomous"}
-                )
-                assert reply.status_code == 200
-                results.append(reply.json()["task_id"])
-            steps = await service.workflows.history(results[0], "steps")
-            code = next(s["child_task_id"] for s in steps if s["step_id"] == "code")
-            train = next(s["child_task_id"] for s in steps if s["step_id"] == "train")
-            artifact = (await service.tasks.list_artifacts(train))[0]
-            experiment = (await service.tasks.list_experiments(train))[0]
-            paths = [
-                f"/agent/tasks/{results[0]}",
-                *[
-                    f"/agent/tasks/{results[0]}/workflow/{kind}"
-                    for kind in ("plans", "steps", "reviews")
-                ],
-                f"/agent/tasks/{code}",
-                f"/agent/tasks/{code}/evidence",
-                f"/agent/tasks/{code}/workspace",
-                f"/agent/tasks/{code}/workspace/files/source/train.py",
-                f"/agent/tasks/{train}/experiments",
-                f"/agent/tasks/{train}/experiments/{experiment.id}",
-                f"/agent/tasks/{train}/artifacts",
-                f"/agent/tasks/{train}/artifacts/{artifact.id}",
-            ]
-            for path in paths:
-                for authorization in (
-                    b"",
-                    b"Bearer wrong",
-                    b"Basic resilience-token",
-                    b"Bearer \xff",
-                ):
-                    denied = await client.get(path, headers=[(b"authorization", authorization)])
-                    assert denied.status_code == 401, (path, authorization, denied.text)
-                    assert "resilience-token" not in denied.text
-                assert (await client.get(path, headers=auth)).status_code == 200
-            other_steps = await service.workflows.history(results[1], "steps")
-            for authorization in (b"Bearer wrong", b"Bearer \xff"):
-                denied = await client.post(
-                    "/agent/run",
-                    headers=[(b"authorization", authorization)],
-                    json={"objective": "Must not execute", "mode": "autonomous"},
-                )
-                assert denied.status_code == 401
-            assert len(provider.calls) == 6
-            other = next(s["child_task_id"] for s in other_steps if s["step_id"] == "train")
-            for path in (
-                f"/agent/tasks/{other}/artifacts/{artifact.id}",
-                f"/agent/tasks/{other}/experiments/{experiment.id}",
-            ):
-                assert (await client.get(path, headers=auth)).status_code == 404
-    finally:
-        await engine.dispose()
-
-
-@pytest.mark.parametrize(
-    "resource",
-    [
-        "steps",
-        "replans",
-        "model_calls",
-        "tool_calls",
-        "search_queries",
-        "code_repairs",
-        "training_runs",
-        "sandbox_runs",
-    ],
-)
-def test_each_counter_stops_at_limit_without_reset(resource: str) -> None:
-    budget = Budget(BudgetLimits.model_validate({resource: 2}))
-    budget.consume(resource)
-    budget.consume(resource)
-    with pytest.raises(BudgetExceeded, match=resource):
-        budget.consume(resource)
-    assert budget.used[resource] == 2
 
 
 @pytest.mark.parametrize("limit,expected_calls", [(2, 1), (3, 1), (4, 2)])

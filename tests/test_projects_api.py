@@ -128,7 +128,7 @@ def create_client(tmp_path: Path) -> tuple[TestClient, FakeKnowledgeStore]:
     store = FakeKnowledgeStore()
     client = TestClient(
         offline_app(
-            Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
+            Settings(llm_api_key=None, llm_model=None, model_encryption_key=TOKEN_SECRET),
             database=FakeDependency(),
             redis=FakeDependency(),
             qdrant=FakeDependency(),

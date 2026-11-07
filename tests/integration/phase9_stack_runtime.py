@@ -85,8 +85,8 @@ def settings() -> Settings:
         result.llm_api_key and result.llm_api_key.get_secret_value() == "public-offline-placeholder"
     )
     assert (
-        result.experiment_api_token
-        and result.experiment_api_token.get_secret_value() == "public-phase9g-token"
+        result.model_encryption_key
+        and result.model_encryption_key.get_secret_value() == "public-phase9g-token"
     )
     assert not any(
         (

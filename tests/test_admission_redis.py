@@ -129,7 +129,7 @@ async def test_real_http_shared_admission_and_durable_audit_without_suppliers(
     limits = default_request_limits()
     limits["llm"].per_minute = 1
     config = Settings(
-        experiment_api_token=TOKEN_SECRET,
+        model_encryption_key=TOKEN_SECRET,
         api_request_limits=limits,
         document_storage_path=tmp_path / "documents",
         workspace_root=tmp_path / "workspaces",

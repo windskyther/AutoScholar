@@ -3,7 +3,7 @@ import { Alert, Button, Checkbox, Collapse, Form, Input, Modal, Select, Space, T
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { ApiError, errorMessage, isWriteUncertain } from './api';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 import { Loading, QueryError } from './components';
 import { DocumentState } from './documents';
 import type { BudgetLimits, PDFDocument, Project, TaskSubmission } from './types';
@@ -12,7 +12,7 @@ import { Link } from 'react-router-dom';
 
 interface Values {
   objective: string; budget: BudgetLimits; sources: ('web' | 'paper')[];
-  workflowKind: 'research' | 'experiment';
+  workflowKind: NonNullable<TaskSubmission['workflow_kind']>;
   model_profile_id: string;
   documentMode: 'all' | 'none' | 'selected'; retrieval: TaskSubmission['retrieval_mode']; consent: boolean;
 }
@@ -44,16 +44,16 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
   const draft = useRef<{ key: string; payload: TaskSubmission } | null>(null);
   const inFlight = useRef(false);
   const documentMode = Form.useWatch('documentMode', form) ?? 'all';
-  const defaultKind = session?.capabilities.research_workflows ? 'research' : 'experiment';
+  const defaultKind = 'research';
   const workflowKind = Form.useWatch('workflowKind', form) ?? defaultKind;
   const ceiling = session?.capabilities.budget_limits;
   const modelId = Form.useWatch('model_profile_id', form) ?? '';
   const models = useQuery({ queryKey: ['models'], queryFn: ({ signal }) => api!.models(signal),
-    enabled: open && !!session?.capabilities.model_management });
+    enabled: open });
   const chosenModel = modelId ? models.data?.items.find((item) => item.id === modelId && item.enabled) : null;
-  const modelReady = modelId ? !!chosenModel : !!session?.capabilities.llm_configured;
+  const modelReady = !!chosenModel;
   useEffect(() => {
-    if (models.data && !session?.capabilities.llm_configured && !form.getFieldValue('model_profile_id')) {
+    if (models.data && !form.getFieldValue('model_profile_id')) {
       const first = models.data.items.find((item) => item.enabled);
       if (first) form.setFieldValue('model_profile_id', first.id);
     }
@@ -89,8 +89,8 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
     }
     draft.current = { key: crypto.randomUUID(), payload: structuredClone({
       objective: values.objective.trim(), mode: 'autonomous', project_id: project.id,
-      ...(session?.capabilities.research_workflows ? { workflow_kind: values.workflowKind } : {}),
-      ...(session?.capabilities.model_management ? { model_profile_id: values.model_profile_id || null } : {}),
+      workflow_kind: values.workflowKind,
+      model_profile_id: values.model_profile_id,
       document_ids: values.documentMode === 'all' ? null : values.documentMode === 'none' ? [] : selected,
       retrieval_mode: values.retrieval, research_sources: values.sources, budget: values.budget,
     }) };
@@ -98,42 +98,45 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
   }
   return <Modal title={`提交研究任务 · ${project.name}`} open={open} width={820} mask={{ closable: false }}
     keyboard={!busy} closable={!busy} onCancel={() => { if (!busy) close(); }} footer={null}>
-    <Alert type="warning" showIcon title="提交后自动执行研究任务，可能产生模型、检索和训练费用"
+    <Alert type="warning" showIcon title="提交后自动执行研究任务，可能产生模型和检索费用"
       description="预算限制资源用量，不等同于金额；单次模型响应可能使 Token 用量超过上限。" />
     <Form form={form} layout="vertical" disabled={busy || uncertain} onFinish={(values) => void submit(values)} initialValues={{
       budget: ceiling, sources: session?.capabilities.web_search_configured ? ['web'] : ['paper'],
-      workflowKind: defaultKind, documentMode: defaultKind === 'research' ? 'none' : 'all', retrieval: 'hybrid_rerank', consent: false,
+      workflowKind: defaultKind, documentMode: 'none', retrieval: 'hybrid_rerank', consent: false,
       model_profile_id: '',
     }}>
-      {session?.capabilities.model_management && <>
-        <Form.Item name="model_profile_id" label="使用模型">
+      <>
+        <Form.Item name="model_profile_id" label="使用模型" rules={[{ required: true, message: '请选择模型管理中的模型' }]}>
           <Select loading={models.isPending} placeholder="选择模型连接" options={[
-            ...(models.data?.default_model ? [{ value: '', label: `默认模型 · ${models.data.default_model.model}` }] : []),
             ...(models.data?.items.filter((item) => item.enabled).map((item) => ({ value: item.id, label: `${item.name} · ${item.model}` })) ?? []),
           ]} />
         </Form.Item>
         {models.isError && <QueryError error={models.error} retry={() => void models.refetch()} />}
         {!modelReady && models.isSuccess && <Alert type="info" title="请先添加或选择一个可用模型" />}
         <p><Link to="/models" onClick={close}>管理模型连接</Link>；任务提交后会一直使用所选配置。</p>
-      </>}
+      </>
       <Form.Item name="workflowKind" label="任务类型" rules={[{ required: true }]}>
         <Select options={[
-          { value: 'research', label: '资料调研', disabled: !session?.capabilities.research_workflows },
-          { value: 'experiment', label: 'MNIST CPU 实验' },
-        ]} />
+          { value: 'research', label: '资料调研' }, { value: 'literature_review', label: '论文综述' },
+          { value: 'comparison', label: '技术对比' }, { value: 'research_proposal', label: '研究方案' },
+          { value: 'document_analysis', label: '项目文档分析' },
+        ]} onChange={(value) => {
+          form.setFieldValue('documentMode', value === 'document_analysis' ? 'all' : 'none');
+          if (value === 'literature_review') form.setFieldValue('sources', ['paper']);
+        }} />
       </Form.Item>
-      <p>{workflowKind === 'research' ? '围绕研究目标检索、阅读资料并整理带引用的报告。' : '生成和验证代码，并在 MNIST 上比较 MLP 与 CNN。'}</p>
+      <p>{{ research: '检索、阅读资料并整理带引用的报告。', literature_review: '梳理论文脉络、研究方法、局限与开放问题。', comparison: '按统一维度比较技术路线，给出证据和适用条件。', research_proposal: '设计研究假设、方法、评估步骤与风险，不将拟议实验冒充实际结果。', document_analysis: '基于项目中已就绪的 PDF 分析内容并给出引用，至少需要一份文档。' }[workflowKind]}</p>
       <Form.Item name="objective" label="研究目标" rules={[{ required: true, whitespace: true, max: 10000, message: '填写 1–10000 字符的研究目标' }]}>
         <Input.TextArea rows={3} maxLength={10000} showCount />
       </Form.Item>
-      <Form.Item name="sources" label="检索来源" rules={[{ required: true, type: 'array', min: 1, max: 2 }]}>
+      {workflowKind !== 'document_analysis' && <><Form.Item name="sources" label="检索来源" rules={[{ required: true, type: 'array', min: 1, max: 2 }]}>
         <Select mode="multiple" options={[{ value: 'web', label: 'Tavily Web', disabled: !session?.capabilities.web_search_configured },
           { value: 'paper', label: 'Semantic Scholar 论文（无密钥时匿名）' }]} />
       </Form.Item>
-      {!session?.capabilities.web_search_configured && <p>Tavily 未配置；匿名论文检索可能受到限流。</p>}
+      {!session?.capabilities.web_search_configured && <p>Tavily 未配置；匿名论文检索可能受到限流。</p>}</>}
       <Space className="task-options" wrap>
         <Form.Item name="documentMode" label="项目 PDF 范围"><Select style={{ width: 210 }} options={[
-          { value: 'all', label: '全部已就绪 PDF' }, { value: 'none', label: '不使用 PDF' }, { value: 'selected', label: '选择已就绪 PDF' },
+          { value: 'all', label: '全部已就绪 PDF' }, { value: 'none', label: '不使用 PDF', disabled: workflowKind === 'document_analysis' }, { value: 'selected', label: '选择已就绪 PDF' },
         ]} /></Form.Item>
         <Form.Item name="retrieval" label="检索方式"><Select style={{ width: 210 }} options={[
           { value: 'hybrid_rerank', label: '混合检索 + 重排' }, { value: 'hybrid', label: '混合检索' },
@@ -151,8 +154,7 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
             pagination={{ current: page, pageSize: 20, total: docs.data.total, showSizeChanger: false, onChange: setPage }} />}
       </>}
       <Collapse className="budget-settings" defaultActiveKey={['budget']} items={[{ key: 'budget', label: '预算上限（不超过服务端配置）', children:
-        <div className="budget-grid">{fields.filter((field) => workflowKind === 'experiment'
-          || !['training_runs', 'sandbox_runs', 'code_repairs'].includes(field.key)).map((field) => <Form.Item key={field.key} name={['budget', field.key]} label={field.label}
+        <div className="budget-grid">{fields.filter((field) => !['training_runs', 'sandbox_runs', 'code_repairs'].includes(field.key)).map((field) => <Form.Item key={field.key} name={['budget', field.key]} label={field.label}
           rules={[{ required: true, type: 'integer', min: field.min, max: Math.min(ceiling?.[field.key] ?? field.max, field.max) }]}>
           <NumberSlider label={field.label} min={field.min} max={Math.min(ceiling?.[field.key] ?? field.max, field.max)} />
         </Form.Item>)}</div> }]} />

@@ -59,7 +59,7 @@ async def main() -> None:
                         "assert not Path('/var/run/docker.sock').exists()\n"
                         "assert not Path('/app/.env').exists()\n"
                         "assert not any(os.getenv(k) for k in "
-                        "('LLM_API_KEY', 'TAVILY_API_KEY', 'EXPERIMENT_API_TOKEN'))\n"
+                        "('LLM_API_KEY', 'TAVILY_API_KEY', 'MODEL_ENCRYPTION_KEY'))\n"
                         "try:\n    socket.create_connection(('192.0.2.1', 443), timeout=1)\n"
                         "except OSError:\n    pass\n"
                         "else:\n    raise AssertionError('network unexpectedly available')\n"

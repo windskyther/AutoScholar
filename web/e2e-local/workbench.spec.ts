@@ -8,8 +8,6 @@ test('browser connects through the real Vite proxy to authenticated FastAPI and 
     if (new URL(entry.url()).pathname.startsWith('/api/')) methods.push(entry.method());
   });
   await page.goto('/');
-  await page.getByLabel('操作者 Token', { exact: true }).fill(TOKEN);
-  await page.getByRole('button', { name: '连接本地 API' }).click();
   await page.getByRole('link', { name: '中文研究项目' }).click();
   await page.getByRole('link', { name: '比较 MNIST 模型' }).click();
   await expect(page.getByText('中文输出：隔离 HTTP 联测，不调用付费接口。')).toBeVisible();
@@ -30,8 +28,6 @@ test('browser connects through the real Vite proxy to authenticated FastAPI and 
 
 test('wrong token fails against the actual API and fixture refuses writes', async ({ page, request }) => {
   await page.goto('/connect');
-  await page.getByLabel('操作者 Token', { exact: true }).fill('wrong-fixture-token');
-  await page.getByRole('button', { name: '连接本地 API' }).click();
   await expect(page.getByText('操作者 Token 无效，请重新连接。')).toBeVisible();
   const blocked = await request.post('/api/workbench/projects', {
     headers: { Authorization: 'Bearer ' + TOKEN }, data: { name: 'must not create' },

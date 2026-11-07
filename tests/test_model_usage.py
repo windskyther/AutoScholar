@@ -14,13 +14,35 @@ from autoscholar.llm.models import (
     ToolChoice,
     ToolDefinition,
 )
-from autoscholar.llm.profiles import RoutedLLM
+from autoscholar.llm.profiles import RoutedLLM, current_model_profile
 from autoscholar.llm.usage import ModelUsageRow, UsageStore, UsageUnavailable
 from tests import test_model_profiles
 from tests.test_model_profiles import AUTH
 
 client = test_model_profiles.client
 DEFAULT_USAGE = TokenUsage(3, 4, 7)
+
+
+class ManagedMeter(BudgetedLLM):
+    def __init__(self, routed: RoutedLLM) -> None:
+        profile_id = "11111111-1111-4111-8111-111111111111"
+        routed.profiles.providers[profile_id] = routed.default
+        routed.profiles.bindings[profile_id] = ("Managed fixture", "fixture")
+        self.profile_id = profile_id
+        super().__init__(routed)
+
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        token = current_model_profile.set(self.profile_id)
+        try:
+            return await super().generate(messages, tools=tools, tool_choice=tool_choice)
+        finally:
+            current_model_profile.reset(token)
 
 
 class Provider:
@@ -106,7 +128,9 @@ async def test_aggregation_filters_unknowns_timezone_and_no_parent_double_count(
 async def test_usage_api_requires_auth_validates_queries_and_returns_empty_counts(
     client: httpx.AsyncClient,
 ) -> None:
-    assert (await client.get("/workbench/usage")).status_code == 401
+    assert (
+        await client.get("/workbench/usage", headers={"Origin": "https://foreign.invalid"})
+    ).status_code == 403
     response = await client.get(
         "/workbench/usage", params={"days": 7, "group_by": "model"}, headers=AUTH
     )
@@ -128,13 +152,13 @@ async def test_measured_protocol_failure_and_missing_usage_are_recorded(
     client: httpx.AsyncClient,
 ) -> None:
     profiles = client.fixture_app.state.model_profiles  # type: ignore[attr-defined]
-    await BudgetedLLM(RoutedLLM(Provider(), profiles)).generate([])
+    await ManagedMeter(RoutedLLM(Provider(), profiles)).generate([])
     error = LLMResponseError(
         code="llm_invalid_tool_call", message="fixture", usage=TokenUsage(3, 4, 7)
     )
     with pytest.raises(LLMResponseError):
-        await BudgetedLLM(RoutedLLM(Provider(error), profiles)).generate([])
-    await BudgetedLLM(RoutedLLM(Provider(usage=None), profiles)).generate([])
+        await ManagedMeter(RoutedLLM(Provider(error), profiles)).generate([])
+    await ManagedMeter(RoutedLLM(Provider(usage=None), profiles)).generate([])
     summary = await store(client).summary()
     assert summary.totals.calls == 3 and summary.totals.total_tokens == 14
     assert summary.totals.failed_calls == 1 and summary.totals.unknown_usage_calls == 1
@@ -146,7 +170,7 @@ async def test_local_rejection_is_excluded_from_calls_and_budget(client: httpx.A
     token = current_budget.set(budget)
     try:
         with pytest.raises(LLMRequestRejected):
-            await BudgetedLLM(
+            await ManagedMeter(
                 RoutedLLM(Provider(LLMRequestRejected(message="not sent")), profiles)
             ).generate([])
     finally:
@@ -169,7 +193,7 @@ async def test_ledger_start_failure_cannot_dispatch(
     token = current_budget.set(budget)
     try:
         with pytest.raises(UsageUnavailable):
-            await BudgetedLLM(RoutedLLM(provider, profiles)).generate([])
+            await ManagedMeter(RoutedLLM(provider, profiles)).generate([])
     finally:
         current_budget.reset(token)
     assert provider.calls == 0 and budget.used.get("model_calls", 0) == 0
@@ -193,7 +217,7 @@ async def test_interrupted_ledger_finish_preserves_known_budget_and_never_repeat
     async def invoke() -> None:
         token = current_budget.set(budget)
         try:
-            await BudgetedLLM(RoutedLLM(provider, profiles)).generate([])
+            await ManagedMeter(RoutedLLM(provider, profiles)).generate([])
         finally:
             current_budget.reset(token)
 

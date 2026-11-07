@@ -10,6 +10,6 @@ export default defineConfig({
   webServer: [
     { command: `"${python}" "${fixture}" --writes`, url: 'http://127.0.0.1:18009/health/live', timeout: 60000, reuseExistingServer: false },
     { command: 'npm run preview -- --port 5196', url: 'http://127.0.0.1:5196', timeout: 30000, reuseExistingServer: false,
-      env: { WORKBENCH_API_PORT: '18009', WORKBENCH_OPERATOR_TOKEN: 'public-test-fixture-token' } },
+      env: { WORKBENCH_API_PORT: '18009' } },
   ],
 });

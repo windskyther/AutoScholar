@@ -8,7 +8,7 @@ const project = { id: 'project-a', name: '中文研究项目', description: '本
 const task = { task_id: 'task-a', project_id: project.id, parent_task_id: null,
   objective: '比较 MNIST 模型', mode: 'autonomous', status: 'paused',
   metrics: { total_tokens: 12 }, error_code: null, created_at: time, updated_at: time };
-const session = { status: 'connected', authentication: 'single_operator_bearer', api_version: 'fixture',
+const session = { status: 'connected', authentication: 'local', api_version: 'fixture',
   capabilities: { llm_configured: false, web_search_configured: false, research_backend: 'native',
     filesystem_backend: 'native', experiment_backend: 'native', task_streaming: false } };
 const overview = { task, children: { items: [], total: 0, limit: 20, offset: 0 },
@@ -26,13 +26,13 @@ async function mockAPI(page: Page, sessionStatus = 200) {
     const url = new URL(request.url());
     if (url.pathname === '/api/local-access') return route.fulfill({ status: 404, json: { error: { code: 'not_found' } } });
     requests.push({ method: request.method(), path: url.pathname,
-      authorized: request.headers().authorization === 'Bearer ' + TOKEN });
+      authorized: request.headers().authorization === undefined });
     if (request.method() !== 'GET') throw new Error('Unexpected non-read request');
     let body: unknown;
     let status = 200;
     if (url.pathname === '/api/workbench/session') {
       status = sessionStatus;
-      body = status === 200 ? session : { error: { code: status === 401 ? 'experiment_auth_required' : 'experiment_api_not_configured' } };
+      body = status === 200 ? session : { error: { code: status === 401 ? 'local_access_denied' : 'network_unavailable' } };
     } else if (url.pathname === '/api/workbench/projects') body = { items: [project], total: 1, limit: 20, offset: 0 };
     else if (url.pathname === `/api/workbench/projects/${project.id}`) body = project;
     else if (url.pathname === `/api/workbench/projects/${project.id}/documents`) body = { items: [], total: 0, limit: 20, offset: 0 };
@@ -47,8 +47,6 @@ async function mockAPI(page: Page, sessionStatus = 200) {
 }
 async function connect(page: Page) {
   await page.goto('/');
-  await page.getByLabel('操作者 Token', { exact: true }).fill(TOKEN);
-  await page.getByRole('button', { name: '连接本地 API' }).click();
 }
 
 test('repeated overview refresh keeps one control section alongside task resources', async ({ page }) => {
@@ -126,8 +124,8 @@ test('connects, navigates true records, renders Chinese safely and keeps credent
   expect(requests.every((r) => r.method === 'GET' && r.authorized)).toBeTruthy();
   await page.screenshot({ path: 'test-results/workbench-desktop.png', fullPage: true });
   await page.reload();
-  await expect(page.getByRole('heading', { name: '连接研究工作台' })).toBeVisible();
-  await expect(page.getByLabel('操作者 Token', { exact: true })).toHaveValue('');
+  await expect(page.getByRole('heading', { name: '任务详情', exact: true })).toBeVisible();
+  await expect(page.getByLabel('操作者 Token', { exact: true })).toHaveCount(0);
 });
 
 test('filters tasks, disconnects and requires reauthentication', async ({ page }) => {
@@ -137,25 +135,24 @@ test('filters tasks, disconnects and requires reauthentication', async ({ page }
   await page.getByRole('combobox', { name: '任务状态' }).click();
   await page.getByText('失败', { exact: true }).click();
   await expect(page.getByText('没有符合条件的研究任务。')).toBeVisible();
-  await page.getByRole('button', { name: '断开连接' }).click();
-  await expect(page.getByRole('heading', { name: '连接研究工作台' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '断开连接' })).toHaveCount(0);
 });
 
 for (const status of [401, 503]) {
   test(`connection ${status} shows actionable error with no automatic retries`, async ({ page }) => {
     const requests = await mockAPI(page, status);
     await connect(page);
-    await expect(page.getByText(status === 401 ? '操作者 Token 无效，请重新连接。' : '尚未配置访问凭据，请先完成设置。')).toBeVisible();
+    await expect(page.getByRole('button', { name: '重试连接' })).toBeVisible();
     await expect(page.getByRole('heading', { name: '连接研究工作台' })).toBeVisible();
     expect(requests).toHaveLength(1);
   });
 }
 
 test('connection page fits mobile and dev server refuses repository file access', async ({ page, request }) => {
-  await mockAPI(page);
+  await mockAPI(page, 503);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/connect');
-  await expect(page.getByRole('button', { name: '连接本地 API' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '重试连接' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   // Probe a harmless tracked file, not the actual .env or design document.
   const readme = resolve(dirname(test.info().file), '..', '..', 'README.md').replaceAll('\\', '/');
@@ -172,7 +169,7 @@ test('malformed backend records show a query error instead of a blank page', asy
   await connect(page);
   await expect(page.getByText('暂时无法读取服务返回的数据，请稍后重试。')).toBeVisible();
   await expect(page.getByRole('button', { name: '手动重试查询' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '断开连接' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '断开连接' })).toHaveCount(0);
 });
 
 test('expired authenticated session clears cached pages and does not retry automatically', async ({ page }) => {
@@ -186,7 +183,7 @@ test('expired authenticated session clears cached pages and does not retry autom
   });
   await page.getByRole('button', { name: '刷新快照' }).click();
   await expect(page.getByRole('heading', { name: '连接研究工作台' })).toBeVisible();
-  await expect(page.getByLabel('操作者 Token', { exact: true })).toHaveValue('');
+  await expect(page.getByLabel('操作者 Token', { exact: true })).toHaveCount(0);
   expect(failedRequests).toBe(1);
   await expect(page.getByRole('link', { name: project.name })).toHaveCount(0);
 });

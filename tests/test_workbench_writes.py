@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 
 from autoscholar.core.budget import BudgetLimits
 from autoscholar.core.config import Settings
+from autoscholar.llm.profiles import ModelProfileCreate
 from autoscholar.rag.database_models import DocumentJobRow, DocumentRow
 from autoscholar.rag.repository import KnowledgeRepository
 from autoscholar.rag.storage import LocalDocumentStorage
@@ -51,7 +52,7 @@ async def api(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
     app = offline_app(
         Settings(
             _env_file=None,  # type: ignore[call-arg]
-            experiment_api_token=SecretStr("public-workbench-write-test"),
+            model_encryption_key=SecretStr("public-workbench-write-test"),
             document_max_bytes=1024,
             autonomous_budget=BudgetLimits(total_tokens=1000, model_calls=2),
         ),
@@ -73,6 +74,15 @@ async def api(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
             client.headers["X-Fixture-Project"] = project.id
             # Test-only repository reference, not exposed in an HTTP payload.
             client.fixture_sessions = service.tasks.session_factory  # type: ignore[attr-defined]
+            profile = await app.state.model_profiles.create(
+                ModelProfileCreate(
+                    name="Managed fixture",
+                    base_url="https://fixture.example/v1",
+                    model="fixture",
+                    api_key=SecretStr("public-fixture-key"),
+                )
+            )
+            client.headers["X-Fixture-Model"] = profile.id
             yield client
     finally:
         try:
@@ -104,8 +114,12 @@ async def test_document_writes_require_bearer(
 ) -> None:
     project_id = api.headers["X-Fixture-Project"]
     assert (
-        await api.request(method, f"/workbench/projects/{project_id}{suffix}")
-    ).status_code == 401
+        await api.request(
+            method,
+            f"/workbench/projects/{project_id}{suffix}",
+            headers={"Origin": "https://foreign.invalid"},
+        )
+    ).status_code == 403
 
 
 async def test_pdf_upload_duplicate_size_and_format(api: httpx.AsyncClient) -> None:
@@ -158,6 +172,8 @@ async def test_submission_rejects_unavailable_documents(
         "/workbench/agent/tasks",
         headers=AUTH | {"Idempotency-Key": "invalid-docs"},
         json={
+            "model_profile_id": api.headers["X-Fixture-Model"],
+            "workflow_kind": "research",
             "objective": "公开测试",
             "mode": "autonomous",
             "project_id": api.headers["X-Fixture-Project"],
@@ -176,6 +192,8 @@ async def test_submission_bounds_document_selection(api: httpx.AsyncClient, ids:
         "/workbench/agent/tasks",
         headers=AUTH | {"Idempotency-Key": "bounded-docs"},
         json={
+            "model_profile_id": api.headers["X-Fixture-Model"],
+            "workflow_kind": "research",
             "objective": "公开测试",
             "mode": "autonomous",
             "project_id": api.headers["X-Fixture-Project"],
@@ -189,6 +207,8 @@ async def test_submission_replay_preserves_identity_and_budget_after_document_ch
     api: httpx.AsyncClient,
 ) -> None:
     payload = {
+        "model_profile_id": api.headers["X-Fixture-Model"],
+        "workflow_kind": "research",
         "objective": "公开验收目标",
         "mode": "autonomous",
         "project_id": api.headers["X-Fixture-Project"],

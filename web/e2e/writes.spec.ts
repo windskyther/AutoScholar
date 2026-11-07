@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-const TOKEN = 'public-test-fixture-token';
+const modelId = '11111111-1111-4111-8111-111111111111';
 const time = '2026-10-06T00:00:00Z';
 const project = { id: 'project-a', name: '公开研究项目', description: '浏览器夹具', created_at: time, updated_at: time };
 const budget = { steps: 5, replans: 1, model_calls: 3, tool_calls: 5, search_queries: 2, code_repairs: 1,
@@ -24,15 +24,16 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
     const path = url.pathname;
     if (path === '/api/local-access') return route.fulfill({ status: 404, json: { error: { code: 'not_found' } } });
     const method = request.method();
-    expect(request.headers().authorization).toBe('Bearer ' + TOKEN);
+    expect(request.headers().authorization).toBeUndefined();
     calls.push({ method, path, key: request.headers()['idempotency-key'], body: request.postData() ?? undefined });
     let body: unknown;
     let status = 200;
-    if (path === '/api/workbench/session') body = { status: 'connected', authentication: 'single_operator_bearer', api_version: 'fixture', capabilities: {
+    if (path === '/api/workbench/session') body = { status: 'connected', authentication: 'local', api_version: 'fixture', capabilities: {
       llm_configured: true, web_search_configured: true, research_backend: 'native', filesystem_backend: 'native', experiment_backend: 'native',
       task_streaming: false, document_max_bytes: 1024, document_max_pages: 10, budget_limits: limits,
       research_workflows: options.researchWorkflows ?? false,
     } };
+    else if (path === '/api/workbench/models') body = { items: [{ id: '11111111-1111-4111-8111-111111111111', name: 'Managed fixture', base_url: 'https://fixture.example/v1', model: 'fixture', compatibility_profile: 'auto', enabled: true, created_at: time }] };
     else if (path === '/api/workbench/projects' && method === 'POST') {
       if (options.loseProjectAck) { await route.abort(); return; }
       const input = request.postDataJSON() as { name: string; description: string | null };
@@ -53,7 +54,7 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
       if (method === 'DELETE') { await route.fulfill({ status: 202, body: '' }); return; }
       body = item;
     } else if (path === '/api/workbench/agent/tasks') {
-      if (options.unauthorizedTask) { status = 401; body = { error: { code: 'experiment_auth_required' } }; }
+      if (options.unauthorizedTask) { status = 401; body = { error: { code: 'local_access_denied' } }; }
       else {
         const input = request.postDataJSON();
         task = { task_id: 'task-submitted', project_id: project.id, parent_task_id: null, objective: input.objective,
@@ -70,8 +71,6 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
     await route.fulfill({ status, contentType: 'application/json; charset=utf-8', body: JSON.stringify(body) });
   });
   await page.goto('/');
-  await page.getByLabel('操作者 Token', { exact: true }).fill(TOKEN);
-  await page.getByRole('button', { name: '连接本地 API' }).click();
   await expect(page.getByRole('link', { name: project.name })).toBeVisible();
   return calls;
 }
@@ -81,6 +80,25 @@ async function draftTask(page: Page) {
   await page.getByRole('button', { name: '创建研究任务' }).click();
   await page.getByLabel('研究目标', { exact: true }).fill('公开的 MNIST 验收目标');
 }
+
+test('an empty model manager blocks task submission without a fallback model', async ({ page }) => {
+  await fixture(page);
+  await page.route('**/api/workbench/models', (route) => route.fulfill({ json: { items: [] } }));
+  await draftTask(page);
+  await expect(page.getByText('请先添加或选择一个可用模型')).toBeVisible();
+  await expect(page.getByRole('button', { name: '确认提交并自动执行' })).toBeDisabled();
+  await expect(page.getByText(/默认模型|默认 API/)).toHaveCount(0);
+});
+
+test('document analysis requires project PDFs and hides external search options', async ({ page }) => {
+  await fixture(page);
+  await draftTask(page);
+  await page.getByLabel('任务类型', { exact: true }).click();
+  await page.getByText('项目文档分析', { exact: true }).click();
+  await expect(page.getByLabel('检索来源', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('全部已就绪 PDF', { exact: true })).toBeVisible();
+  await expect(page.getByText('MNIST CPU 实验', { exact: true })).toHaveCount(0);
+});
 const consent = '我确认提交后自动执行研究任务，并接受可能产生的 API 费用。';
 
 test('research defaults preserve the objective and explicitly disable unselected PDFs', async ({ page }) => {
@@ -116,7 +134,7 @@ test('the advertised 500000-token allowance is available and submitted for a new
   expect(JSON.parse(request.body!).budget.total_tokens).toBe(500000);
 });
 
-test('experiment selection is explicit and retains its execution budget', async ({ page }) => {
+test('literature selection uses a managed model and exposes no training controls', async ({ page }) => {
   const calls = await fixture(page, { researchWorkflows: true });
   await draftTask(page);
   const dialog = page.getByRole('dialog');
@@ -124,12 +142,12 @@ test('experiment selection is explicit and retains its execution budget', async 
   await kind.click();
   await kind.press('ArrowDown');
   await kind.press('Enter');
-  await expect(dialog.getByLabel('训练次数上限', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('训练次数上限', { exact: true })).toHaveCount(0);
   await dialog.getByRole('checkbox', { name: consent }).check();
   await dialog.getByRole('button', { name: '确认提交并自动执行' }).click();
   await expect(page.getByRole('heading', { name: '任务详情', exact: true })).toBeVisible();
   const submitted = calls.find((item) => item.method === 'POST' && item.path.endsWith('/agent/tasks'))!;
-  expect(JSON.parse(submitted.body!)).toMatchObject({ workflow_kind: 'experiment', budget: { training_runs: 1 } });
+  expect(JSON.parse(submitted.body!)).toMatchObject({ workflow_kind: 'literature_review', model_profile_id: '11111111-1111-4111-8111-111111111111' });
 });
 
 test('creates a project after input validation and navigates to it', async ({ page }) => {
@@ -209,7 +227,8 @@ test('task requires cost consent, ready documents and respects server budget, ev
   const submissions = calls.filter((item) => item.path === '/api/workbench/agent/tasks');
   expect(submissions).toHaveLength(1);
   expect(submissions[0].key).toBeTruthy();
-  expect(JSON.parse(submissions[0].body!)).toMatchObject({ document_ids: ['doc-ready'], budget, mode: 'autonomous', project_id: project.id });
+  const { code_repairs: _repairs, sandbox_runs: _sandbox, training_runs: _training, ...researchBudget } = budget;
+  expect(JSON.parse(submissions[0].body!)).toMatchObject({ document_ids: ['doc-ready'], budget: researchBudget, mode: 'autonomous', workflow_kind: 'research', model_profile_id: modelId, project_id: project.id });
 });
 
 test('lost task acknowledgement freezes the original draft and survives route changes before explicit retry', async ({ page }) => {

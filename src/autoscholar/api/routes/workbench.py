@@ -1,18 +1,16 @@
-"""Authenticated browser facade. Legacy REST paths remain explicitly unchanged."""
+"""Local browser facade for projects, managed models and research tasks."""
 
 from typing import Annotated, Literal, cast
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Header, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from autoscholar import __version__
 from autoscholar.agent.records import ArtifactRecord, ResolvedAgentMode, TaskStatus
 from autoscholar.agent.repository import AgentTaskRepository
-from autoscholar.api.experiment_auth import require_experiment_token
 from autoscholar.api.routes.agent import router as agent_router
-from autoscholar.api.routes.experiments import router as experiments_router
 from autoscholar.api.routes.health import router as health_router
 from autoscholar.api.routes.memory import router as memory_router
 from autoscholar.api.routes.projects import router as projects_router
@@ -44,9 +42,10 @@ from autoscholar.experiment.artifacts import ArtifactError, ArtifactManager
 from autoscholar.llm.profiles import ModelProfileCreate, ModelProfilePublic, ModelProfiles
 from autoscholar.llm.usage import UsageSummary
 from autoscholar.orchestration.approvals import ApprovalDecision
+from autoscholar.orchestration.task_types import TASK_TYPES
 
 router = APIRouter(
-    prefix="/workbench", tags=["workbench"], dependencies=[Depends(require_experiment_token)]
+    prefix="/workbench", tags=["workbench"]
 )
 
 
@@ -67,7 +66,10 @@ async def session(request: Request) -> WorkbenchSessionResponse:
     return WorkbenchSessionResponse(
         api_version=__version__,
         capabilities={
-            "llm_configured": settings.llm_configured,
+            "llm_configured": any(item.enabled for item in await models(request).list()),
+            "task_types": [
+                {"id": key, "label": value["label"]} for key, value in TASK_TYPES.items()
+            ],
             "model_management": True,
             "model_usage": True,
             "web_search_configured": settings.web_search_configured,
@@ -101,16 +103,8 @@ def models(request: Request) -> ModelProfiles:
 
 @router.get("/models")
 async def list_models(request: Request) -> dict[str, object]:
-    settings = request.app.state.settings
     return {
         "items": await models(request).list(),
-        "default_model": {
-            "name": "默认模型",
-            "model": settings.llm_model,
-            "base_url": settings.llm_base_url,
-        }
-        if settings.llm_configured
-        else None,
     }
 
 
@@ -367,7 +361,6 @@ async def artifact_content(task_id: str, artifact_id: str, request: Request) -> 
 for existing in (
     projects_router,
     agent_router,
-    experiments_router,
     workflows_router,
     memory_router,
     health_router,

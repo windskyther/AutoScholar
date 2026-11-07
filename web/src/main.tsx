@@ -7,7 +7,7 @@ import zhCN from 'antd/locale/zh_CN';
 import 'antd/dist/reset.css';
 import './styles.css';
 import App from './App';
-import { AuthProvider } from './auth';
+import { ConnectionProvider } from './connection';
 
 const cache = new QueryClient({ defaultOptions: {
   queries: { retry: false, staleTime: 15000, refetchOnWindowFocus: false, refetchOnReconnect: false },
@@ -19,6 +19,6 @@ createRoot(document.getElementById('root')!).render(<StrictMode>
     colorPrimary: '#1f7165', borderRadius: 6, fontSize: 14,
     fontFamily: '"Segoe UI", "Microsoft YaHei", system-ui, sans-serif',
   } }}>
-    <QueryClientProvider client={cache}><AuthProvider><BrowserRouter><App /></BrowserRouter></AuthProvider></QueryClientProvider>
+    <QueryClientProvider client={cache}><ConnectionProvider><BrowserRouter><App /></BrowserRouter></ConnectionProvider></QueryClientProvider>
   </ConfigProvider>
 </StrictMode>);

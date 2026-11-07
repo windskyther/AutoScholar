@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 
 const time = '2026-11-06T00:00:00Z';
 const project = { id: 'automatic-project', name: '自动连接项目', description: null, created_at: time, updated_at: time };
-const session = { status: 'connected', authentication: 'single_operator_bearer', api_version: 'fixture',
+const session = { status: 'connected', authentication: 'local', api_version: 'fixture',
   capabilities: { llm_configured: false, web_search_configured: false, research_backend: 'native', filesystem_backend: 'native', experiment_backend: 'native', task_streaming: false } };
 
 async function fixture(page: Page, initial: 200 | 401 | 503 = 200) {
@@ -15,7 +15,7 @@ async function fixture(page: Page, initial: 200 | 401 | 503 = 200) {
     calls.push(path);
     if (path === '/api/local-access') return route.fulfill({ json: { mode: 'local_proxy' } });
     if (path.endsWith('/session')) return route.fulfill(status === 200 ? { json: session } : {
-      status, json: { error: { code: status === 401 ? 'experiment_auth_required' : 'local_proxy_not_configured' } },
+      status, json: { error: { code: status === 401 ? 'local_access_denied' : 'local_proxy_not_configured' } },
     });
     if (path === '/api/workbench/projects') return route.fulfill({ json: { items: [project], total: 1, limit: 20, offset: 0 } });
     if (path.endsWith('/projects/' + project.id)) return route.fulfill({ json: project });

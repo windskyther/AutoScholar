@@ -101,8 +101,7 @@ class RequestGovernanceMiddleware:
         category = category_for(scope)
         limit = self.settings.api_request_limits[category]
         lease = str(uuid4())
-        token = self.settings.experiment_api_token
-        actor = hashlib.sha256(token.get_secret_value().encode()).hexdigest() if token else "none"
+        actor = "local"
         key = request.headers.get("idempotency-key")
         event = AuditEvent(
             id=str(uuid4()),

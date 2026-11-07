@@ -26,7 +26,8 @@ from autoscholar.rag.models import DocumentChunkRecord, DocumentRecord, Retrieve
 from autoscholar.rag.repository import KnowledgeRepository
 from autoscholar.rag.service import RAGQueryResult, RAGQueryService
 from tests.api_credentials import AUTH, TOKEN_SECRET
-from tests.governance import offline_app
+from tests.managed_fixture import MODEL_ID
+from tests.managed_fixture import managed_offline_app as offline_app
 from tests.test_chat import SuccessfulProvider
 from tests.test_health import FakeDependency
 
@@ -485,7 +486,7 @@ class FakeRAGService:
 def test_rag_query_api_exposes_document_page_and_citations() -> None:
     client = TestClient(
         offline_app(
-            Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
+            Settings(llm_api_key=None, llm_model=None, model_encryption_key=TOKEN_SECRET),
             database=FakeDependency(),
             redis=FakeDependency(),
             qdrant=FakeDependency(),
@@ -497,7 +498,11 @@ def test_rag_query_api_exposes_document_page_and_citations() -> None:
     with client:
         response = client.post(
             "/projects/project-1/rag/query",
-            json={"question": "  What is LoRA?  ", "retrieval_mode": "dense"},
+            json={
+                "model_profile_id": MODEL_ID,
+                "question": "  What is LoRA?  ",
+                "retrieval_mode": "dense",
+            },
         )
 
     assert response.status_code == 200

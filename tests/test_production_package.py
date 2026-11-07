@@ -60,7 +60,7 @@ def test_fresh_secret_setup_never_overwrites_existing_files(tmp_path: Path) -> N
     target = tmp_path / "secrets"
     initialize_secrets(target)
     first = {path.name: path.read_bytes() for path in target.iterdir()}
-    assert first["api_token"] != first["sandbox_token"]
+    assert first["model_encryption_key"] != first["sandbox_token"]
     assert first["postgres_password"].strip() in first["database_url"]
     assert (
         json.loads(first["qdrant_config"])["service"]["api_key"]

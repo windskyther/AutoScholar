@@ -2,7 +2,6 @@ import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
-const token = 'public-task-actions-token';
 const time = '2026-11-06T00:00:00Z';
 const project = { id: 'project-actions', name: '目标管理项目', description: null, created_at: time, updated_at: time };
 const goal = { task_id: 'goal-a', project_id: project.id, parent_task_id: null, objective: '中文研究 / 目标',
@@ -17,7 +16,7 @@ async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' | 'emp
   await page.route('**/api/**', async (route) => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     if (path === '/api/local-access') return route.fulfill({ status: 404, json: { error: { code: 'not_found' } } });
-    expect(request.headers().authorization).toBe('Bearer ' + token);
+    expect(request.headers().authorization).toBeUndefined();
     calls.push({ method: request.method(), path });
     if (request.method() === 'DELETE') {
       expect(path).toBe(`/api/workbench/projects/${project.id}/tasks/${goal.task_id}`);
@@ -27,7 +26,7 @@ async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' | 'emp
     }
     expect(request.method()).toBe('GET');
     if (path.endsWith('/session')) return route.fulfill({ json: {
-      status: 'connected', authentication: 'single_operator_bearer', api_version: 'fixture',
+      status: 'connected', authentication: 'local', api_version: 'fixture',
       capabilities: { llm_configured: false, web_search_configured: false, research_backend: 'native', filesystem_backend: 'native',
         experiment_backend: 'native', task_streaming: true, resource_browser: true, task_deletion: true, markdown_export: true },
     } });
@@ -52,8 +51,6 @@ async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' | 'emp
     throw new Error('Unexpected task action route: ' + path);
   });
   await page.goto('/');
-  await page.getByLabel('操作者 Token', { exact: true }).fill(token);
-  await page.getByRole('button', { name: '连接本地 API' }).click();
   await page.getByRole('link', { name: project.name, exact: true }).click();
   return calls;
 }

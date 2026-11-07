@@ -8,8 +8,6 @@ test.afterAll(async ({ request }) => {
 });
 async function connect(page: import('@playwright/test').Page) {
   await page.goto('/');
-  await page.getByLabel('操作者 Token', { exact: true }).fill('public-test-fixture-token');
-  await page.getByRole('button', { name: '连接本地 API' }).click();
   await page.getByRole('link', { name: '中文研究项目' }).click();
   await page.getByRole('link', { name: '比较 MNIST 模型' }).click();
 }

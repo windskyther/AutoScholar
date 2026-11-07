@@ -4,7 +4,7 @@ import { DeleteOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { ApiError, errorMessage, isWriteUncertain } from './api';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 import { useSubmission } from './task-submission';
 import type { Project } from './types';
 

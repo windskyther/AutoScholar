@@ -13,7 +13,8 @@ from autoscholar.llm.models import (
     ToolDefinition,
 )
 from tests.api_credentials import AUTH, TOKEN_SECRET
-from tests.governance import offline_app
+from tests.managed_fixture import MODEL_ID
+from tests.managed_fixture import managed_offline_app as offline_app
 from tests.test_health import FakeDependency
 
 
@@ -64,7 +65,7 @@ def client_with_provider(
 ) -> TestClient:
     return TestClient(
         offline_app(
-            Settings(experiment_api_token=TOKEN_SECRET),
+            Settings(model_encryption_key=TOKEN_SECRET),
             database=FakeDependency(),
             redis=FakeDependency(),
             llm_provider=provider,
@@ -79,7 +80,7 @@ def test_chat_returns_provider_result_and_usage() -> None:
     with client_with_provider(provider) as client:
         response = client.post(
             "/chat",
-            json={"message": "  hello  "},
+            json={"model_profile_id": MODEL_ID, "message": "  hello  "},
             headers={"X-Request-ID": "chat-test"},
         )
 
@@ -96,7 +97,7 @@ def test_chat_returns_provider_result_and_usage() -> None:
 @pytest.mark.parametrize("message", ["", "   "])
 def test_chat_rejects_empty_messages(message: str) -> None:
     with client_with_provider(SuccessfulProvider()) as client:
-        response = client.post("/chat", json={"message": message})
+        response = client.post("/chat", json={"model_profile_id": MODEL_ID, "message": message})
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "request_validation_error"
@@ -104,14 +105,16 @@ def test_chat_rejects_empty_messages(message: str) -> None:
 
 def test_chat_rejects_oversized_messages() -> None:
     with client_with_provider(SuccessfulProvider()) as client:
-        response = client.post("/chat", json={"message": "x" * 10_001})
+        response = client.post(
+            "/chat", json={"model_profile_id": MODEL_ID, "message": "x" * 10_001}
+        )
 
     assert response.status_code == 422
 
 
 def test_chat_returns_503_when_llm_is_not_configured() -> None:
     with client_with_provider(UnconfiguredLLMProvider()) as client:
-        response = client.post("/chat", json={"message": "hello"})
+        response = client.post("/chat", json={"model_profile_id": MODEL_ID, "message": "hello"})
 
     assert response.status_code == 503
     assert response.json()["error"] == {
@@ -122,7 +125,7 @@ def test_chat_returns_503_when_llm_is_not_configured() -> None:
 
 def test_chat_maps_provider_unavailability() -> None:
     with client_with_provider(FailingProvider()) as client:
-        response = client.post("/chat", json={"message": "hello"})
+        response = client.post("/chat", json={"model_profile_id": MODEL_ID, "message": "hello"})
 
     assert response.status_code == 503
     assert response.json()["error"] == {

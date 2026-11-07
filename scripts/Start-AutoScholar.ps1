@@ -16,13 +16,12 @@ $started = $false
 $oldLocation = Get-Location
 
 function Read-LocalResponse {
-    param([string]$Url, [string]$Token)
+    param([string]$Url)
     $request = [System.Net.HttpWebRequest]::Create($Url)
     $request.Proxy = $null
     $request.AllowAutoRedirect = $false
     $request.Timeout = 2000
     $request.ReadWriteTimeout = 2000
-    if ($Token) { $request.Headers['Authorization'] = 'Bearer ' + $Token }
     $response = $null
     try {
         $response = $request.GetResponse()
@@ -57,7 +56,7 @@ try {
     Set-Location -LiteralPath $repoRoot
     if (-not (Test-Path -LiteralPath '.env' -PathType Leaf)) {
         Copy-Item -LiteralPath '.env.example' -Destination '.env'
-        throw 'Created .env from the example. Fill in the model settings and two separate Tokens, then start again. See README.md.'
+        throw 'Created .env from the example. Fill in the model encryption key and sandbox credential, then start again. See README.md.'
     }
     $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
     $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
@@ -86,11 +85,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Cannot load .env or compose.yaml.' }
     try { $configuration = ($configurationText -join "`n") | ConvertFrom-Json }
     catch { throw 'Cannot read the Compose configuration.' }
-    $apiToken = [string]$configuration.services.api.environment.EXPERIMENT_API_TOKEN
+    $modelKey = [string]$configuration.services.api.environment.MODEL_ENCRYPTION_KEY
     $sandboxToken = [string]$configuration.services.api.environment.SANDBOX_MANAGER_TOKEN
-    if ([string]::IsNullOrWhiteSpace($apiToken)) { throw 'Set EXPERIMENT_API_TOKEN in .env first. See README.md.' }
-    if ($sandboxToken.Length -lt 32 -or $sandboxToken -eq $apiToken) {
-        throw 'Set a separate SANDBOX_MANAGER_TOKEN of at least 32 characters in .env. See README.md.'
+    if ([string]::IsNullOrWhiteSpace($modelKey)) { throw 'Set MODEL_ENCRYPTION_KEY in .env first. See README.md.' }
+    if ($sandboxToken.Length -lt 32 -or $sandboxToken -eq $modelKey) {
+        throw 'Set SANDBOX_MANAGER_TOKEN of at least 32 characters in .env. See README.md.'
     }
     $configurationText = $null
     $configuration = $null
@@ -121,7 +120,7 @@ try {
     if ($Rebuild) { $upArguments += '--build' }
     & $script:dockerBinary @composeArguments @upArguments
     if ($LASTEXITCODE -ne 0) { throw 'Background services did not become ready. Run docker compose ps -a to inspect them.' }
-    $session = Read-LocalResponse -Url ($apiUrl + '/workbench/session') -Token $apiToken
+    $session = Read-LocalResponse -Url ($apiUrl + '/workbench/session')
     if ($session.Status -ne 200) { throw 'The workbench API is unavailable. Check .env; after code updates use Start-AutoScholar.cmd -Rebuild.' }
 
     Write-Host '[3/3] Preparing the workbench...'
@@ -173,7 +172,7 @@ try {
     Write-Host ('Startup failed: ' + $_.Exception.Message) -ForegroundColor Red
     exit 1
 } finally {
-    $apiToken = $null
+    $modelKey = $null
     if (-not $started -and $webProcess -and -not $webProcess.HasExited) { Stop-Process -Id $webProcess.Id -ErrorAction SilentlyContinue }
     if ($startupLock) { $startupLock.Dispose() }
     Set-Location -LiteralPath $oldLocation.Path

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button } from 'antd';
 import { DownloadOutlined } from '@ant-design/icons';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 import { errorMessage } from './api';
 
 function filename(objective: string, taskId: string): string {

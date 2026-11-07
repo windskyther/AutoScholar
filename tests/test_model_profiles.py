@@ -27,7 +27,7 @@ from tests.test_autonomous import workflow
 from tests.test_experiment_service import FakeExperimentSandbox
 from tests.test_health import FakeDependency
 
-AUTH = {"Authorization": "Bearer public-model-management-operator"}
+AUTH: dict[str, str] = {}
 
 
 def connection(name: str = "Reader") -> dict[str, str]:
@@ -54,7 +54,7 @@ async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
     app = offline_app(
         Settings(
             _env_file=None,
-            experiment_api_token=SecretStr(  # type: ignore[call-arg]
+            model_encryption_key=SecretStr(  # type: ignore[call-arg]
                 "public-model-management-operator",
             ),
         ),
@@ -81,7 +81,11 @@ async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
 
 async def test_create_list_restart_and_auth_never_disclose_keys(client: httpx.AsyncClient) -> None:
     payload = connection()
-    assert (await client.post("/workbench/models", json=payload)).status_code == 401
+    assert (
+        await client.post(
+            "/workbench/models", json=payload, headers={"Origin": "https://foreign.invalid"}
+        )
+    ).status_code == 403
     created = await client.post("/workbench/models", json=payload, headers=AUTH)
     assert created.status_code == 201
     assert created.json()["name"] == "Reader"
@@ -94,7 +98,7 @@ async def test_create_list_restart_and_auth_never_disclose_keys(client: httpx.As
     assert conflict.status_code == 409
     catalog = await client.get("/workbench/models", headers=AUTH)
     assert len(catalog.json()["items"]) == 1
-    assert catalog.json()["default_model"] is None
+    assert "default_model" not in catalog.json()
     assert payload["api_key"] not in catalog.text and "encrypted_key" not in catalog.text
     assert payload["api_key"] not in redact_text("diagnostic " + payload["api_key"])
     profiles = client.fixture_app.state.model_profiles  # type: ignore[attr-defined]
@@ -108,7 +112,7 @@ async def test_create_list_restart_and_auth_never_disclose_keys(client: httpx.As
         profiles.sessions,
         profiles.settings.model_copy(
             update={
-                "experiment_api_token": SecretStr("different-public-operator"),
+                "model_encryption_key": SecretStr("different-public-operator"),
             }
         ),
     )
@@ -277,9 +281,12 @@ async def test_legacy_checkpoint_and_submission_retry_survive_optional_model_fie
 ) -> None:
     payload = {"objective": "Old task", "mode": "autonomous", "workflow_kind": "research"}
     headers = AUTH | {"Idempotency-Key": "legacy-model-selection"}
-    first = await client.post("/workbench/agent/tasks", json=payload, headers=headers)
-    task_id = first.json()["task_id"]
     durable = client.fixture_app.state.durable_service  # type: ignore[attr-defined]
+    from autoscholar.api.routes.agent import AgentRunRequest
+
+    task_id, _ = await durable.submit(
+        AgentRunRequest.model_validate(payload).model_dump(mode="json"), "legacy-model-selection"
+    )
     async with durable.repository.sessions() as session:
         checkpoint = await session.scalar(
             select(WorkflowCheckpointRow).where(

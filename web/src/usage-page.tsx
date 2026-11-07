@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Alert, Collapse, Empty, Segmented, Select, Table } from 'antd';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 import { Loading, Metric, PageHeading, QueryError } from './components';
 import type { UsageDay, UsageGroup } from './usage-types';
 

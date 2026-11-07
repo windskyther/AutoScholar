@@ -129,7 +129,7 @@ async def fixture_app(
         filesystem_tool_backend="native",
         git_tool_backend="disabled",
         experiment_tool_backend="native",
-        experiment_api_token=SecretStr(TOKEN),
+        model_encryption_key=SecretStr(TOKEN),
         workspace_root=temporary_root / "workspaces",
         document_storage_path=temporary_root / "documents",
         document_max_bytes=2048 if writes else 52428800,
@@ -400,15 +400,8 @@ async def fixture_app(
             "control_task_id": control_task,
         }
 
-    def fixture_authorization(request: Request) -> None:
-        if request.headers.get("Authorization") != "Bearer " + TOKEN:
-            raise AppError(
-                status_code=401, code="fixture_auth_required", message="Fixture token required"
-            )
-
     @application.post("/__fixture/control-seed")
     async def control_seed(request: Request) -> dict[str, str]:
-        fixture_authorization(request)
         if not controls:
             raise AppError(status_code=404, code="fixture_read_only", message="Controls disabled")
         return {"task_id": await seed_control()}
@@ -419,12 +412,10 @@ async def fixture_app(
 
     @application.post("/__fixture/process")
     async def process(request: Request) -> dict[str, bool]:
-        fixture_authorization(request)
         return {"handled": await worker.run_once()}
 
     @application.post("/__fixture/advance")
     async def advance(request: Request, finish: bool = False) -> dict[str, int]:
-        fixture_authorization(request)
         assert streams and stream_task
         async with sessions() as session:
             task = await session.get(AgentTaskRow, stream_task)
@@ -459,7 +450,6 @@ async def fixture_app(
 
     @application.post("/__fixture/stop")
     async def stop(request: Request) -> dict[str, bool]:
-        fixture_authorization(request)
         application.state.fixture_server.should_exit = True
         return {"stopping": True}
 

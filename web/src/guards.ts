@@ -40,7 +40,7 @@ export function isEventPage(value: unknown): value is EventPage {
 }
 
 export function isSession(value: unknown): value is Session {
-  if (!record(value) || value.status !== 'connected' || value.authentication !== 'single_operator_bearer'
+  if (!record(value) || value.status !== 'connected' || value.authentication !== 'local'
     || !string(value.api_version) || !record(value.capabilities)) return false;
   const caps = value.capabilities;
   return ['llm_configured', 'web_search_configured', 'task_streaming'].every((key) => typeof caps[key] === 'boolean')

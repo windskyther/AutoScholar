@@ -20,40 +20,40 @@ describe('guarded controls', () => {
   it('sends state-bound POST and token only in the header', async () => {
     const fetcher = vi.fn().mockResolvedValue(json({ task_id: 'task-a', status: 'queued' })); vi.stubGlobal('fetch', fetcher);
     const state = { ...expected, status: 'paused' as const };
-    await new ApiClient('public-token').controlTask('task-a', 'resume', state);
+    await new ApiClient().controlTask('task-a', 'resume', state);
     expect(fetcher).toHaveBeenCalledTimes(1);
     const [url, options] = fetcher.mock.calls[0];
     expect(url).toBe('/api/workbench/tasks/task-a/control/resume');
-    expect(options).toMatchObject({ method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error', headers: { Authorization: 'Bearer public-token' } });
+    expect(options).toMatchObject({ method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error', headers: { } });
     expect(JSON.parse(options.body)).toEqual({ expected: state });
     expect(url).not.toContain('public-token');
   });
   it('sends modification with immutable original fingerprint and complete specification', async () => {
     const fetcher = vi.fn().mockResolvedValue(json({ task_id: 'task-a', status: 'paused' })); vi.stubGlobal('fetch', fetcher);
-    await new ApiClient('public-token').decideApproval('task-a', 'approval-a', { ...decision, action: 'modify', specification: { ...specification, epochs: 1 } });
+    await new ApiClient().decideApproval('task-a', 'approval-a', { ...decision, action: 'modify', specification: { ...specification, epochs: 1 } });
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ ...decision, action: 'modify', specification: { ...specification, epochs: 1 } });
   });
   it.each(['network', 'invalid', 'wrong_task', 'server'])('does not retry uncertain %s writes', async (kind) => {
     const fetcher = kind === 'network' ? vi.fn().mockRejectedValue(new Error('lost')) : vi.fn().mockResolvedValue(
       kind === 'invalid' ? json({}) : kind === 'wrong_task' ? json({ task_id: 'other', status: 'paused' }) : json({ error: { code: 'internal_error' } }, 500));
     vi.stubGlobal('fetch', fetcher);
-    try { await new ApiClient('public-token').decideApproval('task-a', 'approval-a', decision); throw new Error('Expected failure'); }
+    try { await new ApiClient().decideApproval('task-a', 'approval-a', decision); throw new Error('Expected failure'); }
     catch (failure) { expect(isWriteUncertain(failure)).toBe(true); }
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it('stale state is a known rejection and not retried', async () => {
     const fetcher = vi.fn().mockResolvedValue(json({ error: { code: 'workbench_state_stale' } }, 409)); vi.stubGlobal('fetch', fetcher);
-    await expect(new ApiClient('public-token').controlTask('task-a', 'cancel', expected)).rejects.toMatchObject({ code: 'workbench_state_stale', status: 409 });
+    await expect(new ApiClient().controlTask('task-a', 'cancel', expected)).rejects.toMatchObject({ code: 'workbench_state_stale', status: 409 });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it('rejects an inconsistent success status as uncertain', async () => {
     const fetcher = vi.fn().mockResolvedValue(json({ task_id: 'task-a', status: 'running' })); vi.stubGlobal('fetch', fetcher);
-    await expect(new ApiClient('public-token').decideApproval('task-a', 'approval-a', decision)).rejects.toMatchObject({ code: 'write_result_unknown' });
+    await expect(new ApiClient().decideApproval('task-a', 'approval-a', decision)).rejects.toMatchObject({ code: 'write_result_unknown' });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it('authentication failure clears session and never retries', async () => {
     const fetcher = vi.fn().mockResolvedValue(json({}, 401)); vi.stubGlobal('fetch', fetcher);
-    const disconnected = vi.fn(); const client = new ApiClient('public-token', disconnected);
+    const disconnected = vi.fn(); const client = new ApiClient(disconnected);
     await expect(client.decideApproval('task-a', 'approval-a', decision)).rejects.toMatchObject({ status: 401 });
     expect(disconnected).toHaveBeenCalledTimes(1); expect(client.connected).toBe(false);
   });
@@ -62,16 +62,16 @@ describe('guarded controls', () => {
     { ...decision, specification }, { ...decision, expected: { ...expected, checkpoint_sequence: -1 } },
   ])('rejects invalid decisions before network', async (value) => {
     const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
-    await expect(new ApiClient('public-token').decideApproval('task-a', 'approval-a', value as ApprovalDecision)).rejects.toMatchObject({ code: 'request_validation_error' });
+    await expect(new ApiClient().decideApproval('task-a', 'approval-a', value as ApprovalDecision)).rejects.toMatchObject({ code: 'request_validation_error' });
     expect(fetcher).not.toHaveBeenCalled();
   });
   it('rejects cross-task read responses', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ task_id: 'other', status: 'awaiting_approval', expected, actions: ['cancel'] })));
-    await expect(new ApiClient('public-token').controls('task-a')).rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(new ApiClient().controls('task-a')).rejects.toMatchObject({ code: 'invalid_response' });
   });
   it('validates bounded approval pages', async () => {
     const fetcher = vi.fn().mockResolvedValue(json({ task_id: 'task-a', items: [approval], total: 1, limit: 20, offset: 20 })); vi.stubGlobal('fetch', fetcher);
-    await expect(new ApiClient('public-token').approvals('task-a', 2)).resolves.toMatchObject({ items: [approval] });
+    await expect(new ApiClient().approvals('task-a', 2)).resolves.toMatchObject({ items: [approval] });
     expect(fetcher.mock.calls[0][0]).toContain('offset=20');
   });
   it('validates legacy state and rejects unsafe action availability', () => {

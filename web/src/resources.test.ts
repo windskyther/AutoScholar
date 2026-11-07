@@ -13,34 +13,34 @@ afterEach(() => vi.unstubAllGlobals());
 
 it('downloads only through bearer fetch and verifies UTF-8 bytes/hash', async () => {
   const fetcher = vi.fn().mockResolvedValue(binary()); vi.stubGlobal('fetch', fetcher);
-  const blob = await new ApiClient('public-token').downloadArtifact('root-a', artifact);
+  const blob = await new ApiClient().downloadArtifact('root-a', artifact);
   expect(await blob.text()).toBe('# 中文公开报告');
   expect(fetcher.mock.calls[0][0]).toBe('/api/workbench/tasks/root-a/resources/artifacts/artifact-a/content');
-  expect(fetcher.mock.calls[0][1]).toMatchObject({ headers: { Authorization: 'Bearer public-token' }, credentials: 'omit', redirect: 'error' });
+  expect(fetcher.mock.calls[0][1]).toMatchObject({ headers: { }, credentials: 'omit', redirect: 'error' });
 });
 it.each(['hash', 'short', 'long', 'header'])('rejects corrupt %s without retry', async (kind) => {
   const bytes = kind === 'hash' ? new Uint8Array(content.length) : kind === 'short' ? content.slice(1)
     : kind === 'long' ? new Uint8Array(content.length + 1) : content;
   const fetcher = vi.fn().mockResolvedValue(binary(bytes, kind === 'header' ? '0'.repeat(64) : sha)); vi.stubGlobal('fetch', fetcher);
-  await expect(new ApiClient('public-token').downloadArtifact('root-a', artifact)).rejects.toMatchObject({ code: 'artifact_integrity_failed' });
+  await expect(new ApiClient().downloadArtifact('root-a', artifact)).rejects.toMatchObject({ code: 'artifact_integrity_failed' });
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
 it.each([401, 403])('clears authentication on binary %i', async (status) => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({}, status)));
-  const disconnected = vi.fn(); const api = new ApiClient('public-token', disconnected);
+  const disconnected = vi.fn(); const api = new ApiClient(disconnected);
   await expect(api.downloadArtifact('root-a', artifact)).rejects.toMatchObject({ status });
   expect(api.connected).toBe(false); expect(disconnected).toHaveBeenCalledTimes(1);
 });
 it('rejects unsafe manifests and traversal before a request', async () => {
   const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
   for (const item of [{ ...artifact, path: '.env' }, { ...artifact, path: '../report.md' }, { ...artifact, size_bytes: 16777217 }, { ...artifact, id: '../x' }]) {
-    await expect(new ApiClient('public-token').downloadArtifact('root-a', item)).rejects.toMatchObject({ code: 'artifact_manifest_invalid' });
+    await expect(new ApiClient().downloadArtifact('root-a', item)).rejects.toMatchObject({ code: 'artifact_manifest_invalid' });
   }
   expect(fetcher).not.toHaveBeenCalled(); expect(isArtifact(artifact)).toBe(true);
 });
 it('checks preview identity and digest', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ task_id: 'other', artifact_id: artifact.id, sha256: sha, text: 'x', truncated: false })));
-  await expect(new ApiClient('public-token').previewArtifact('root-a', artifact)).rejects.toMatchObject({ code: 'invalid_response' });
+  await expect(new ApiClient().previewArtifact('root-a', artifact)).rejects.toMatchObject({ code: 'invalid_response' });
 });
 it.each(['javascript:alert(1)', 'data:text/html,x', 'https://user:pass@example.org', 'https://example.org/\n'])('refuses unsafe source URL %s', (value) => {
   expect(safeExternalURL(value)).toBeNull();
@@ -54,5 +54,5 @@ it('accepts safe source URL, evidence and empty experimental measurements', () =
 });
 it('checks resource page root identity', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ task_id: 'other', items: [], total: 0, limit: 20, offset: 0 })));
-  await expect(new ApiClient('public-token').artifacts('root-a', 1)).rejects.toMatchObject({ code: 'invalid_response' });
+  await expect(new ApiClient().artifacts('root-a', 1)).rejects.toMatchObject({ code: 'invalid_response' });
 });

@@ -19,7 +19,7 @@ def test_application_foreign_logs_and_exceptions_are_redacted(
     configure_logging(
         "DEBUG",
         settings=Settings(
-            experiment_api_token=SecretStr("public-synthetic-token-123456"),
+            model_encryption_key=SecretStr("public-synthetic-token-123456"),
             llm_api_key=SecretStr("synthetic-provider-key"),
             database_url="postgresql+asyncpg://user:synthetic-db-password@localhost/database",
         ),

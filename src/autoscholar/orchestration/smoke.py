@@ -144,7 +144,7 @@ async def run_smoke(
         raise ValueError("Persistent fault acceptance requires --offline")
     settings = Settings()
     token = secrets.token_urlsafe(32)
-    settings = settings.model_copy(update={"experiment_api_token": SecretStr(token)})
+    settings = settings.model_copy(update={"model_encryption_key": SecretStr(token)})
     client = SandboxClient(
         settings.sandbox_manager_url,
         token=settings.sandbox_manager_token,

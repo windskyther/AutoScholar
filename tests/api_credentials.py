@@ -1,7 +1,7 @@
-"""Explicit public credentials for existing functional HTTP fixtures."""
+"""Public encryption material for offline fixtures; HTTP requests need no login."""
 
 from pydantic import SecretStr
 
 TOKEN = "public-functional-api-token"
 TOKEN_SECRET = SecretStr(TOKEN)
-AUTH = {"Authorization": "Bearer " + TOKEN}
+AUTH: dict[str, str] = {}

@@ -11,7 +11,7 @@ async function fixture(page: Page, empty = false, failure = false) {
     expect(route.request().method()).toBe('GET');
     expect(route.request().headers().authorization).toBeUndefined();
     if (url.pathname === '/api/local-access') return route.fulfill({ json: { mode: 'local_proxy' } });
-    if (url.pathname.endsWith('/session')) return route.fulfill({ json: { status: 'connected', authentication: 'single_operator_bearer', api_version: 'fixture',
+    if (url.pathname.endsWith('/session')) return route.fulfill({ json: { status: 'connected', authentication: 'local', api_version: 'fixture',
       capabilities: { llm_configured: false, web_search_configured: false, task_streaming: false, research_backend: 'native', filesystem_backend: 'native', experiment_backend: 'native', model_usage: true } } });
     if (url.pathname === '/api/workbench/projects') return route.fulfill({ json: { items: [], total: 0, limit: 20, offset: 0 } });
     if (url.pathname === '/api/workbench/usage') {

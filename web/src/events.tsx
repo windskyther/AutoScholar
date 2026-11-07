@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Empty, Space, Table, Tag } from 'antd';
 import { useQueryClient } from '@tanstack/react-query';
 import { ApiError, errorMessage } from './api';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 import { dateLabel, Loading } from './components';
 import type { EventPage, StreamMessage, WorkflowEvent } from './types';
 

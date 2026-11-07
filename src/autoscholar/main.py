@@ -17,11 +17,10 @@ from autoscholar.agent.runner import (
     TaskStore,
 )
 from autoscholar.agent.tools import CalculatorTool, RestrictedPythonTool
-from autoscholar.api.access import APIAuthenticationMiddleware, APIBoundaryMiddleware
+from autoscholar.api.access import APIBoundaryMiddleware
 from autoscholar.api.governance import RequestGovernance, RequestGovernanceMiddleware
 from autoscholar.api.routes.agent import router as agent_router
 from autoscholar.api.routes.chat import router as chat_router
-from autoscholar.api.routes.experiments import router as experiment_router
 from autoscholar.api.routes.health import router as health_router
 from autoscholar.api.routes.memory import router as memory_router
 from autoscholar.api.routes.projects import router as projects_router
@@ -48,7 +47,8 @@ from autoscholar.experiment.service import ExperimentService
 from autoscholar.infrastructure import Database, Qdrant, RedisClient
 from autoscholar.infrastructure.admission import RedisAdmissionStore
 from autoscholar.infrastructure.base import ManagedDependency
-from autoscholar.llm import LLMProvider, create_llm_provider
+from autoscholar.llm import LLMProvider
+from autoscholar.llm.factory import UnconfiguredLLMProvider
 from autoscholar.llm.profiles import ModelProfiles, RoutedLLM
 from autoscholar.orchestration.durable import DurableService
 from autoscholar.orchestration.repository import WorkflowRepository
@@ -129,7 +129,7 @@ def create_app(
         else None
     )
     resolved_qdrant = qdrant or Qdrant(resolved_settings.qdrant_url, api_key=qdrant_key)
-    resolved_llm_provider = BudgetedLLM(llm_provider or create_llm_provider(resolved_settings))
+    resolved_llm_provider = BudgetedLLM(llm_provider or UnconfiguredLLMProvider())
     resolved_agent_repository = agent_repository
     resolved_knowledge_repository = knowledge_repository
     if resolved_agent_repository is None and isinstance(resolved_database, Database):
@@ -505,7 +505,6 @@ def create_app(
     application.add_middleware(
         RequestGovernanceMiddleware, settings=resolved_settings, governance=resolved_governance
     )
-    application.add_middleware(APIAuthenticationMiddleware, settings=resolved_settings)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=resolved_settings.api_allowed_origins,
@@ -526,7 +525,6 @@ def create_app(
     application.include_router(health_router)
     application.include_router(chat_router)
     application.include_router(agent_router)
-    application.include_router(experiment_router)
     application.include_router(projects_router)
     application.include_router(rag_router)
     application.include_router(workflows_router)

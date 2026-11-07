@@ -75,7 +75,7 @@ def create_test_client(
 ) -> TestClient:
     return TestClient(
         offline_app(
-            Settings(experiment_api_token=TOKEN_SECRET),
+            Settings(model_encryption_key=TOKEN_SECRET),
             database=FakeDependency(healthy=database_healthy),
             redis=FakeDependency(healthy=redis_healthy),
             qdrant=FakeDependency(healthy=qdrant_healthy),
@@ -157,7 +157,7 @@ def test_readiness_when_a_dependency_is_unavailable() -> None:
 
 def test_readiness_reports_unconfigured_llm_without_failing_infrastructure() -> None:
     app = offline_app(
-        Settings(llm_api_key=None, llm_model=None, experiment_api_token=TOKEN_SECRET),
+        Settings(llm_api_key=None, llm_model=None, model_encryption_key=TOKEN_SECRET),
         database=FakeDependency(),
         redis=FakeDependency(),
         qdrant=FakeDependency(),
@@ -180,7 +180,7 @@ def test_mcp_outage_only_degrades_research_and_never_constructs_native_provider(
                 research_tool_backend="mcp",
                 filesystem_tool_backend="mcp",
                 mcp_service_token=SecretStr("x" * 32),
-                experiment_api_token=TOKEN_SECRET,
+                model_encryption_key=TOKEN_SECRET,
             ),
             database=FakeDependency(),
             redis=FakeDependency(),

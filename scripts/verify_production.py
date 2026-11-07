@@ -220,7 +220,6 @@ def main() -> None:
         url = ("https://" if args.tls else "http://") + published
         environment.update(
             PRODUCTION_URL=url,
-            PRODUCTION_TEST_TOKEN=(secret_dir / "api_token").read_text().strip(),
             PRODUCTION_REPORT_FILE=str(output / "browser.json"),
         )
         run(

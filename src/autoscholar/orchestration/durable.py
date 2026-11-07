@@ -40,7 +40,9 @@ class DurableService:
         self.owner = str(uuid4())
         self.audit = audit
 
-    async def submit(self, payload: dict[str, Any], key: str) -> tuple[str, bool]:
+    async def submit(
+        self, payload: dict[str, Any], key: str, *, require_managed: bool = False
+    ) -> tuple[str, bool]:
         request = dict(payload)
         request.pop("mode", None)
         requested_budget = request.pop("budget", None)
@@ -57,7 +59,9 @@ class DurableService:
         canonical = dict(payload)
         if canonical.get("model_profile_id") is None:
             canonical.pop("model_profile_id", None)
-        return await self.repository.enqueue(snapshot, key, digest(canonical))
+        return await self.repository.enqueue(
+            snapshot, key, digest(canonical), require_managed=require_managed
+        )
 
     async def tick(self, task_id: str | None = None) -> bool:
         claimed = await self.repository.claim(self.owner, self.lease_seconds, task_id)

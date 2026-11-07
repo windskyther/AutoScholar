@@ -56,7 +56,7 @@ async def actions(tmp_path: Path) -> AsyncIterator[tuple[Any, ...]]:
     finally:
         current_parent.reset(token)
     app = offline_app(
-        Settings(experiment_api_token=SecretStr("public-task-actions-token")),
+        Settings(model_encryption_key=SecretStr("public-task-actions-token")),
         database=FakeDependency(),
         redis=FakeDependency(),
         qdrant=FakeDependency(),
@@ -259,7 +259,9 @@ async def test_goal_removal_requires_auth_and_correct_project_root(
 ) -> None:
     client, _, _, project_id, other_id = actions
     path = f"/workbench/projects/{project_id}/tasks/goal"
-    assert (await client.delete(path)).status_code == 401
+    assert (
+        await client.delete(path, headers={"Origin": "https://foreign.invalid"})
+    ).status_code == 403
     assert (
         await client.delete(f"/workbench/projects/{other_id}/tasks/goal", headers=AUTH)
     ).status_code == 404
@@ -293,7 +295,11 @@ async def test_markdown_export_requires_auth_visible_root_and_existing_output(
     actions: tuple[Any, ...],
 ) -> None:
     client, service, _, _, _ = actions
-    assert (await client.get("/workbench/tasks/goal/output/markdown")).status_code == 401
+    assert (
+        await client.get(
+            "/workbench/tasks/goal/output/markdown", headers={"Origin": "https://foreign.invalid"}
+        )
+    ).status_code == 403
     assert (
         await client.get("/workbench/tasks/child/output/markdown", headers=AUTH)
     ).status_code == 404

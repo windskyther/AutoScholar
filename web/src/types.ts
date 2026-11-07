@@ -21,18 +21,19 @@ export interface TaskSubmission {
   objective: string; mode: 'autonomous'; project_id: string; document_ids: string[] | null;
   retrieval_mode: 'dense' | 'sparse' | 'hybrid' | 'hybrid_rerank'; research_sources: ('web' | 'paper')[];
   budget: BudgetLimits;
-  workflow_kind?: 'research' | 'experiment';
+  workflow_kind?: 'research' | 'literature_review' | 'comparison' | 'research_proposal' | 'document_analysis';
   model_profile_id?: string | null;
 }
 export interface SubmissionReceipt { task_id: string; status: TaskStatus; created: boolean; status_url: string }
 export interface Session {
-  status: 'connected'; authentication: 'single_operator_bearer'; api_version: string;
+  status: 'connected'; authentication: 'local'; api_version: string;
   capabilities: {
     llm_configured: boolean; web_search_configured: boolean; research_backend: string;
     filesystem_backend: string; experiment_backend: string; task_streaming: boolean; task_controls?: boolean; resource_browser?: boolean;
     document_max_bytes?: number; document_max_pages?: number; budget_limits?: BudgetLimits; project_deletion?: boolean;
     research_workflows?: boolean; task_deletion?: boolean; markdown_export?: boolean;
     model_management?: boolean;
+    task_types?: { id: string; label: string }[];
     model_usage?: boolean;
   };
 }

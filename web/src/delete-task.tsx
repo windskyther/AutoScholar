@@ -3,7 +3,7 @@ import { Alert, Button, Modal, Space, Tooltip } from 'antd';
 import { DeleteOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { ApiError, errorMessage, isWriteUncertain } from './api';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 import type { Task } from './types';
 
 export default function DeleteTask({ task, projectId, onDeleted }: { task: Task; projectId: string; onDeleted: () => void }) {

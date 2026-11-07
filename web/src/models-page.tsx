@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Alert, Button, Form, Input, Modal, Select, Space, Table, Tag } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 import { errorMessage, isWriteUncertain } from './api';
 import { dateLabel, Loading, PageHeading, QueryError } from './components';
 import type { ModelProfile, ModelProfileInput } from './model-types';
@@ -48,7 +48,6 @@ export default function ModelsPage() {
     <div className="filters"><Button type="primary" onClick={() => { setError(null); setOpen(true); }}>添加模型</Button></div>
     {error !== null && !open && <Alert type="error" title={errorMessage(error)} />}
     {catalog.isPending ? <Loading /> : catalog.isError ? <QueryError error={catalog.error} retry={() => void catalog.refetch()} /> : <>
-      {catalog.data.default_model && <p>默认模型：{catalog.data.default_model.model}（来自本机配置）</p>}
       <Table<ModelProfile> rowKey="id" dataSource={catalog.data.items} scroll={{ x: 850 }} pagination={{ pageSize: 10 }}
         locale={{ emptyText: '还没有保存模型，点击“添加模型”开始。' }} columns={[
           { title: '名称', dataIndex: 'name' }, { title: '模型', dataIndex: 'model' },

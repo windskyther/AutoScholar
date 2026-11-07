@@ -27,7 +27,7 @@ x-app: &app
     API_REQUEST_LIMITS: '${API_REQUEST_LIMITS:-null}'
     DATABASE_URL_FILE: /run/secrets/database_url
     REDIS_URL_FILE: /run/secrets/redis_url
-    EXPERIMENT_API_TOKEN_FILE: /run/secrets/api_token
+    MODEL_ENCRYPTION_KEY_FILE: /run/secrets/model_encryption_key
     QDRANT_URL: http://qdrant:6333
     QDRANT_API_KEY_FILE: /run/secrets/qdrant_key
     DOCUMENT_STORAGE_PATH: /data/documents
@@ -35,9 +35,6 @@ x-app: &app
     MODEL_CACHE_PATH: /models
     SANDBOX_MANAGER_URL: http://sandbox-manager:8090
     SANDBOX_MANAGER_TOKEN_FILE: /run/secrets/sandbox_token
-    LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
-    LLM_MODEL: ${LLM_MODEL:-}
-    LLM_API_KEY_FILE: ${LLM_API_KEY_FILE:-}
     EMBEDDING_API_KEY_FILE: ${EMBEDDING_API_KEY_FILE:-}
     TAVILY_API_KEY_FILE: ${TAVILY_API_KEY_FILE:-}
     SEMANTIC_SCHOLAR_API_KEY_FILE: ${SEMANTIC_SCHOLAR_API_KEY_FILE:-}
@@ -45,10 +42,9 @@ x-app: &app
   secrets: &app-secrets
     - database_url
     - redis_url
-    - api_token
+    - model_encryption_key
     - qdrant_key
     - sandbox_token
-    - llm_api_key
     - embedding_api_key
     - tavily_api_key
     - semantic_scholar_api_key
@@ -129,10 +125,9 @@ services:
     environment:
       <<: *environment
       SANDBOX_MANAGER_TOKEN_FILE: ''
-      LLM_API_KEY_FILE: ''
       TAVILY_API_KEY_FILE: ''
       SEMANTIC_SCHOLAR_API_KEY_FILE: ''
-    secrets: [database_url, redis_url, api_token, qdrant_key, embedding_api_key]
+    secrets: [database_url, redis_url, model_encryption_key, qdrant_key, embedding_api_key]
     command: [python, -m, autoscholar.rag.worker]
     depends_on: *dependencies
     healthcheck: {test: [CMD, python, -m, autoscholar.deployment.worker_health], interval: 30s, timeout: 3s, start_period: 120s}
@@ -192,13 +187,12 @@ services:
 secrets:
   database_url: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/database_url'}
   redis_url: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/redis_url'}
-  api_token: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/api_token'}
+  model_encryption_key: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/model_encryption_key'}
   sandbox_token: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/sandbox_token'}
   postgres_password: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/postgres_password'}
   qdrant_key: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/qdrant_key'}
   qdrant_config: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/qdrant_config'}
   redis_config: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/redis_config'}
-  llm_api_key: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/llm_api_key'}
   embedding_api_key: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/embedding_api_key'}
   tavily_api_key: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/tavily_api_key'}
   semantic_scholar_api_key: {file: '${PROD_SECRETS_DIR:-./data/deployment/secrets}/semantic_scholar_api_key'}

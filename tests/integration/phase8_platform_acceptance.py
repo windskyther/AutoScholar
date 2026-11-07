@@ -115,7 +115,7 @@ async def client(phase: str) -> None:
         mcp_git_url="http://git:8093/mcp",
         mcp_experiment_url="http://experiment:8094/mcp",
         mcp_service_token=SecretStr(os.environ["MCP_SERVICE_TOKEN"]),
-        experiment_api_token=SecretStr("isolated-core-api-token"),
+        model_encryption_key=SecretStr("isolated-core-api-token"),
         workflow_approval_threshold=0,
     )
     database = Database(settings.database_url)

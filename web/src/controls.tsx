@@ -3,7 +3,7 @@ import { Alert, Button, Descriptions, Empty, Form, Input, Modal, Space, Table, T
 import NumberSlider from './number-slider';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, errorMessage, isWriteUncertain } from './api';
-import { useConnection } from './auth';
+import { useConnection } from './connection';
 import { dateLabel, Loading, QueryError, Status } from './components';
 import type { Approval, ApprovalAction, ControlAction, ExpectedState, ExperimentSpecification } from './types';
 
@@ -138,7 +138,7 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
           title={dialog.action === 'resume' ? '恢复后可能产生 LLM、检索等 API 费用及本地训练记录。'
             : dialog.action === 'pause' ? '暂停是协作式请求，当前单元可能继续收尾。'
               : '取消不能在工作台撤销；当前单元可能继续收尾，已产生费用不能退回。'} /> : <>
-          <Alert type="warning" showIcon title="MNIST CPU 实验"
+          <Alert type="warning" showIcon title="历史执行参数"
             description="计算量按训练轮数、样本数和模型数估算，不代表金额。批准后仍需恢复任务；修改配置会使相关代码、实验和后续结果失效。" />
           <Descriptions size="small" bordered column={2} items={[
             { key: 'version', label: '计划 / 步骤', children: `v${dialog.approval.plan_version} / ${dialog.approval.step_id}` },

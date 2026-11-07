@@ -27,7 +27,7 @@ class SynchronizedCoordinator(OfflineCoordinator):
 
 async def main() -> None:
     token = secrets.token_urlsafe(32)
-    settings = Settings().model_copy(update={"experiment_api_token": SecretStr(token)})
+    settings = Settings().model_copy(update={"model_encryption_key": SecretStr(token)})
     app = create_app(settings, llm_provider=SynchronizedCoordinator())
     async with (
         app.router.lifespan_context(app),

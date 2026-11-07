@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-const auth = { Authorization: 'Bearer public-test-fixture-token' };
+const auth = {};
 
 test.beforeAll(async ({ request }) => {
   await expect.poll(async () => {
@@ -8,11 +8,11 @@ test.beforeAll(async ({ request }) => {
   }, { timeout: 60000 }).toBe(200);
 });
 
-test('local proxy authenticates server-side while browser opens and refreshes without a login', async ({ page, request }) => {
+test('local API and browser open and refresh without a login', async ({ page, request }) => {
   const headers: Record<string, string>[] = [];
   page.on('request', (entry) => { if (entry.url().includes('/api/')) headers.push(entry.headers()); });
   const direct = await request.get('http://127.0.0.1:18009/workbench/session');
-  expect(direct.status()).toBe(401);
+  expect(direct.status()).toBe(200);
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
   await expect(page.getByLabel('操作者 Token', { exact: true })).toHaveCount(0);
@@ -82,7 +82,7 @@ test('model management saves once after a lost acknowledgement and task sliders 
   await page.goto('/projects/project-a');
   await page.getByRole('button', { name: '创建研究任务', exact: true }).click();
   await page.getByLabel('使用模型', { exact: true }).click();
-  await page.getByTitle('Offline reader · synthetic-reader', { exact: true }).click();
+  await page.locator('.ant-select-item-option[title="Offline reader · synthetic-reader"]').click();
   await expect(page.getByLabel('使用模型', { exact: true })).toHaveAttribute('aria-expanded', 'false');
   await expect(page.getByRole('dialog').getByTitle('Offline reader · synthetic-reader', { exact: true })).toBeVisible();
   await page.getByLabel('研究目标', { exact: true }).fill('Offline model selection acceptance');
