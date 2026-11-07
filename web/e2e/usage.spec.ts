@@ -4,7 +4,7 @@ import type { UsageCounts, UsageSummary } from '../src/usage-types';
 
 const zero: UsageCounts = { calls: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0, unknown_usage_calls: 0, failed_calls: 0 };
 const measured: UsageCounts = { calls: 8, input_tokens: 1200, output_tokens: 800, total_tokens: 2000, unknown_usage_calls: 1, failed_calls: 1 };
-async function fixture(page: Page, empty = false, failure = false, cache = false) {
+async function fixture(page: Page, empty = false, failure = false, cache = false, priced = false) {
   const queries: URL[] = [];
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
@@ -23,7 +23,7 @@ async function fixture(page: Page, empty = false, failure = false, cache = false
         trend_from: '2026-11-01', totals: empty ? zero : { ...measured, ...(cache ? {
           cached_input_tokens: 600, uncached_input_tokens: 400, cache_known_calls: 1,
           unknown_cache_calls: 7, cache_known_input_tokens: 1000, cache_hit_rate: 0.6,
-        } : {}) }, ...(cache ? { stages: [{ id: 'refining', label: 'refining', ...measured }] } : {}), groups: empty ? [] : [
+        } : {}), ...(priced ? { estimated_cny: 0.00285, estimated_usd: 0.00125, cost_known_calls: 2, unknown_cost_calls: 6 } : {}) }, ...(cache ? { stages: [{ id: 'refining', label: 'refining', ...measured }] } : {}), groups: empty ? [] : [
           { id: group === 'api' ? 'reader' : 'model/中文 *', label: group === 'api' ? '阅读 API' : 'model/中文 *', ...measured },
         ], daily: Array.from({ length: days || 90 }, (_, index) => {
           const count = days || 90; const active = index - (count - 7);
@@ -39,6 +39,14 @@ async function fixture(page: Page, empty = false, failure = false, cache = false
   });
   return queries;
 }
+
+test('cost estimates keep currencies separate and report incomplete price coverage', async ({ page }) => {
+  await fixture(page, false, false, true, true);
+  await page.goto('/usage');
+  const costs = page.getByRole('region', { name: '模型费用估算' });
+  await expect(costs).toContainText('CNY 0.00285 · USD 0.00125');
+  await expect(costs).toContainText('已估算 2 次；6 次缺少价格或用量信息');
+});
 
 test('usage totals, dimension and API/model/date filters stay read-only and survive refresh', async ({ page }) => {
   const queries = await fixture(page);

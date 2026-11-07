@@ -1,15 +1,18 @@
 """Per-call usage ledger. No credentials, prompts, endpoints or model output are stored."""
 
 from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, computed_field
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     DateTime,
     Index,
+    Numeric,
     String,
     case,
     func,
@@ -25,6 +28,7 @@ from autoscholar.agent.database_models import Base
 from autoscholar.core.errors import AppError
 from autoscholar.core.rejections import LocalRequestRejected
 from autoscholar.llm.models import TokenUsage
+from autoscholar.llm.pricing import ModelPricing, ModelPricingRow, estimate
 
 LOCAL_ZONE = timezone(timedelta(hours=8))
 
@@ -52,6 +56,9 @@ class ModelUsageRow(Base):
     uncached_input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     reasoning_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     stage: Mapped[str] = mapped_column(String(24), default="other", server_default="other")
+    pricing_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    estimated_cost: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -76,6 +83,10 @@ class UsageCounts(BaseModel):
     cache_known_calls: int = Field(default=0, ge=0)
     unknown_cache_calls: int = Field(default=0, ge=0)
     cache_known_input_tokens: int = Field(default=0, ge=0)
+    estimated_cny: float | None = Field(default=None, ge=0)
+    estimated_usd: float | None = Field(default=None, ge=0)
+    cost_known_calls: int = Field(default=0, ge=0)
+    unknown_cost_calls: int = Field(default=0, ge=0)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -141,6 +152,14 @@ def aggregates() -> list[ColumnElement[Any]]:
         func.coalesce(func.sum(case((known, row.input_tokens), else_=0)), 0).label(
             "cache_known_input_tokens"
         ),
+        func.sum(case((row.currency == "CNY", row.estimated_cost))).label("estimated_cny"),
+        func.sum(case((row.currency == "USD", row.estimated_cost))).label("estimated_usd"),
+        func.coalesce(func.sum(case((row.estimated_cost.is_not(None), 1), else_=0)), 0).label(
+            "cost_known_calls"
+        ),
+        func.coalesce(func.sum(case((row.estimated_cost.is_(None), 1), else_=0)), 0).label(
+            "unknown_cost_calls"
+        ),
     ]
 
 
@@ -154,6 +173,8 @@ class UsageStore:
         call_id = str(uuid4())
         try:
             async with self.sessions() as session, session.begin():
+                price_row = await session.get(ModelPricingRow, api_id)
+                price = ModelPricing.model_validate(price_row.payload) if price_row else None
                 session.add(
                     ModelUsageRow(
                         id=call_id,
@@ -167,6 +188,8 @@ class UsageStore:
                         input_tokens=0,
                         output_tokens=0,
                         total_tokens=0,
+                        pricing_snapshot=price.model_dump(mode="json") if price else None,
+                        currency=price.currency if price else None,
                     )
                 )
         except Exception as exc:
@@ -185,6 +208,12 @@ class UsageStore:
                 reasoning_tokens=usage.reasoning_tokens,
             )
         async with self.sessions() as session, session.begin():
+            if usage is not None:
+                row = await session.get(ModelUsageRow, call_id)
+                if row is not None and row.pricing_snapshot is not None:
+                    values["estimated_cost"] = estimate(
+                        ModelPricing.model_validate(row.pricing_snapshot), usage
+                    )
             await session.execute(
                 update(ModelUsageRow).where(ModelUsageRow.id == call_id).values(**values)
             )
@@ -290,7 +319,10 @@ class UsageStore:
         if since is not None and since.tzinfo is None:
             since = since.replace(tzinfo=UTC)
         zero = {
-            key: None if key in {"cached_input_tokens", "uncached_input_tokens"} else 0
+            key: None
+            if key
+            in {"cached_input_tokens", "uncached_input_tokens", "estimated_cny", "estimated_usd"}
+            else 0
             for key in UsageCounts.model_fields
         }
         by_day = {item["date"]: dict(item) for item in daily}

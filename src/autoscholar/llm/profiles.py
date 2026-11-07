@@ -32,6 +32,7 @@ from autoscholar.llm.models import (
     ToolDefinition,
 )
 from autoscholar.llm.preflight import preflight_request
+from autoscholar.llm.pricing import ModelPricing, ModelPricingRow
 from autoscholar.llm.stages import stage_for_tools
 from autoscholar.llm.usage import UsageStore
 from autoscholar.tool_platform.context import current_workflow_claim
@@ -62,6 +63,7 @@ class ModelProfileCreate(BaseModel):
     model: TextName
     api_key: SecretStr
     compatibility_profile: Literal["auto", "generic", "deepseek"] = "auto"
+    pricing: ModelPricing | None = None
 
     @field_validator("base_url")
     @classmethod
@@ -108,11 +110,13 @@ class ModelProfilePublic(BaseModel):
     compatibility_profile: Literal["auto", "generic", "deepseek"]
     enabled: bool
     created_at: datetime
+    pricing: ModelPricing | None = None
 
 
-def public(row: ModelProfileRow) -> ModelProfilePublic:
+def public(row: ModelProfileRow, pricing: ModelPricing | None = None) -> ModelProfilePublic:
     return ModelProfilePublic.model_validate(
-        {key: getattr(row, key) for key in ModelProfilePublic.model_fields}
+        {key: getattr(row, key) for key in ModelProfilePublic.model_fields if key != "pricing"}
+        | {"pricing": pricing}
     )
 
 
@@ -140,7 +144,16 @@ class ModelProfiles:
             rows = await session.scalars(
                 select(ModelProfileRow).order_by(ModelProfileRow.created_at)
             )
-            return [public(row) for row in rows]
+            prices = {
+                item.profile_id: ModelPricing.model_validate(item.payload)
+                for item in await session.scalars(select(ModelPricingRow))
+            }
+            return [public(row, prices.get(row.id)) for row in rows]
+
+    @staticmethod
+    async def view(session: AsyncSession, row: ModelProfileRow) -> ModelProfilePublic:
+        price = await session.get(ModelPricingRow, row.id)
+        return public(row, ModelPricing.model_validate(price.payload) if price else None)
 
     async def create(self, payload: ModelProfileCreate) -> ModelProfilePublic:
         key = payload.api_key.get_secret_value()
@@ -165,13 +178,15 @@ class ModelProfiles:
                     )
                 except InvalidToken:
                     same = False
+                original = await self.view(session, existing)
+                same = same and original.pricing == payload.pricing
                 if not same:
                     raise AppError(
                         status_code=409,
                         code="model_profile_conflict",
                         message="Model configuration changed",
                     )
-                return public(existing)
+                return original
             count = await session.scalar(select(func.count()).select_from(ModelProfileRow))
             if (count or 0) >= 100:
                 raise AppError(
@@ -189,9 +204,15 @@ class ModelProfiles:
                 enabled=True,
             )
             session.add(row)
+            if payload.pricing is not None:
+                session.add(
+                    ModelPricingRow(
+                        profile_id=row.id, payload=payload.pricing.model_dump(mode="json")
+                    )
+                )
             await session.commit()
             await session.refresh(row)
-            return public(row)
+            return await self.view(session, row)
 
     async def enabled(self, profile_id: str, enabled: bool) -> ModelProfilePublic:
         async with self.sessions() as session:
@@ -211,7 +232,7 @@ class ModelProfiles:
             row.enabled = enabled
             await session.commit()
             await session.refresh(row)
-            return public(row)
+            return await self.view(session, row)
 
     async def provider(self, profile_id: str) -> LLMProvider:
         async with self.lock:

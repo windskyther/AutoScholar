@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Alert, Button, Form, Input, Modal, Select, Space, Table, Tag } from 'antd';
+import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tag } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConnection } from './connection';
 import { errorMessage, isWriteUncertain } from './api';
@@ -7,8 +7,10 @@ import { dateLabel, Loading, PageHeading, QueryError } from './components';
 import type { ModelProfile, ModelProfileInput } from './model-types';
 import { usePageReady } from './page-transition';
 
+interface Values extends ModelProfileInput { pricing_enabled?: boolean }
+
 export default function ModelsPage() {
-  const { api } = useConnection();
+  const { api, session } = useConnection();
   const cache = useQueryClient();
   const catalog = useQuery({ queryKey: ['models'], queryFn: ({ signal }) => api!.models(signal) });
   usePageReady(!catalog.isPending);
@@ -16,12 +18,17 @@ export default function ModelsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [uncertain, setUncertain] = useState(false);
-  const [form] = Form.useForm<ModelProfileInput>();
+  const [form] = Form.useForm<Values>();
+  const priced = Form.useWatch('pricing_enabled', form) ?? false;
   const draft = useRef<ModelProfileInput | null>(null);
   const inFlight = useRef(false);
-  async function save(values?: ModelProfileInput) {
+  async function save(values?: Values) {
     if (!api || inFlight.current) return;
-    if (values) draft.current = { ...values, id: crypto.randomUUID(), name: values.name.trim(), model: values.model.trim() };
+    if (values) {
+      const { pricing_enabled, pricing, ...connection } = values;
+      draft.current = { ...connection, id: crypto.randomUUID(), name: values.name.trim(), model: values.model.trim(),
+        ...(pricing_enabled && session?.capabilities.model_pricing ? { pricing } : {}) };
+    }
     if (!draft.current) return;
     inFlight.current = true; setBusy(true); setError(null);
     try {
@@ -55,6 +62,7 @@ export default function ModelsPage() {
           { title: '名称', dataIndex: 'name' }, { title: '模型', dataIndex: 'model' },
           { title: '接口地址', dataIndex: 'base_url', ellipsis: true },
           { title: '状态', render: (_, item) => <Tag color={item.enabled ? 'success' : 'default'}>{item.enabled ? '可选用' : '已停用'}</Tag> },
+          ...(session?.capabilities.model_pricing ? [{ title: '价格估算', render: (_: unknown, item: ModelProfile) => item.pricing ? `${item.pricing.currency} · 已设置单价` : '未设置' }] : []),
           { title: '添加时间', dataIndex: 'created_at', render: dateLabel },
           { title: '操作', render: (_, item) => <Button disabled={busy} onClick={() => void toggle(item)}>{item.enabled ? '停用' : '启用'}</Button> },
         ]} />
@@ -70,6 +78,18 @@ export default function ModelsPage() {
           { value: 'auto', label: '自动识别' }, { value: 'generic', label: '标准兼容接口' }, { value: 'deepseek', label: 'DeepSeek 兼容网关' },
         ]} /></Form.Item>
         <p>保存只记录配置，不会发送模型请求或产生 API 费用。</p>
+        {session?.capabilities.model_pricing && <>
+          <Form.Item name="pricing_enabled" valuePropName="checked"><Checkbox>设置可选单价，用于估算模型费用</Checkbox></Form.Item>
+          {priced && <>
+            <Form.Item name={['pricing', 'currency']} label="计价币种" initialValue="CNY" rules={[{ required: true }]}><Select options={[
+              { value: 'CNY', label: '人民币 CNY' }, { value: 'USD', label: '美元 USD' },
+            ]} /></Form.Item>
+            <Form.Item name={['pricing', 'input_per_million']} label="普通输入单价 / 百万 Token" rules={[{ required: true }]}><InputNumber min={0} max={1000000} precision={6} /></Form.Item>
+            <Form.Item name={['pricing', 'cached_input_per_million']} label="缓存命中输入单价 / 百万 Token（可选）"><InputNumber min={0} max={1000000} precision={6} placeholder="留空按普通输入计价" /></Form.Item>
+            <Form.Item name={['pricing', 'output_per_million']} label="输出单价 / 百万 Token" rules={[{ required: true }]}><InputNumber min={0} max={1000000} precision={6} /></Form.Item>
+            <p>请填写服务商当前适用于你的单价。每次调用保存当时价格；币种分别统计，估算不包含检索费用，也不替代账单。</p>
+          </>}
+        </>}
         {error !== null && <Alert type="error" title={errorMessage(error)} description={uncertain ? '保存结果未确认，可使用原配置重试，或关闭后刷新列表核对。' : undefined} />}
         <Space>
           {!uncertain && <Button type="primary" htmlType="submit" loading={busy}>保存模型</Button>}

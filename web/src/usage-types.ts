@@ -4,6 +4,8 @@ export interface UsageCounts {
   cached_input_tokens?: number | null; uncached_input_tokens?: number | null;
   cache_known_calls?: number; unknown_cache_calls?: number; cache_known_input_tokens?: number;
   cache_hit_rate?: number | null;
+  estimated_cny?: number | null; estimated_usd?: number | null;
+  cost_known_calls?: number; unknown_cost_calls?: number;
 }
 export interface UsageGroup extends UsageCounts { id: string; label: string }
 export interface UsageDay extends UsageCounts { date: string }
@@ -18,7 +20,9 @@ const record = (value: unknown): value is Record<string, unknown> => !!value && 
 const counts = (value: unknown): value is UsageCounts => record(value)
   && ['calls', 'input_tokens', 'output_tokens', 'total_tokens', 'unknown_usage_calls', 'failed_calls']
     .every((key) => Number.isSafeInteger(value[key]) && Number(value[key]) >= 0)
-  && Number(value.unknown_usage_calls) <= Number(value.calls) && Number(value.failed_calls) <= Number(value.calls);
+  && Number(value.unknown_usage_calls) <= Number(value.calls) && Number(value.failed_calls) <= Number(value.calls)
+  && ['estimated_cny', 'estimated_usd'].every(k => value[k] == null || typeof value[k] === 'number' && Number.isFinite(value[k]) && Number(value[k]) >= 0)
+  && ['cost_known_calls', 'unknown_cost_calls'].every(k => value[k] === undefined || Number.isSafeInteger(value[k]) && Number(value[k]) >= 0);
 const cacheCounts = (value: UsageCounts) => ['cached_input_tokens', 'uncached_input_tokens']
   .every((key) => { const item = (value as unknown as Record<string, unknown>)[key];
     return item === undefined || item === null || Number.isSafeInteger(item) && Number(item) >= 0; })

@@ -9,6 +9,8 @@ import { usePageReady } from './page-transition';
 const format = (value: number) => value.toLocaleString('zh-CN');
 const short = (value: number) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 const reported = (value: number | null | undefined) => value == null ? '未提供' : format(value);
+const money = (value: number | null | undefined) => value == null ? '未提供'
+  : value > 0 && value < 0.00000001 ? '<0.00000001' : value.toLocaleString('zh-CN', { maximumFractionDigits: 8 });
 const stageLabels: Record<string, string> = { planning: '研究规划', screening: '资料初筛',
   reading: '精读资料', refining: '独立复筛', writing: '综合写作', review: '结论审稿', other: '其他调用' };
 
@@ -53,6 +55,8 @@ export default function UsagePage() {
     { title: '失败响应', dataIndex: 'failed_calls', render: format },
     { title: '已报告命中输入', dataIndex: 'cached_input_tokens', render: reported },
     { title: '已报告未命中输入', dataIndex: 'uncached_input_tokens', render: reported },
+    { title: '估算 CNY', dataIndex: 'estimated_cny', render: money },
+    { title: '估算 USD', dataIndex: 'estimated_usd', render: money },
   ];
   const maximum = Math.max(1, ...(data?.groups.map((item) => item[metric]) ?? []));
   return <>
@@ -84,6 +88,15 @@ export default function UsagePage() {
           <div className="metric"><span>缓存用量未确认的调用</span><strong>{format(data.totals.unknown_cache_calls ?? data.totals.calls)}</strong></div>
         </div>
         <p>命中输入已包含在输入 Token 中，不重复计数。供应商未提供的缓存数据和旧记录显示为“未提供”；命中率仅计算已报告缓存明细的输入。</p>
+      </section>
+      <section className="usage-surface" aria-label="模型费用估算">
+        <h2>模型费用估算</h2>
+        <p>{data.totals.estimated_cny == null && data.totals.estimated_usd == null ? '暂不可估算' : [
+          data.totals.estimated_cny == null ? null : `CNY ${money(data.totals.estimated_cny)}`,
+          data.totals.estimated_usd == null ? null : `USD ${money(data.totals.estimated_usd)}`,
+        ].filter(Boolean).join(' · ')}</p>
+        <p>已估算 {data.totals.cost_known_calls ?? 0} 次；{data.totals.unknown_cost_calls ?? data.totals.calls} 次缺少价格或用量信息。
+          按调用时保存的单价计算，各币种分别汇总；不包含检索费用，不代表服务商账单。</p>
       </section>
       {!!data.stages?.length && <section className="usage-surface" aria-label="研究阶段用量">
         <h2>研究阶段用量</h2>

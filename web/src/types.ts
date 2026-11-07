@@ -37,6 +37,7 @@ export interface Session {
     task_types?: { id: string; label: string }[];
     model_usage?: boolean;
     research_quality?: boolean;
+    model_pricing?: boolean;
   };
 }
 export interface Task {

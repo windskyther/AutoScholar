@@ -53,6 +53,7 @@ export function isSession(value: unknown): value is Session {
     && (caps.project_deletion === undefined || typeof caps.project_deletion === 'boolean')
     && (caps.research_workflows === undefined || typeof caps.research_workflows === 'boolean')
     && (caps.research_quality === undefined || typeof caps.research_quality === 'boolean')
+    && (caps.model_pricing === undefined || typeof caps.model_pricing === 'boolean')
     && (caps.task_deletion === undefined || typeof caps.task_deletion === 'boolean')
     && (caps.markdown_export === undefined || typeof caps.markdown_export === 'boolean')
     && (caps.model_management === undefined || typeof caps.model_management === 'boolean')

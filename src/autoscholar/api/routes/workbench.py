@@ -73,6 +73,7 @@ async def session(request: Request) -> WorkbenchSessionResponse:
             ],
             "model_management": True,
             "model_usage": True,
+            "model_pricing": True,
             "web_search_configured": settings.web_search_configured,
             "research_backend": settings.research_tool_backend,
             "filesystem_backend": settings.filesystem_tool_backend,
