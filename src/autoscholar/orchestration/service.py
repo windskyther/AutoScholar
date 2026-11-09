@@ -30,6 +30,7 @@ from autoscholar.core.budget import (
 )
 from autoscholar.core.journal import current_journal
 from autoscholar.core.rejections import LocalRequestRejected
+from autoscholar.evidence.models import EvidenceContext
 from autoscholar.experiment.analysis import analyze_experiment
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.models import ExperimentSpecification, RawExperimentMetrics
@@ -154,6 +155,8 @@ class Run:
     memory_context: dict[str, Any] = field(default_factory=dict)
     research_depth: ResearchDepth = "quick"
     quality: QualityState = field(default_factory=QualityState)
+    reuse_project_evidence: bool = False
+    evidence_context: EvidenceContext = field(default_factory=EvidenceContext)
 
 
 class FlowState(TypedDict):
@@ -442,6 +445,16 @@ class AutonomousService:
                     "documents_enabled": run.project_id is not None and run.document_ids != [],
                     "research_sources": run.research_sources,
                     "memory_context_untrusted": run.memory_context,
+                    **(
+                        {
+                            "project_evidence_untrusted": [
+                                {"id": item.id, "objective": item.objective, "claim": item.text}
+                                for item in run.evidence_context.claims
+                            ]
+                        }
+                        if run.evidence_context.claims
+                        else {}
+                    ),
                     "stage_contracts": {
                         kind: stage_contract(kind, research_workflow=True)
                         for kind in ("research", "knowledge")
@@ -499,10 +512,15 @@ class AutonomousService:
     @staticmethod
     def _after_execution(state: FlowState) -> str:
         run = state["run"]
-        return "quality" if (
-            is_research(run.workflow_kind) and run.research_depth != "quick"
-            and all(item.get("status") == "succeeded" for item in run.results.values())
-        ) else "reviewer"
+        return (
+            "quality"
+            if (
+                is_research(run.workflow_kind)
+                and run.research_depth != "quick"
+                and all(item.get("status") == "succeeded" for item in run.results.values())
+            )
+            else "reviewer"
+        )
 
     async def _quality(self, state: FlowState) -> FlowState:
         await self.quality.advance(state["run"])

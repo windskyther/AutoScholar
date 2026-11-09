@@ -5,6 +5,8 @@ import signal
 import structlog
 
 from autoscholar.core.config import Settings, get_settings
+from autoscholar.evidence.index import EvidenceIndex
+from autoscholar.evidence.store import EvidenceStore
 from autoscholar.infrastructure import Database, Qdrant
 from autoscholar.rag.chunking import StructureAwareChunker
 from autoscholar.rag.embeddings import (
@@ -104,13 +106,9 @@ class DocumentWorker:
                 raise DocumentProcessingError(
                     "pdf_text_not_extractable", "PDF did not produce searchable text chunks"
                 )
-            vectors = await self._embeddings.embed_documents(
-                [chunk.content for chunk in chunks]
-            )
+            vectors = await self._embeddings.embed_documents([chunk.content for chunk in chunks])
             sparse_vectors = (
-                await self._sparse_embeddings.embed_documents(
-                    [chunk.content for chunk in chunks]
-                )
+                await self._sparse_embeddings.embed_documents([chunk.content for chunk in chunks])
                 if self._sparse_embeddings is not None
                 else None
             )
@@ -126,9 +124,7 @@ class DocumentWorker:
             )
             await self._repository.complete_job(job.id)
         except DocumentProcessingError as exc:
-            await self._repository.fail_job(
-                job.id, code=exc.code, message=exc.message, retry=False
-            )
+            await self._repository.fail_job(job.id, code=exc.code, message=exc.message, retry=False)
         except TimeoutError:
             await self._fail_transient(job.id, job.attempts, "document_parse_timeout")
         except Exception:
@@ -153,9 +149,7 @@ async def run_worker(
     stop: asyncio.Event | None = None,
 ) -> None:
     database = Database(settings.database_url)
-    qdrant_key = (
-        settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None
-    )
+    qdrant_key = settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None
     qdrant = Qdrant(settings.qdrant_url, api_key=qdrant_key)
     embeddings = create_embedding_provider(settings)
     sparse_embeddings = create_sparse_embedding_provider(settings)
@@ -179,20 +173,30 @@ async def run_worker(
         max_pages=settings.document_max_pages,
         sparse_embeddings=sparse_embeddings,
     )
+    evidence_index = (
+        EvidenceIndex(
+            EvidenceStore(database.session_factory),
+            qdrant.client,
+            embeddings,
+            settings.qdrant_collection,
+        )
+        if isinstance(embeddings, FastEmbedProvider)
+        else None
+    )
     try:
         while True:
             if stop is not None and stop.is_set():
                 return
             handled = await worker.run_once()
+            if not handled and evidence_index is not None:
+                handled = await evidence_index.run_once()
             if handled:
                 continue
             if stop is None:
                 await asyncio.sleep(settings.rag_worker_poll_seconds)
                 continue
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(
-                    stop.wait(), timeout=settings.rag_worker_poll_seconds
-                )
+                await asyncio.wait_for(stop.wait(), timeout=settings.rag_worker_poll_seconds)
     finally:
         await embeddings.close()
         await sparse_embeddings.close()

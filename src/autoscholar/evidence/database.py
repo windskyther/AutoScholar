@@ -49,6 +49,7 @@ class ProjectClaimRow(Base):
     ordinal: Mapped[int] = mapped_column(Integer)
     text: Mapped[str] = mapped_column(Text)
     topic: Mapped[str] = mapped_column(Text)
+    source_types: Mapped[str] = mapped_column(String(40), default="", server_default="")
     supports: Mapped[list[dict[str, str]]] = mapped_column(JSON)
     dependencies: Mapped[list[str]] = mapped_column(JSON, default=list)
     review_status: Mapped[str] = mapped_column(String(16), default="ready")
@@ -91,3 +92,12 @@ class EvidenceReuseRow(Base):
     reason: Mapped[str] = mapped_column(Text, default="")
     snapshot_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EvidencePolicyRow(Base):
+    __tablename__ = "project_evidence_policy"
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    web_days: Mapped[int] = mapped_column(Integer, default=7)
+    paper_days: Mapped[int] = mapped_column(Integer, default=30)

@@ -5,13 +5,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, uuid5
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
 
 from autoscholar.agent.database_models import AgentTaskRow, EvidenceRow
 from autoscholar.core.errors import AppError
-from autoscholar.evidence.database import EvidencePublicationRow, ProjectClaimRow, SourceVersionRow
+from autoscholar.evidence.database import (
+    EvidencePublicationRow,
+    EvidenceReuseRow,
+    ProjectClaimRow,
+    SourceVersionRow,
+)
 from autoscholar.evidence.models import content_hash
 from autoscholar.orchestration.durable_models import (
     WorkflowCheckpointRow,
@@ -59,6 +64,64 @@ async def enqueue_publication(session: AsyncSession, snapshot: Snapshot, sequenc
                 attempts=0,
             )
         )
+
+
+async def exclude_unfinished_reuse(session: AsyncSession, task_id: str) -> None:
+    await session.execute(
+        update(EvidenceReuseRow)
+        .where(EvidenceReuseRow.task_id == task_id, EvidenceReuseRow.status == "selected")
+        .values(status="excluded", reason="Task stopped before a successful final report")
+    )
+
+
+async def finish_reuse(session: AsyncSession, snapshot: Snapshot) -> None:
+    used_sources = {
+        citation.source_id
+        for section in snapshot.quality.sections
+        for claim in section.claims
+        for citation in claim.citations
+    }
+    adopted = {
+        parent
+        for material in snapshot.quality.materials
+        if material.id in used_sources
+        for parent in material.bank_claim_ids
+    }
+    if snapshot.research_depth == "quick":
+        # The quick Writer includes each current child's selected evidence.
+        # Bind adoption to its stored bank source version, never to model prose.
+        references = [
+            item.get("reference", "")
+            for result in snapshot.results.values()
+            for item in result.get("evidence", [])
+        ]
+        cited_versions = set()
+        for reference in references:
+            child_id, _, citation_key = reference.rpartition(":")
+            record = await session.scalar(
+                select(EvidenceRow).where(
+                    EvidenceRow.task_id == child_id,
+                    EvidenceRow.citation_key == citation_key,
+                    EvidenceRow.provider == "project_evidence",
+                )
+            )
+            if record and record.external_id:
+                cited_versions.add(record.external_id)
+        adopted = {
+            claim.id
+            for claim in snapshot.evidence_context.claims
+            if any(link["source_id"] in cited_versions for link in claim.supports)
+        }
+    for claim in snapshot.evidence_context.claims:
+        key = str(uuid5(NAMESPACE_URL, f"autoscholar:reuse:{snapshot.task_id}:{claim.id}"))
+        reuse = await session.get(EvidenceReuseRow, key)
+        if reuse:
+            reuse.status = "adopted" if claim.id in adopted else "excluded"
+            reuse.reason = (
+                "Used original source passages"
+                if claim.id in adopted
+                else "Not cited after current-task screening"
+            )
 
 
 class EvidenceStore:
@@ -247,6 +310,9 @@ class EvidenceStore:
                 ordinal=ordinal,
                 text=claim.text,
                 topic=task.objective,
+                source_types="|"
+                + "|".join(sorted({materials[c.source_id].kind for c in claim.citations}))
+                + "|",
                 supports=supports,
                 dependencies=sorted(dependencies),
                 review_status=status,

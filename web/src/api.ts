@@ -7,6 +7,8 @@ import { isModelCatalog, isModelProfile } from './model-types';
 import type { ModelCatalog, ModelProfile, ModelProfileInput } from './model-types';
 import { isUsageSummary } from './usage-types';
 import type { UsageSummary } from './usage-types';
+import { isBankClaim, isEvidencePolicy, isHistoryImport, isReuse } from './evidence-types';
+import type { BankPage, EvidencePolicy, HistoryImport, ReuseSummary } from './evidence-types';
 import { isQualityAudit } from './quality-types';
 import type { QualityAudit } from './quality-types';
 
@@ -29,6 +31,10 @@ const messages: Record<string, string> = {
   model_usage_unavailable: '用量记录暂不可用，请确认后台存储服务正常后重试。',
   local_access_denied: '本机访问请求被拒绝，请通过本地工作台地址访问。',
   project_not_found: '项目不存在。',
+  project_evidence_not_found: '这条项目证据不存在。',
+  project_evidence_unavailable: '项目证据库暂不可用，请稍后刷新。',
+  project_evidence_revoked: '证据或原始来源已改变，请刷新后核对。',
+  project_evidence_expired: '资料已超过复核期限，请重新提交研究以核验来源。',
   workbench_task_not_found: '根任务不存在，或链接指向了子任务。',
   workbench_store_unavailable: '任务存储暂不可用。',
   network_unavailable: '无法连接服务，请检查服务是否启动。',
@@ -113,7 +119,7 @@ export class ApiClient {
     return this.request(path, { signal });
   }
   private async request<T>(path: string, options: {
-    method?: 'GET' | 'POST' | 'DELETE'; body?: Record<string, unknown> | FormData;
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: Record<string, unknown> | FormData;
     key?: string; signal?: AbortSignal; timeout?: number; empty?: boolean;
   } = {}): Promise<T> {
     if (!this.connected) throw new ApiError('local_access_denied', 401);
@@ -290,6 +296,29 @@ export class ApiClient {
                           signal?: AbortSignal): Promise<ResourcePage<T>> {
     return this.checked(`/tasks/${encodeURIComponent(id)}/resources/${kind}?limit=20&offset=${(page - 1) * 20}`,
       (value): value is ResourcePage<T> => isPage(value, guard) && (value as ResourcePage<T>).task_id === id, signal);
+  }
+  projectEvidence(id: string, page: number, q: string, status: string, sourceType?: string, signal?: AbortSignal): Promise<BankPage> {
+    const params = new URLSearchParams({ limit: '20', offset: String((page - 1) * 20), q, status });
+    if (sourceType) params.set('source_type', sourceType);
+    return this.checked(`/projects/${encodeURIComponent(id)}/evidence?${params}`, (v): v is BankPage => isPage(v, isBankClaim), signal);
+  }
+  evidenceState(projectId: string, id: string, enabled: boolean): Promise<{ id: string; enabled: boolean }> {
+    return this.write(`/projects/${encodeURIComponent(projectId)}/evidence/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}`,
+      (v): v is { id: string; enabled: boolean } => !!v && typeof v === 'object' && (v as { id: unknown }).id === id && (v as { enabled: unknown }).enabled === enabled);
+  }
+  evidencePolicy(projectId: string, signal?: AbortSignal): Promise<EvidencePolicy> {
+    return this.checked(`/projects/${encodeURIComponent(projectId)}/evidence/policy`, isEvidencePolicy, signal);
+  }
+  async saveEvidencePolicy(projectId: string, policy: EvidencePolicy): Promise<EvidencePolicy> {
+    const value = await this.request<unknown>(`/projects/${encodeURIComponent(projectId)}/evidence/policy`, { method: 'PUT', body: { ...policy } });
+    if (!isEvidencePolicy(value)) throw new ApiError('write_result_unknown', 200);
+    return value;
+  }
+  importEvidence(projectId: string, after: string | null): Promise<HistoryImport> {
+    return this.write(`/projects/${encodeURIComponent(projectId)}/evidence/backfill`, isHistoryImport, { after, limit: 50 });
+  }
+  evidenceReuse(taskId: string, signal?: AbortSignal): Promise<ReuseSummary> {
+    return this.checked(`/tasks/${encodeURIComponent(taskId)}/evidence-reuse`, isReuse, signal);
   }
   evidence(id: string, page: number, signal?: AbortSignal): Promise<ResourcePage<EvidenceResource>> {
     return this.resourcePage(id, 'evidence', page, isEvidence, signal);

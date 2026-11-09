@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from autoscholar.agent.database_models import AgentTaskRow
 from autoscholar.core.errors import AppError
-from autoscholar.evidence.store import enqueue_publication
+from autoscholar.evidence.store import enqueue_publication, exclude_unfinished_reuse, finish_reuse
 from autoscholar.llm.profiles import ModelProfileRow
 from autoscholar.orchestration.checkpoints import Snapshot, digest
 from autoscholar.orchestration.durable_models import (
@@ -585,7 +585,10 @@ class DurableRepository:
                 status=status,
             )
             if status == "succeeded":
+                await finish_reuse(session, snapshot)
                 await enqueue_publication(session, snapshot, row.checkpoint_sequence)
+            elif status in TERMINAL:
+                await exclude_unfinished_reuse(session, task_id)
             await session.commit()
 
     async def control(
@@ -636,6 +639,8 @@ class DurableRepository:
             else:
                 raise ValueError("Unknown workflow action")
             await self.status(session, row, status)
+            if status == "cancelled":
+                await exclude_unfinished_reuse(session, task_id)
             await self.event(session, task_id, action, status=status)
             await session.commit()
             return status

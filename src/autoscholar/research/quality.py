@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from autoscholar.agent.repository import AgentTaskRepository
 from autoscholar.core.budget import BudgetExceeded, consume, current_budget
+from autoscholar.evidence.models import current_evidence
 from autoscholar.llm.base import LLMProvider
 from autoscholar.llm.errors import LLMResponseError
 from autoscholar.llm.models import ChatMessage, ToolDefinition
@@ -108,16 +109,6 @@ class ResearchQuality:
     def _add(state: QualityState, result: SearchResult, topic: str) -> None:
         if not result.content.strip() or not result.title.strip():
             return
-        key = identity(result)
-        existing = next((item for item in state.materials if item.identity == key), None)
-        if existing:
-            if topic not in existing.topics and len(existing.topics) < 6:
-                existing.topics.append(topic[:180])
-            return
-        if len(state.materials) >= 40:
-            return
-        if result.source_type != "document" and not public_url(result.url):
-            return
         published_at = result.published_at
         fetched_at = None
         if result.fetched_at:
@@ -132,6 +123,31 @@ class ResearchQuality:
                 published_at = date.fromisoformat(published_at[:10]).isoformat()
             except ValueError:
                 published_at = None
+        key = identity(result)
+        existing = next((item for item in state.materials if item.identity == key), None)
+        if existing:
+            if topic not in existing.topics and len(existing.topics) < 6:
+                existing.topics.append(topic[:180])
+            if result.bank_claim_ids:
+                if not existing.bank_claim_ids:
+                    existing.bank_claim_ids = list(result.bank_claim_ids[:1])
+            elif existing.bank_claim_ids and (fetched_at or result.source_type == "document"):
+                # An independent acquisition replaces the inherited text rather
+                # than relabelling an old full-text snapshot as newly checked.
+                existing.text = result.content[:2400]
+                existing.truncated = len(result.content) > 2400
+                existing.bank_claim_ids = []
+                existing.availability = (
+                    "document_excerpt" if result.source_type == "document" else "summary_only"
+                )
+                existing.read_attempted = False
+                existing.fetched_at = fetched_at
+                existing.published_at = published_at
+            return
+        if len(state.materials) >= 40:
+            return
+        if result.source_type != "document" and not public_url(result.url):
+            return
         state.materials.append(
             Material(
                 id=f"E{len(state.materials) + 1}",
@@ -144,6 +160,7 @@ class ResearchQuality:
                 topics=[topic[:180]],
                 published_at=published_at,
                 fetched_at=fetched_at,
+                bank_claim_ids=list(result.bank_claim_ids),
                 fulltext_url=getattr(result, "fulltext_url", None),
                 document_id=result.document_id,
                 chunk_id=result.chunk_id,
@@ -187,6 +204,20 @@ class ResearchQuality:
 
     async def _collect(self, run: Run) -> None:
         state = run.quality
+        bank = current_evidence.get()
+        if bank and bank.project_id == run.project_id:
+            for source in bank.sources:
+                material = source.material.model_copy(deep=True)
+                material.id = f"E{len(state.materials) + 1}"
+                material.bank_claim_ids = [
+                    claim.id
+                    for claim in bank.claims
+                    if any(link["source_id"] == source.version_id for link in claim.supports)
+                ][:1]
+                material.read_attempted = source.fresh
+                material.topics = [run.objective[:180]]
+                if not any(existing.identity == material.identity for existing in state.materials):
+                    state.materials.append(material)
         for result in run.results.values():
             child = await self.tasks.get_task(result["child_task_id"])
             if child is None:
@@ -195,6 +226,7 @@ class ResearchQuality:
                 if trace.status != "succeeded" or trace.tool_name not in {
                     "web_search",
                     "paper_search",
+                    "project_evidence_search",
                 }:
                     continue
                 if run.workflow_kind == "document_analysis":
@@ -475,6 +507,8 @@ class ResearchQuality:
                         if receipt.text:
                             source.text, source.truncated = receipt.text, receipt.truncated
                             source.fetched_at = receipt.fetched_at
+                            if not receipt.cache_hit and receipt.fetched_at:
+                                source.bank_claim_ids = []
                             source.availability = "extracted_text"
                             state.reads += 1
                     source.read_attempted = True

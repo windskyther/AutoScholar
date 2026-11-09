@@ -43,6 +43,7 @@ class AgentRunRequest(BaseModel):
     mode: AgentMode = "auto"
     workflow_kind: WorkflowKind = "research"
     research_depth: ResearchDepth | None = None
+    reuse_project_evidence: bool | None = None
     project_id: str | None = None
     model_profile_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f-]{36}$")] | None = None
     document_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] | None = (
@@ -287,6 +288,12 @@ def _run_response(task: AgentTaskRecord, request_id: str) -> AgentRunResponse:
 
 @router.post("/run", response_model=AgentRunResponse)
 async def run_agent(payload: AgentRunRequest, request: Request) -> AgentRunResponse:
+    if payload.reuse_project_evidence:
+        raise AppError(
+            status_code=422,
+            code="durable_evidence_required",
+            message="Submit a durable research task to reuse project evidence",
+        )
     if payload.mode == "experiment" or (
         payload.mode == "autonomous" and payload.workflow_kind == "experiment"
     ):

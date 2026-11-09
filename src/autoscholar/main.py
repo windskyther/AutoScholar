@@ -42,6 +42,8 @@ from autoscholar.core.errors import register_exception_handlers
 from autoscholar.core.logging import configure_logging
 from autoscholar.core.middleware import request_context_middleware
 from autoscholar.core.responses import UTF8JSONResponse
+from autoscholar.evidence.index import EvidenceIndex
+from autoscholar.evidence.library import EvidenceLibrary
 from autoscholar.experiment.artifacts import ArtifactManager
 from autoscholar.experiment.service import ExperimentService
 from autoscholar.infrastructure import Database, Qdrant, RedisClient
@@ -69,6 +71,7 @@ from autoscholar.rag import (
     Reranker,
     SparseEmbeddingProvider,
 )
+from autoscholar.rag.embeddings import FastEmbedProvider
 from autoscholar.rag.worker import create_embedding_provider
 from autoscholar.research import (
     RedisResearchCache,
@@ -488,6 +491,11 @@ def create_app(
     )
     application.state.settings = resolved_settings
     application.state.model_profiles = resolved_model_profiles
+    application.state.evidence_library = (
+        EvidenceLibrary(resolved_agent_repository.session_factory)
+        if isinstance(resolved_agent_repository, AgentTaskRepository)
+        else None
+    )
     application.state.governance = resolved_governance
     application.state.mcp_research_gateway = mcp_gateway
     application.state.mcp_filesystem_gateway = filesystem_gateway
@@ -504,6 +512,19 @@ def create_app(
         if resolved_autonomous_service is not None
         else None
     )
+    if application.state.evidence_library is not None:
+        library = application.state.evidence_library
+        if isinstance(resolved_qdrant, Qdrant) and isinstance(
+            resolved_embedding_provider, FastEmbedProvider
+        ):
+            library.semantic = EvidenceIndex(
+                library,
+                resolved_qdrant.client,
+                resolved_embedding_provider,
+                resolved_settings.qdrant_collection,
+            )
+        if application.state.durable_service is not None:
+            application.state.durable_service.evidence = library
     application.state.database = resolved_database
     application.state.redis = resolved_redis
     application.state.qdrant = resolved_qdrant

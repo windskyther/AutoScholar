@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from autoscholar.agent.records import ResearchSource
 from autoscholar.core.budget import Budget, BudgetLimits
+from autoscholar.evidence.models import EvidenceContext
 from autoscholar.experiment.models import ExperimentSpecification
 from autoscholar.orchestration.models import ReviewResult, TaskPlan, WorkflowKind
 from autoscholar.orchestration.service import Run
@@ -17,7 +18,9 @@ from autoscholar.rag.models import RetrievalMode
 from autoscholar.research.context import today
 from autoscholar.research.quality_models import QualityState, ResearchDepth
 
-Stage = Literal["planner", "executor", "quality", "reviewer", "replanner", "writer", "done"]
+Stage = Literal[
+    "evidence", "planner", "executor", "quality", "reviewer", "replanner", "writer", "done"
+]
 
 
 def default_sources() -> list[ResearchSource]:
@@ -61,6 +64,8 @@ class Snapshot(BaseModel):
     # Old snapshots retain the former workflow; new public tasks opt into standard.
     research_depth: ResearchDepth = "quick"
     quality: QualityState = Field(default_factory=QualityState)
+    reuse_project_evidence: bool = False
+    evidence_context: EvidenceContext = Field(default_factory=EvidenceContext)
 
     def restore(self, usage: dict[str, int], active_seconds: float) -> Run:
         names = (
@@ -84,6 +89,8 @@ class Snapshot(BaseModel):
             "memory_context",
             "research_depth",
             "quality",
+            "reuse_project_evidence",
+            "evidence_context",
         )
         return Run(
             **{name: getattr(self, name) for name in names},
@@ -104,6 +111,7 @@ class Snapshot(BaseModel):
             "specification",
             "memory_context",
             "quality",
+            "evidence_context",
         ):
             values[name] = getattr(run, name)
         values["stage"] = stage

@@ -22,7 +22,7 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
     || !string(value.kind) || !eventKinds.has(value.kind) || !string(value.created_at) || !record(value.payload)) return false;
   return Object.entries(value.payload).every(([key, item]) => {
     if (['status', 'previous'].includes(key)) return isTaskStatus(item);
-    if (key === 'stage') return string(item) && ['planner', 'executor', 'quality', 'reviewer', 'replanner', 'writer', 'done'].includes(item);
+    if (key === 'stage') return string(item) && ['evidence', 'planner', 'executor', 'quality', 'reviewer', 'replanner', 'writer', 'done'].includes(item);
     if (key === 'kind_name') return string(item) && ['llm', 'search', 'training', 'sandbox', 'tool', 'repair', 'embedding', 'mcp'].includes(item);
     if (key === 'decision') return string(item) && ['approve', 'reject', 'modify'].includes(item);
     if (key === 'enabled') return typeof item === 'boolean';
@@ -53,6 +53,7 @@ export function isSession(value: unknown): value is Session {
     && (caps.project_deletion === undefined || typeof caps.project_deletion === 'boolean')
     && (caps.research_workflows === undefined || typeof caps.research_workflows === 'boolean')
     && (caps.research_quality === undefined || typeof caps.research_quality === 'boolean')
+    && (caps.project_evidence === undefined || typeof caps.project_evidence === 'boolean')
     && (caps.model_pricing === undefined || typeof caps.model_pricing === 'boolean')
     && (caps.task_deletion === undefined || typeof caps.task_deletion === 'boolean')
     && (caps.markdown_export === undefined || typeof caps.markdown_export === 'boolean')

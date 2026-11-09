@@ -11,6 +11,8 @@ from autoscholar.core.audit import AuditEvent, AuditSink
 from autoscholar.core.budget import BudgetExceeded, BudgetLimits, current_budget
 from autoscholar.core.errors import AppError
 from autoscholar.core.journal import current_journal, persist_budget
+from autoscholar.evidence.library import EvidenceLibrary
+from autoscholar.evidence.models import EvidenceContext, current_evidence, current_evidence_guard
 from autoscholar.experiment.models import ExperimentSpecification
 from autoscholar.llm.profiles import current_model_profile
 from autoscholar.orchestration.approvals import ApprovalService, cost_units
@@ -40,6 +42,7 @@ class DurableService:
         self.approval_threshold = approval_threshold
         self.owner = str(uuid4())
         self.audit = audit
+        self.evidence = EvidenceLibrary(self.repository.sessions)
 
     async def submit(
         self, payload: dict[str, Any], key: str, *, require_managed: bool = False
@@ -49,6 +52,7 @@ class DurableService:
         requested_budget = request.pop("budget", None)
         specification = request.pop("experiment_specification", None)
         depth = request.pop("research_depth", None)
+        reuse = request.pop("reuse_project_evidence", None)
         snapshot = Snapshot(
             **request,
             task_id=str(uuid4()),
@@ -57,6 +61,13 @@ class DurableService:
             ),
             specification=ExperimentSpecification.model_validate(specification or {}),
             approval_threshold=self.approval_threshold,
+            reuse_project_evidence=reuse
+            if reuse is not None
+            else bool(
+                require_managed
+                and request.get("project_id")
+                and is_research(request.get("workflow_kind", ""))
+            ),
             research_depth=depth
             or (
                 "standard"
@@ -65,10 +76,14 @@ class DurableService:
             ),
         )
         canonical = dict(payload)
+        if snapshot.reuse_project_evidence and snapshot.project_id:
+            snapshot.stage = "evidence"
         if canonical.get("model_profile_id") is None:
             canonical.pop("model_profile_id", None)
         if canonical.get("research_depth") is None:
             canonical.pop("research_depth", None)
+        if canonical.get("reuse_project_evidence") is None:
+            canonical.pop("reuse_project_evidence", None)
         return await self.repository.enqueue(
             snapshot, key, digest(canonical), require_managed=require_managed
         )
@@ -183,6 +198,14 @@ class DurableService:
         claim_token = current_workflow_claim.set(WorkflowClaim(task_id, self.owner, generation))
         stage = snapshot.stage
         model_token = current_model_profile.set(snapshot.model_profile_id)
+        evidence_token = current_evidence.set(run.evidence_context)
+
+        async def check_evidence() -> None:
+            await self.evidence.validate(run.evidence_context, run.document_ids)
+
+        guard_token = current_evidence_guard.set(
+            check_evidence if run.evidence_context.claims else None
+        )
         status, code = "queued", None
         try:
             if job.status == "cancel_requested":
@@ -201,6 +224,7 @@ class DurableService:
                 status = "paused"
             else:
                 self._verify_sources(run)
+                await check_evidence()
                 run.budget.check()
                 active: dict[str, Any] = {"stage": stage, "version": run.version}
                 if stage == "executor":
@@ -250,6 +274,7 @@ class DurableService:
                     async with asyncio.timeout(max(0, remaining)):
                         stage = await self._unit(run, stage)
                     if stage == "done":
+                        await check_evidence()
                         status = "succeeded"
         except (BudgetExceeded, TimeoutError):
             status, code = "budget_exceeded", "autonomous_budget_exceeded"
@@ -268,6 +293,8 @@ class DurableService:
             code = str(getattr(exc, "code", "workflow_execution_failed"))
         finally:
             current_model_profile.reset(model_token)
+            current_evidence_guard.reset(guard_token)
+            current_evidence.reset(evidence_token)
             current_workflow_claim.reset(claim_token)
             current_journal.reset(journal_token)
             current_budget.reset(budget_token)
@@ -296,6 +323,27 @@ class DurableService:
 
     async def _unit(self, run: Run, stage: Stage) -> Stage:
         state: FlowState = {"run": run}
+        if stage == "evidence":
+            if run.project_id:
+                try:
+                    run.evidence_context = await self.evidence.select(
+                        run.project_id,
+                        run.objective,
+                        document_ids=run.document_ids,
+                        source_types=list(run.research_sources),
+                        document_only=run.workflow_kind == "document_analysis",
+                        exclude_task_id=run.task_id,
+                    )
+                    await self.evidence.record_selection(
+                        run.task_id, run.evidence_context, replace_uncheckpointed=True
+                    )
+                except AppError:
+                    raise
+                except Exception:
+                    run.evidence_context = EvidenceContext(
+                        project_id=run.project_id, note="evidence_store_unavailable"
+                    )
+            return "planner"
         if stage in {"planner", "replanner"}:
             run.memory_context = await self.memory.context(run)
             if run.memory_context:
@@ -350,6 +398,10 @@ class DurableService:
         return "done"
 
     async def _reconcile(self, snapshot: Snapshot, run: Run, active: dict[str, Any]) -> Stage:
+        if active.get("stage") == "evidence":
+            # Selection has no external calls; receipts are idempotent. Re-select
+            # only when no frozen selection has ever been checkpointed.
+            return "planner" if run.evidence_context.snapshot_hash else "evidence"
         if active.get("stage") == "executor":
             steps = await self.service.workflows.history(run.task_id, "steps")
             matches = [

@@ -25,19 +25,66 @@ async def source_quote_checks(
     the wording of the claim. Semantic support remains the Reviewer's obligation.
     """
     sources: list[dict[str, Any]] = []
+    bank_sources: list[dict[str, Any]] = []
     for trace in child.tool_calls:
-        if trace.status != "succeeded" or trace.tool_name not in {"web_search", "paper_search"}:
+        if trace.status != "succeeded" or trace.tool_name not in {
+            "web_search",
+            "paper_search",
+            "project_evidence_search",
+        }:
             continue
         try:
             payload = json.loads(trace.output)
         except (ValueError, TypeError):
             continue
         if isinstance(payload, dict) and isinstance(payload.get("results"), list):
+            if trace.tool_name == "project_evidence_search":
+                bank_sources.extend(item for item in payload["results"] if isinstance(item, dict))
             sources.extend(
                 item
                 for item in payload["results"]
                 if isinstance(item, dict) and trace.tool_name == f"{item.get('source_type')}_search"
             )
+    verified_bank: list[dict[str, Any]] = []
+    if bank_sources and child.project_id and child.parent_task_id:
+        from autoscholar.evidence.database import (
+            EvidenceReuseRow,
+            ProjectClaimRow,
+            SourceVersionRow,
+        )
+        from autoscholar.evidence.store import EvidenceStore
+
+        bank = EvidenceStore(tasks.session_factory)
+        async with tasks.session_factory() as session:
+            for item in bank_sources:
+                source = await session.get(SourceVersionRow, item.get("bank_version_id", ""))
+                if (
+                    source is None
+                    or item.get("provider") != "project_evidence"
+                    or source.material.get("url") != item.get("url")
+                    or source.material.get("kind") != item.get("source_type")
+                    or not isinstance(item.get("content"), str)
+                    or not item["content"].strip()
+                    or item["content"] not in source.material.get("text", "")
+                    or not await bank.source_valid(session, source, child.project_id)
+                ):
+                    continue
+                for claim_id in item.get("bank_claim_ids", []):
+                    parent = await session.get(ProjectClaimRow, claim_id)
+                    selected = await session.scalar(
+                        select(EvidenceReuseRow.id).where(
+                            EvidenceReuseRow.task_id == child.parent_task_id,
+                            EvidenceReuseRow.claim_id == claim_id,
+                        )
+                    )
+                    if (
+                        parent
+                        and selected
+                        and any(s["source_id"] == source.id for s in parent.supports)
+                        and await bank.valid_claim(session, parent, project_id=child.project_id)
+                    ):
+                        verified_bank.append(item)
+                        break
     chunk_ids = {e.chunk_id for e in child.evidence if e.source_type == "document" and e.chunk_id}
     chunks = {}
     if chunk_ids:
@@ -55,6 +102,13 @@ async def source_quote_checks(
     def verified(evidence: EvidenceRecord) -> bool:
         if not evidence.excerpt.strip():
             return False
+        if evidence.provider == "project_evidence":
+            return any(
+                item.get("source_type") == evidence.source_type
+                and item.get("url") == evidence.url
+                and evidence.excerpt in item["content"]
+                for item in verified_bank
+            )
         if evidence.source_type == "document":
             chunk = chunks.get(evidence.chunk_id or "")
             return bool(

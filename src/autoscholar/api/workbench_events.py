@@ -47,7 +47,7 @@ KINDS = {
     "approval_requested",
     "approval_decided",
 }
-STAGES = {"planner", "executor", "quality", "reviewer", "replanner", "writer", "done"}
+STAGES = {"evidence", "planner", "executor", "quality", "reviewer", "replanner", "writer", "done"}
 CALL_KINDS = {"llm", "search", "training", "sandbox", "tool", "repair", "embedding"}
 
 

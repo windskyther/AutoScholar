@@ -108,7 +108,22 @@ class FastEmbedProvider:
     async def close(self) -> None:
         return None
 
-    async def _get_embedding(self) -> TextEmbedding:
+    def cached_copy(self) -> "FastEmbedProvider":
+        """Independent local-only loader, without changing document indexing policy."""
+        return FastEmbedProvider(
+            model=self._model_name,
+            dimensions=self._dimensions,
+            cache_dir=self._cache_dir,
+            local_files_only=True,
+            model_path=self._model_path,
+            threads=self._threads,
+        )
+
+    async def require_cached_model(self) -> None:
+        """Allow evidence reuse to use local weights without initiating downloads."""
+        await self._get_embedding(cached_only=True)
+
+    async def _get_embedding(self, *, cached_only: bool = False) -> TextEmbedding:
         if self._embedding is not None:
             return self._embedding
         async with self._load_lock:
@@ -118,7 +133,7 @@ class FastEmbedProvider:
                     model_name=self._model_name,
                     cache_dir=str(self._cache_dir),
                     lazy_load=True,
-                    local_files_only=self._local_files_only,
+                    local_files_only=self._local_files_only or cached_only,
                     specific_model_path=str(self._model_path) if self._model_path else None,
                     threads=self._threads,
                 )

@@ -31,6 +31,8 @@ function failureLabel(code: string | null | undefined): string {
     knowledge_base_not_ready: '没有可用的项目 PDF',
     source_quote_unverified: '原文引用未通过来源核验',
     research_quality_unverified: '资料审查未通过，请核对筛选记录和草稿',
+    project_evidence_revoked: '采用的项目证据已被移除或来源改变，请核对后重新提交',
+    project_evidence_expired: '采用的资料已超过复核期限，请重新提交研究以核验来源',
     external_result_uncertain: '有调用结果待核对',
   };
   return code ? (labels[code] ?? '执行失败，请查看任务记录') : '—';
@@ -73,7 +75,9 @@ export function ProjectPage() {
   return <>
     <Breadcrumb items={[{ title: <Link to="/">项目</Link> }, { title: project.data.name }]} />
     <PageHeading title={project.data.name} subtitle={project.data.description || '该项目尚未填写说明。'} refresh={() => void tasks.refetch()} />
-    <div className="section-heading"><h2>研究任务</h2><Space><DeleteProject project={project.data} /><Button type="primary"
+    <div className="section-heading"><h2>研究任务</h2><Space>
+      {session?.capabilities.project_evidence && <Link to={`/projects/${encodeURIComponent(projectId)}/evidence`}><Button>项目证据库</Button></Link>}
+      <DeleteProject project={project.data} /><Button type="primary"
       disabled={(!session?.capabilities.llm_configured && !session?.capabilities.model_management) || !session?.capabilities.budget_limits}
       onClick={() => submission.openProject(project.data)}>创建研究任务</Button></Space></div>
     {!session?.capabilities.llm_configured && !session?.capabilities.model_management && <Alert type="warning" title="研究服务尚未配置，暂时无法创建任务。" />}
@@ -101,7 +105,8 @@ export function ProjectPage() {
 }
 
 const ResearchQuality = lazy(() => import('./research-quality'));
-const stageLabels: Record<string, string> = { planner: '规划任务', executor: '收集资料', quality: '资料精筛与审稿',
+const EvidenceReuse = lazy(() => import('./evidence-reuse'));
+const stageLabels: Record<string, string> = { evidence: '查找项目证据', planner: '规划任务', executor: '收集资料', quality: '资料精筛与审稿',
   reviewer: '完成核对', replanner: '调整计划', writer: '整理输出', done: '已完成' };
 export function TaskPage() {
   const { projectId, taskId } = useParams();
@@ -167,6 +172,9 @@ export function TaskPage() {
       objective={data.task.objective} available={!!data.answer} /></div>
     {data.answer_truncated && <Alert type="warning" title="输出超过大小上限，下方仅展示部分内容。" />}
     {data.answer ? <pre className="plain-output">{data.answer}</pre> : <Empty description="任务尚未产生最终输出。" />}
+    {session?.capabilities.project_evidence && <Suspense fallback={<Loading />}>
+      <EvidenceReuse taskId={taskId!} projectId={projectId!} running={['queued', 'running'].includes(data.execution?.status ?? data.task.status)} />
+    </Suspense>}
     {session?.capabilities.research_quality && data.execution?.research_depth !== 'quick' && <Suspense fallback={<Loading />}>
       <ResearchQuality taskId={taskId!} running={['queued', 'running'].includes(data.execution?.status ?? data.task.status)} />
     </Suspense>}

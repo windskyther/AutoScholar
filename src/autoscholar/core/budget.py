@@ -115,7 +115,12 @@ class BudgetedLLM:
         tool_choice: ToolChoice = "none",
     ) -> LLMResult:
         # Config imports BudgetLimits before the provider package can be initialized.
+        from autoscholar.evidence.models import current_evidence_guard
         from autoscholar.llm.errors import LLMResponseError
+
+        guard = current_evidence_guard.get()
+        if guard is not None:
+            await guard()
 
         # A locally stopped wrapper cannot dispatch: do not create a phantom call/journal.
         check_available = getattr(self.provider, "check_available", None)
@@ -159,6 +164,8 @@ class BudgetedLLM:
         budget = current_budget.get()
         if budget is not None:
             budget.check()
+        if guard is not None:
+            await guard()
         if protocol_error is not None:
             raise protocol_error
         assert result is not None

@@ -12,6 +12,7 @@ const ProjectPage = lazy(() => import('./pages').then((module) => ({ default: mo
 const TaskPage = lazy(() => import('./pages').then((module) => ({ default: module.TaskPage })));
 const ModelsPage = lazy(() => import('./models-page'));
 const UsagePage = lazy(() => import('./usage-page'));
+const EvidenceBank = lazy(() => import('./evidence-bank'));
 
 function Shell() {
   const { api } = useConnection();
@@ -51,6 +52,7 @@ export default function App() {
       <Route path="/models" element={<ModelsPage />} />
       <Route path="/usage" element={<UsagePage />} />
       <Route path="/projects/:projectId" element={<ProjectPage />} />
+      <Route path="/projects/:projectId/evidence" element={<EvidenceBank />} />
       <Route path="/projects/:projectId/tasks/:taskId" element={<TaskPage />} />
     </Route>
     <Route path="*" element={<Navigate to="/" replace />} />

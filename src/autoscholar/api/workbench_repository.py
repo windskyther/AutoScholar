@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import uuid4
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -37,6 +37,7 @@ from autoscholar.api.workbench_models import (
 )
 from autoscholar.core.budget import BudgetLimits
 from autoscholar.core.errors import AppError
+from autoscholar.evidence.database import ProjectClaimRow
 from autoscholar.orchestration.durable_models import (
     WorkflowApprovalRow,
     WorkflowCheckpointRow,
@@ -150,6 +151,11 @@ class WorkbenchRepository:
                     message="Finish or reconcile task operations before deletion",
                 )
             root.event_sequence += 1
+            await session.execute(
+                update(ProjectClaimRow)
+                .where(ProjectClaimRow.project_id == project_id)
+                .values(indexed_version=0)
+            )
             session.add(
                 WorkflowEventRow(
                     id=str(uuid4()),

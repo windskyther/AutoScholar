@@ -11,6 +11,7 @@ from autoscholar import __version__
 from autoscholar.agent.records import ArtifactRecord, ResolvedAgentMode, TaskStatus
 from autoscholar.agent.repository import AgentTaskRepository
 from autoscholar.api.routes.agent import router as agent_router
+from autoscholar.api.routes.evidence import router as evidence_router
 from autoscholar.api.routes.health import router as health_router
 from autoscholar.api.routes.memory import router as memory_router
 from autoscholar.api.routes.projects import router as projects_router
@@ -45,9 +46,8 @@ from autoscholar.llm.usage import UsageSummary
 from autoscholar.orchestration.approvals import ApprovalDecision
 from autoscholar.orchestration.task_types import TASK_TYPES
 
-router = APIRouter(
-    prefix="/workbench", tags=["workbench"]
-)
+router = APIRouter(prefix="/workbench", tags=["workbench"])
+router.include_router(evidence_router)
 
 
 def store(request: Request) -> WorkbenchRepository:
@@ -84,6 +84,7 @@ async def session(request: Request) -> WorkbenchSessionResponse:
             "project_deletion": True,
             "research_workflows": True,
             "research_quality": True,
+            "project_evidence": getattr(request.app.state, "evidence_library", None) is not None,
             "task_deletion": True,
             "markdown_export": True,
             "document_max_bytes": settings.document_max_bytes,

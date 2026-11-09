@@ -9,6 +9,7 @@ from typing import Any, cast
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from autoscholar.llm.pricing import ModelPricingRow
 from autoscholar.llm.profiles import ModelProfileRow, ModelProfiles
 from tests.governance import offline_app
 
@@ -35,6 +36,9 @@ class ModelSession:
         )
 
     async def scalars(self, statement: object) -> list[ModelProfileRow]:
+        descriptions = getattr(statement, "column_descriptions", [])
+        if any(item.get("entity") is ModelPricingRow for item in descriptions):
+            return []
         return [await self.scalar(statement)]
 
 

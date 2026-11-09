@@ -15,6 +15,7 @@ interface Values {
   workflowKind: NonNullable<TaskSubmission['workflow_kind']>;
   model_profile_id: string;
   research_depth: 'quick' | 'standard' | 'deep';
+  reuse_project_evidence: boolean;
   documentMode: 'all' | 'none' | 'selected'; retrieval: TaskSubmission['retrieval_mode']; consent: boolean;
 }
 const fields: { key: keyof BudgetLimits; label: string; min: number; max: number }[] = [
@@ -93,6 +94,7 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
       workflow_kind: values.workflowKind,
       model_profile_id: values.model_profile_id,
       ...(session?.capabilities.research_quality ? { research_depth: values.research_depth } : {}),
+      ...(session?.capabilities.project_evidence ? { reuse_project_evidence: values.reuse_project_evidence } : {}),
       document_ids: values.documentMode === 'all' ? null : values.documentMode === 'none' ? [] : selected,
       retrieval_mode: values.retrieval, research_sources: values.sources, budget: values.budget,
     }) };
@@ -107,6 +109,7 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
       workflowKind: defaultKind, documentMode: 'none', retrieval: 'hybrid_rerank', consent: false,
       model_profile_id: '',
       research_depth: 'standard',
+      reuse_project_evidence: true,
     }}>
       <>
         <Form.Item name="model_profile_id" label="使用模型" rules={[{ required: true, message: '请选择模型管理中的模型' }]}>
@@ -139,6 +142,10 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
       <Form.Item name="objective" label="研究目标" rules={[{ required: true, whitespace: true, max: 10000, message: '填写 1–10000 字符的研究目标' }]}>
         <Input.TextArea rows={3} maxLength={10000} showCount />
       </Form.Item>
+      {session?.capabilities.project_evidence && <Form.Item name="reuse_project_evidence" valuePropName="checked"
+        extra="仅查找本项目已审查的成果，重新核对原始资料；仍会检索缺失或需要更新的信息。">
+        <Checkbox>复用本项目已有证据</Checkbox>
+      </Form.Item>}
       {workflowKind !== 'document_analysis' && <><Form.Item name="sources" label="检索来源" rules={[{ required: true, type: 'array', min: 1, max: 2 }]}>
         <Select mode="multiple" options={[{ value: 'web', label: 'Tavily Web', disabled: !session?.capabilities.web_search_configured },
           { value: 'paper', label: 'Semantic Scholar 论文（无密钥时匿名）' }]} />

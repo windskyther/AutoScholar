@@ -24,6 +24,7 @@ export interface TaskSubmission {
   workflow_kind?: 'research' | 'literature_review' | 'comparison' | 'research_proposal' | 'document_analysis';
   model_profile_id?: string | null;
   research_depth?: 'quick' | 'standard' | 'deep';
+  reuse_project_evidence?: boolean;
 }
 export interface SubmissionReceipt { task_id: string; status: TaskStatus; created: boolean; status_url: string }
 export interface Session {
@@ -37,6 +38,7 @@ export interface Session {
     task_types?: { id: string; label: string }[];
     model_usage?: boolean;
     research_quality?: boolean;
+    project_evidence?: boolean;
     model_pricing?: boolean;
   };
 }

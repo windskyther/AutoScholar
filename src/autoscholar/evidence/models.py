@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from datetime import datetime
 from typing import Any
@@ -39,6 +40,7 @@ class BankClaim(BaseModel):
 class EvidenceContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
     project_id: str | None = None
+    objective: str = ""
     claims: list[BankClaim] = Field(default_factory=list, max_length=12)
     sources: list[BankSource] = Field(default_factory=list, max_length=40)
     snapshot_hash: str = ""
@@ -46,3 +48,6 @@ class EvidenceContext(BaseModel):
 
 
 current_evidence: ContextVar[EvidenceContext | None] = ContextVar("project_evidence", default=None)
+current_evidence_guard: ContextVar[Callable[[], Awaitable[None]] | None] = ContextVar(
+    "project_evidence_guard", default=None
+)

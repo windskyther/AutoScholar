@@ -3,12 +3,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol, cast
 from uuid import uuid4
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from autoscholar.agent.database_models import AgentTaskRow
 from autoscholar.core.errors import AppError
+from autoscholar.evidence.database import ProjectClaimRow
 from autoscholar.orchestration.durable_models import WorkflowJobRow
 from autoscholar.rag.database_models import (
     DocumentChunkRow,
@@ -165,6 +166,11 @@ class KnowledgeRepository:
                     message="Wait for document processing before deletion",
                 )
             project.deleted_at = datetime.now(UTC)
+            await session.execute(
+                update(ProjectClaimRow)
+                .where(ProjectClaimRow.project_id == project_id)
+                .values(indexed_version=0)
+            )
             await session.commit()
 
     async def list_projects(
@@ -313,6 +319,11 @@ class KnowledgeRepository:
                         message="Document state changed; refresh before requesting another job",
                     )
             row.status = "deleting" if kind == "delete" else "queued"
+            await session.execute(
+                update(ProjectClaimRow)
+                .where(ProjectClaimRow.project_id == project_id)
+                .values(indexed_version=0)
+            )
             row.error_code = None
             row.error_message = None
             session.add(

@@ -11,7 +11,7 @@ const document = { id: 'doc-ready', project_id: project.id, original_filename: '
   embedding_model: 'fixture', index_version: 1, error_code: null, error_message: null, created_at: time, updated_at: time };
 type Entry = { method: string; path: string; key?: string; body?: string };
 
-async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProjectAck?: boolean; unauthorizedTask?: boolean; researchWorkflows?: boolean; researchQuality?: boolean; tokenBudget?: number } = {}) {
+async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProjectAck?: boolean; unauthorizedTask?: boolean; researchWorkflows?: boolean; researchQuality?: boolean; projectEvidence?: boolean; tokenBudget?: number } = {}) {
   const calls: Entry[] = [];
   const limits = { ...budget, total_tokens: options.tokenBudget ?? budget.total_tokens };
   const projects = [project];
@@ -33,6 +33,7 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
       task_streaming: false, document_max_bytes: 1024, document_max_pages: 10, budget_limits: limits,
       research_workflows: options.researchWorkflows ?? false,
       research_quality: options.researchQuality ?? false,
+      project_evidence: options.projectEvidence ?? false,
     } };
     else if (path === '/api/workbench/models') body = { items: [{ id: '11111111-1111-4111-8111-111111111111', name: 'Managed fixture', base_url: 'https://fixture.example/v1', model: 'fixture', compatibility_profile: 'auto', enabled: true, created_at: time }] };
     else if (path === '/api/workbench/projects' && method === 'POST') {
@@ -131,6 +132,21 @@ test('research defaults preserve the objective and explicitly disable unselected
   const submitted = calls.filter((item) => item.method === 'POST' && item.path.endsWith('/agent/tasks'));
   expect(submitted).toHaveLength(1);
   expect(JSON.parse(submitted[0].body!)).toMatchObject({ objective, workflow_kind: 'research', document_ids: [] });
+  expect(JSON.parse(submitted[0].body!).reuse_project_evidence).toBeUndefined();
+});
+
+test('project evidence defaults on and can be disabled before submission', async ({ page }) => {
+  const calls = await fixture(page, { projectEvidence: true });
+  await draftTask(page);
+  const dialog = page.getByRole('dialog');
+  const reuse = dialog.getByRole('checkbox', { name: '复用本项目已有证据' });
+  await expect(reuse).toBeChecked();
+  await reuse.uncheck();
+  await dialog.getByRole('checkbox', { name: consent }).check();
+  await dialog.getByRole('button', { name: '确认提交并自动执行' }).click();
+  await expect.poll(() => calls.filter(c => c.method === 'POST' && c.path.endsWith('/agent/tasks')).length).toBe(1);
+  const submitted = calls.find(c => c.method === 'POST' && c.path.endsWith('/agent/tasks'))!;
+  expect(JSON.parse(submitted.body!).reuse_project_evidence).toBe(false);
 });
 
 test('the advertised 500000-token allowance is available and submitted for a new task', async ({ page }) => {
