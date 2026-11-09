@@ -7,7 +7,7 @@ test.afterAll(async ({ request }) => {
   await request.post('http://127.0.0.1:18009/__fixture/stop', { headers: AUTH });
 });
 async function connect(page: import('@playwright/test').Page) {
-  await page.goto('/');
+  await page.goto('/projects');
   await page.getByRole('link', { name: '中文研究项目' }).click();
   await page.getByRole('link', { name: '比较 MNIST 模型' }).click();
 }

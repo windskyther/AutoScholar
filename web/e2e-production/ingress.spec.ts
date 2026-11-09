@@ -13,7 +13,7 @@ async function state(request: APIRequestContext) {
 }
 async function connect(page: Page) {
   const seeded = await state(page.request);
-  await page.goto('/');
+  await page.goto('/projects');
   await page.locator(`a[href="/projects/${seeded.project_id}"]`).click();
 }
 

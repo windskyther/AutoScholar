@@ -24,7 +24,7 @@ export default function DeleteProject({ project, onDeleted }: { project: Project
     await cache.cancelQueries({ predicate: (query) => query.queryKey.includes(project.id) });
     cache.removeQueries({ predicate: (query) => query.queryKey.includes(project.id) });
     setOpen(false);
-    navigate('/', { replace: true });
+    navigate('/projects', { replace: true });
     onDeleted?.();
     await cache.invalidateQueries({ queryKey: ['projects'] });
   }

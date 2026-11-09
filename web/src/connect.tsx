@@ -9,7 +9,7 @@ export default function ConnectPage() {
   const location = useLocation();
   if (api) {
     const destination = (location.state as { from?: string } | null)?.from;
-    return <Navigate to={destination?.startsWith('/projects/') || destination === '/models' || destination === '/usage' ? destination : '/'} replace />;
+    return <Navigate to={destination === '/projects' || destination?.startsWith('/projects/') || destination === '/models' || destination === '/usage' ? destination : '/'} replace />;
   }
   if (checking) return <Loading />;
   return <main className="connection-screen"><section className="connection-panel">

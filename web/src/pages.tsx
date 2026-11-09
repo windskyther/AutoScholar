@@ -51,7 +51,7 @@ export function ProjectPage() {
   if (project.isPending) return <Loading />;
   if (project.isError) return <QueryError error={project.error} retry={() => void project.refetch()} />;
   return <>
-    <Breadcrumb items={[{ title: <Link to="/">项目</Link> }, { title: project.data.name }]} />
+    <Breadcrumb items={[{ title: <Link to="/projects">项目</Link> }, { title: project.data.name }]} />
     <PageHeading title={project.data.name} subtitle={project.data.description || '该项目尚未填写说明。'} refresh={() => void tasks.refetch()} />
     <div className="section-heading"><h2>研究任务</h2><Space>
       {session?.capabilities.project_evidence && <Link to={`/projects/${encodeURIComponent(projectId)}/evidence`}><Button>项目证据库</Button></Link>}
@@ -102,7 +102,7 @@ export function TaskPage() {
   const usage = data.execution?.budget_used ?? data.task.metrics;
   const limits = data.execution?.budget_limits;
   return <>
-    <Breadcrumb items={[{ title: <Link to="/">项目</Link> },
+    <Breadcrumb items={[{ title: <Link to="/projects">项目</Link> },
       { title: <Link to={`/projects/${encodeURIComponent(projectId!)}`}>项目任务</Link> }, { title: '任务详情' }]} />
     <PageHeading title="任务详情" subtitle={data.task.objective} refresh={() => void query.refetch()} />
     <Space wrap data-testid="task-status"><Status value={data.execution?.status ?? data.task.status} />

@@ -7,6 +7,7 @@ import PageTransition from './page-transition';
 import { TaskSubmissionProvider, useSubmission } from './task-submission';
 import WorkspaceDock from './workspace-dock';
 
+const HomePage = lazy(() => import('./home-page'));
 const ProjectsPage = lazy(() => import('./projects-page'));
 const ProjectPage = lazy(() => import('./pages').then((module) => ({ default: module.ProjectPage })));
 const TaskPage = lazy(() => import('./pages').then((module) => ({ default: module.TaskPage })));
@@ -40,7 +41,8 @@ export default function App() {
   return <div className="app-scene"><div className="geometric-backdrop" aria-hidden="true" /><Routes>
     <Route path="/connect" element={<ConnectPage />} />
     <Route element={<Shell />}>
-      <Route index element={<ProjectsPage />} />
+      <Route index element={<HomePage />} />
+      <Route path="/projects" element={<ProjectsPage />} />
       <Route path="/models" element={<ModelsPage />} />
       <Route path="/usage" element={<UsagePage />} />
       <Route path="/projects/:projectId" element={<ProjectPage />} />

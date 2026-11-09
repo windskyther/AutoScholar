@@ -41,7 +41,7 @@ async function fixture(page: Page, mode: 'duplicate' | 'gap' | 'retry' | 'outage
     else throw new Error('Unexpected event fixture route: ' + path);
     await route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(payload) });
   });
-  await page.goto('/');
+  await page.goto('/projects');
   await page.getByRole('link', { name: project.name }).click();
   await page.getByRole('link', { name: task.objective }).click();
   await expect(page.locator('.event-section')).not.toHaveAttribute('open', '');

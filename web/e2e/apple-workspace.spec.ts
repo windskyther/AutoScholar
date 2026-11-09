@@ -39,7 +39,7 @@ test('top glass dock replaces the sidebar, preserves navigation and renders proj
   await page.setViewportSize({ width: 1440, height: 1000 });
   const requests = await fixture(page);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
-  await page.goto('/');
+  await page.goto('/projects');
   const dock = page.getByRole('navigation', { name: '主导航' });
   await expect(dock.getByRole('link')).toHaveCount(3);
   await expect(page.getByRole('complementary')).toHaveCount(0);
@@ -77,7 +77,7 @@ test('top glass dock replaces the sidebar, preserves navigation and renders proj
 for (const width of [320, 390]) {
   test(`dock and project actions fit ${width}px without horizontal page scrolling`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
-    await fixture(page); await page.goto('/');
+    await fixture(page); await page.goto('/projects');
     await expect(page.getByRole('link', { name: projects[0].name })).toBeVisible();
     const dock = page.getByRole('navigation', { name: '主导航' });
     for (const link of await dock.getByRole('link').all()) {
@@ -97,7 +97,7 @@ for (const width of [320, 390]) {
 }
 
 test('reduced motion and increased contrast update the glass material and keep navigation usable', async ({ page }) => {
-  await fixture(page); await page.goto('/');
+  await fixture(page); await page.goto('/projects');
   await expect(page.locator('.glass-surface')).toHaveAttribute('data-refraction', 'svg');
   await page.emulateMedia({ reducedMotion: 'reduce', contrast: 'more' });
   await expect(page.locator('.glass-surface')).toHaveAttribute('data-refraction', 'css');
@@ -113,18 +113,20 @@ test('reduced motion and increased contrast update the glass material and keep n
 test('dark appearance follows the system while the geometric wallpaper stays static', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await fixture(page); await page.goto('/');
+  await fixture(page); await page.goto('/projects');
   await expect(page.locator('.project-card')).toHaveCount(3);
-  expect(await page.locator('.app-content').evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(31, 31, 34, 0.97)');
+  await expect(page.locator('.app-content')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(page.locator('.project-card').first()).toHaveCSS('background-color', 'rgb(36, 36, 38)');
   expect(await page.locator('.geometric-backdrop').evaluate(element => getComputedStyle(element).animationName)).toBe('none');
   await page.waitForTimeout(200);
   await page.screenshot({ path: test.info().outputPath('dark.png'), fullPage: true });
   await page.emulateMedia({ colorScheme: 'light' });
-  await expect.poll(() => page.locator('.app-content').evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(255, 255, 255, 0.96)');
+  await expect(page.locator('.project-card').first()).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(page.locator('.app-content')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
 });
 
 test('keyboard users can skip to content and select every dock destination', async ({ page }) => {
-  await fixture(page); await page.goto('/');
+  await fixture(page); await page.goto('/projects');
   await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('link', { name: '跳至内容' })).toBeFocused();
@@ -137,7 +139,7 @@ test('keyboard users can skip to content and select every dock destination', asy
 
 test('a missing canvas context falls back without blocking navigation or creating extra SVGs', async ({ page }) => {
   await page.addInitScript(() => Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', { value: () => null }));
-  await fixture(page); await page.goto('/');
+  await fixture(page); await page.goto('/projects');
   await expect(page.locator('.project-card')).toHaveCount(3);
   await expect(page.locator('.glass-surface')).toHaveAttribute('data-refraction', 'css');
   await expect(page.locator('.glass-definitions')).toHaveCount(0);
@@ -146,7 +148,7 @@ test('a missing canvas context falls back without blocking navigation or creatin
 });
 
 test('resize regenerates one bounded displacement map while route switches retain the dock', async ({ page }) => {
-  await fixture(page); await page.goto('/');
+  await fixture(page); await page.goto('/projects');
   await expect(page.locator('.glass-surface')).toHaveAttribute('data-refraction', 'svg');
   const filter = page.locator('.glass-definitions filter'); const id = await filter.getAttribute('id');
   for (const width of [320, 1440, 390, 1200]) {
@@ -169,7 +171,7 @@ test('project pagination loads each real page and navigating from a scrolled col
     const offset = Number(new URL(route.request().url()).searchParams.get('offset'));
     return route.fulfill({ json: { items: entries.slice(offset, offset + 20), total: 25, limit: 20, offset } });
   });
-  await page.goto('/'); await expect(page.locator('.project-card')).toHaveCount(20);
+  await page.goto('/projects'); await expect(page.locator('.project-card')).toHaveCount(20);
   await page.getByTitle('2', { exact: true }).click();
   await expect(page.locator('.project-card')).toHaveCount(5);
   await expect(page.getByRole('link', { name: '研究项目 25', exact: true })).toBeVisible();
@@ -181,9 +183,68 @@ test('project pagination loads each real page and navigating from a scrolled col
 
 test('forced colors replace the wallpaper and glass with readable system surfaces', async ({ page }) => {
   await page.emulateMedia({ forcedColors: 'active' });
-  await fixture(page); await page.goto('/');
+  await fixture(page); await page.goto('/projects');
   await expect(page.locator('.glass-surface')).toHaveAttribute('data-refraction', 'css');
   expect(await page.locator('.geometric-backdrop').evaluate(element => getComputedStyle(element).backgroundImage)).toBe('none');
+  expect(await page.locator('.geometric-backdrop').evaluate(element => getComputedStyle(element, '::before').display)).toBe('none');
   await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '项目与任务' })).toBeVisible();
   await expect(page.getByRole('button', { name: '新建项目', exact: true })).toBeVisible();
 });
+
+test('home is independent, spaces the three dock choices and blends its content into the wallpaper', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const requests = await fixture(page);
+  await page.goto('/');
+  const dock = page.getByRole('navigation', { name: '主导航' });
+  await expect(page.getByRole('heading', { name: /让好奇，\s*成为新的发现。/ })).toBeVisible();
+  await expect(dock.getByRole('link')).toHaveCount(3);
+  await expect(dock.locator('[aria-current]')).toHaveCount(0);
+  await expect(page.locator('.project-card')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '新建项目', exact: true })).toHaveCount(0);
+  expect(requests.some(request => /\/workbench\/(projects|models|usage)/.test(request))).toBe(false);
+  const links = await dock.getByRole('link').all();
+  const boxes = await Promise.all(links.map(link => link.boundingBox()));
+  expect(boxes[1]!.x - boxes[0]!.x - boxes[0]!.width).toBeGreaterThanOrEqual(35);
+  const main = page.getByRole('main');
+  await expect(main).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(main).toHaveCSS('border-top-width', '0px');
+  await expect(main).toHaveCSS('box-shadow', 'none');
+  await expect(page.locator('.page-transition')).toHaveCSS('animation-duration', '0.48s');
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: test.info().outputPath('home-desktop.png'), fullPage: true });
+  await page.getByRole('link', { name: '开始研究', exact: true }).click();
+  await expect(page).toHaveURL(/\/projects$/);
+  await expect(page.locator('.project-card')).toHaveCount(3);
+  await expect(dock.getByRole('link', { name: '项目与任务' })).toHaveAttribute('aria-current', 'page');
+  await page.getByRole('link', { name: 'AutoScholar', exact: true }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('heading', { name: /让好奇，\s*成为新的发现。/ })).toBeVisible();
+  await expect(dock.locator('[aria-current]')).toHaveCount(0);
+  await page.getByRole('link', { name: '管理模型', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '模型管理', exact: true })).toBeVisible();
+});
+
+for (const width of [320, 390, 768, 1024]) {
+  test(`independent home stays readable and its dock stays clear of the brand at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await fixture(page); await page.goto('/');
+    await expect(page.locator('#home-title')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    const dock = await page.getByRole('navigation', { name: '主导航' }).boundingBox();
+    const brand = await page.getByRole('link', { name: 'AutoScholar', exact: true }).boundingBox();
+    expect(brand!.y + brand!.height <= dock!.y || brand!.x + brand!.width <= dock!.x).toBe(true);
+    for (const link of await page.locator('.home-actions a, .dock-item').all()) {
+      const rect = await link.boundingBox();
+      expect(rect!.width).toBeGreaterThanOrEqual(44); expect(rect!.height).toBeGreaterThanOrEqual(44);
+    }
+    await page.waitForTimeout(500);
+    if (width === 390) await page.screenshot({ path: test.info().outputPath('home-mobile.png'), fullPage: true });
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.getByRole('main')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(page.locator('#home-title')).toHaveCSS('color', 'rgb(245, 245, 247)');
+    if (width === 1024) {
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: test.info().outputPath('home-dark.png'), fullPage: true });
+    }
+  });
+}

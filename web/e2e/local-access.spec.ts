@@ -28,9 +28,10 @@ async function fixture(page: Page, initial: 200 | 401 | 503 = 200) {
 test('opens and refreshes the local workbench without a login or browser credential', async ({ page }) => {
   await fixture(page);
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /让好奇，\s*成为新的发现。/ })).toBeVisible();
   await expect(page.getByLabel('操作者 Token', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /断开连接/ })).toHaveCount(0);
+  await page.getByRole('link', { name: '开始研究', exact: true }).click();
   await page.getByRole('link', { name: project.name, exact: true }).click();
   await page.reload();
   await expect(page.getByRole('heading', { name: project.name, exact: true })).toBeVisible();
@@ -41,7 +42,7 @@ test('opens and refreshes the local workbench without a login or browser credent
 for (const status of [401, 503] as const) {
   test(`backend ${status} offers a credentialless retry without automatic retry loops`, async ({ page }) => {
     const state = await fixture(page, status);
-    await page.goto('/');
+    await page.goto('/projects');
     await expect(page.getByRole('button', { name: '重试连接', exact: true })).toBeVisible();
     await expect(page.getByLabel('操作者 Token', { exact: true })).toHaveCount(0);
     const before = state.calls.filter((path) => path.endsWith('/session')).length;
@@ -50,5 +51,6 @@ for (const status of [401, 503] as const) {
     state.recover();
     await page.getByRole('button', { name: '重试连接', exact: true }).click();
     await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/projects$/);
   });
 }

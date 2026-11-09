@@ -55,7 +55,7 @@ async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' | 'emp
     if (path.endsWith('/output/markdown')) return route.fulfill({ contentType: 'text/markdown; charset=utf-8', body: markdown });
     throw new Error('Unexpected task action route: ' + path);
   });
-  await page.goto('/');
+  await page.goto('/projects');
   await page.getByRole('link', { name: project.name, exact: true }).click();
   return calls;
 }

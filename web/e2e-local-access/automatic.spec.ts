@@ -14,10 +14,10 @@ test('local API and browser open and refresh without a login', async ({ page, re
   const direct = await request.get('http://127.0.0.1:18009/workbench/session');
   expect(direct.status()).toBe(200);
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /让好奇，\s*成为新的发现。/ })).toBeVisible();
   await expect(page.getByLabel('操作者 Token', { exact: true })).toHaveCount(0);
   await page.reload();
-  await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /让好奇，\s*成为新的发现。/ })).toBeVisible();
   expect(headers.length).toBeGreaterThan(0);
   expect(headers.every((item) => !item.authorization && !item.cookie)).toBe(true);
   const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage }, cookie: document.cookie }));
@@ -29,7 +29,7 @@ test('automatic local access permits a same-origin project write without a brows
   page.on('request', (entry) => {
     if (entry.url().includes('/api/workbench/')) headers.push(entry.headers());
   });
-  await page.goto('/');
+  await page.goto('/projects');
   await page.getByRole('button', { name: '新建项目', exact: true }).click();
   await page.getByLabel('项目名称', { exact: true }).fill('Automatic access acceptance');
   await page.getByLabel('项目说明', { exact: true }).fill('Synthetic local fixture; no provider calls.');

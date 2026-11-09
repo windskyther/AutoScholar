@@ -9,7 +9,7 @@ const consent = '我确认提交后自动执行研究任务，并接受可能产
 test.describe.configure({ mode: 'serial' });
 
 async function connect(page: Page) {
-  await page.goto('/');
+  await page.goto('/projects');
   await expect(page.getByRole('link', { name: '中文研究项目' })).toBeVisible();
 }
 async function process(request: APIRequestContext) {

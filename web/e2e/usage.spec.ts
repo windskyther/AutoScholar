@@ -130,7 +130,7 @@ test('a first visit waits for both lazy code and data before animating the actua
   await fixture(page);
   await page.route('**/src/usage-page.tsx*', async (route) => { codeRequested = true; await code; await route.continue(); });
   await page.route('**/api/workbench/usage?*', async (route) => { dataRequested = true; await data; await route.fallback(); });
-  await page.goto('/');
+  await page.goto('/projects');
   await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
   await page.getByRole('link', { name: '用量统计', exact: true }).click();
   await expect.poll(() => codeRequested).toBe(true);
@@ -155,12 +155,12 @@ test('a first visit waits for both lazy code and data before animating the actua
 test('route entry is brief, filters do not remount it, and reduced motion disables it', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await fixture(page);
-  await page.goto('/');
+  await page.goto('/projects');
   await page.getByRole('link', { name: '用量统计', exact: true }).click();
   await expect(page.getByTestId('usage-totals')).toBeVisible();
   const frame = page.locator('.page-transition');
   await expect(frame).toHaveCSS('animation-name', 'page-enter');
-  await expect(frame).toHaveCSS('animation-duration', '0.18s');
+  await expect(frame).toHaveCSS('animation-duration', '0.48s');
   const sameFrame = await frame.elementHandle();
   await page.getByText('按模型', { exact: true }).click();
   await expect(page.getByRole('heading', { name: '模型用量分布' })).toBeVisible();

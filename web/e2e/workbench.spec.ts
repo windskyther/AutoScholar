@@ -46,7 +46,7 @@ async function mockAPI(page: Page, sessionStatus = 200) {
   return requests;
 }
 async function connect(page: Page) {
-  await page.goto('/');
+  await page.goto('/projects');
 }
 
 test('repeated overview refresh keeps one control section alongside task resources', async ({ page }) => {

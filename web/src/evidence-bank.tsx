@@ -58,7 +58,7 @@ export default function EvidenceBank() {
   if (!enabled) return <Alert type="info" title="项目证据库暂不可用。" />;
   return <>
     {contextHolder}
-    <Breadcrumb items={[{ title: <Link to="/">项目</Link> }, { title: <Link to={`/projects/${encodeURIComponent(projectId)}`}>{project.data.name}</Link> }, { title: '证据库' }]} />
+    <Breadcrumb items={[{ title: <Link to="/projects">项目</Link> }, { title: <Link to={`/projects/${encodeURIComponent(projectId)}`}>{project.data.name}</Link> }, { title: '证据库' }]} />
     <PageHeading title="项目证据库" subtitle={project.data.name} refresh={() => void bank.refetch()} />
     <p>研究目标通过审查后，在这里积累结论与原文依据。新目标会先查找相关成果，再补充需要的资料。</p>
     <Space className="filters" wrap>

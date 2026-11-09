@@ -23,8 +23,8 @@ export default function Appearance({ children }: { children: ReactNode }) {
       colorTextPlaceholder: dark ? '#a4a4ae' : '#73737c',
       colorBgContainer: surface, colorBgElevated: dark ? '#2c2c2f' : '#ffffff',
       colorBorder: dark ? '#54545c' : '#d1d1d8', colorBorderSecondary: dark ? '#414146' : '#e7e7ec',
-      colorFillAlter: inset, borderRadius: 10, borderRadiusLG: 18, fontSize: 15, controlHeight: 40,
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+      colorFillAlter: inset, borderRadius: 10, borderRadiusLG: 18, fontSize: 16, controlHeight: 40,
+      fontFamily: '"Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif',
       boxShadow: '0 12px 40px rgb(0 0 0 / 0.12)',
     },
     components: {

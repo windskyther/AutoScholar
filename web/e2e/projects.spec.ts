@@ -36,7 +36,7 @@ async function fixture(page: Page, mode: 'success' | 'unknown' | 'active' = 'suc
     } });
     throw new Error('Unmocked project request');
   });
-  await page.goto('/');
+  await page.goto('/projects');
   await expect(page.getByRole('link', { name: target.name, exact: true })).toBeVisible();
   return { deletes: () => deletes };
 }

@@ -7,7 +7,7 @@ test('browser connects through the real Vite proxy to authenticated FastAPI and 
   page.on('request', (entry) => {
     if (new URL(entry.url()).pathname.startsWith('/api/')) methods.push(entry.method());
   });
-  await page.goto('/');
+  await page.goto('/projects');
   await page.getByRole('link', { name: '中文研究项目' }).click();
   await page.getByRole('link', { name: '比较 MNIST 模型' }).click();
   await expect(page.getByText('中文输出：隔离 HTTP 联测，不调用付费接口。')).toBeVisible();

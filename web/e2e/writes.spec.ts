@@ -72,7 +72,7 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
     else throw new Error('Unexpected fixture route: ' + method + ' ' + path);
     await route.fulfill({ status, contentType: 'application/json; charset=utf-8', body: JSON.stringify(body) });
   });
-  await page.goto('/');
+  await page.goto('/projects');
   await expect(page.getByRole('link', { name: project.name })).toBeVisible();
   return calls;
 }
