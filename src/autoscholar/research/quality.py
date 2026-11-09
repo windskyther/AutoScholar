@@ -6,7 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
@@ -119,6 +119,14 @@ class ResearchQuality:
         if result.source_type != "document" and not public_url(result.url):
             return
         published_at = result.published_at
+        fetched_at = None
+        if result.fetched_at:
+            try:
+                fetched_at = datetime.fromisoformat(result.fetched_at)
+                if fetched_at.tzinfo is None:
+                    fetched_at = None
+            except ValueError:
+                pass
         if published_at:
             try:
                 published_at = date.fromisoformat(published_at[:10]).isoformat()
@@ -135,6 +143,7 @@ class ResearchQuality:
                 truncated=len(result.content) > 2400,
                 topics=[topic[:180]],
                 published_at=published_at,
+                fetched_at=fetched_at,
                 fulltext_url=getattr(result, "fulltext_url", None),
                 document_id=result.document_id,
                 chunk_id=result.chunk_id,
@@ -168,7 +177,8 @@ class ResearchQuality:
                 "task_type": run.workflow_kind,
                 "requirements": task_guidance(run.workflow_kind),
                 "materials": [
-                    source.model_dump(exclude={"read_attempted"}) for source in state.materials
+                    source.model_dump(mode="json", exclude={"read_attempted", "bank_claim_ids"})
+                    for source in state.materials
                 ],
             }
         )
@@ -464,6 +474,7 @@ class ResearchQuality:
                         receipt = await self.reader.read(source.fulltext_url or source.url)
                         if receipt.text:
                             source.text, source.truncated = receipt.text, receipt.truncated
+                            source.fetched_at = receipt.fetched_at
                             source.availability = "extracted_text"
                             state.reads += 1
                     source.read_attempted = True

@@ -8,6 +8,7 @@ import structlog
 
 from autoscholar.core.config import get_settings
 from autoscholar.deployment.worker_health import heartbeat
+from autoscholar.evidence.store import EvidenceStore
 from autoscholar.main import create_app
 from autoscholar.orchestration.durable import DurableService
 
@@ -26,8 +27,15 @@ async def run_worker() -> None:
         durable: DurableService | None = app.state.durable_service
         if durable is None:
             raise RuntimeError("Workflow worker dependencies unavailable")
+        evidence = EvidenceStore(durable.repository.sessions)
+
+        async def work() -> bool:
+            executed = await durable.tick()
+            published = await evidence.publish_one()
+            return executed or published
+
         while not stop.is_set():
-            tick = asyncio.create_task(durable.tick())
+            tick = asyncio.create_task(work())
             stopping = asyncio.create_task(stop.wait())
             done, _ = await asyncio.wait({tick, stopping}, return_when=asyncio.FIRST_COMPLETED)
             if stopping in done:

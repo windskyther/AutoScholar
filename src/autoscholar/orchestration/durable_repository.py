@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from autoscholar.agent.database_models import AgentTaskRow
 from autoscholar.core.errors import AppError
+from autoscholar.evidence.store import enqueue_publication
 from autoscholar.llm.profiles import ModelProfileRow
 from autoscholar.orchestration.checkpoints import Snapshot, digest
 from autoscholar.orchestration.durable_models import (
@@ -583,6 +584,8 @@ class DurableRepository:
                 stage=snapshot.stage,
                 status=status,
             )
+            if status == "succeeded":
+                await enqueue_publication(session, snapshot, row.checkpoint_sequence)
             await session.commit()
 
     async def control(

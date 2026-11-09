@@ -189,6 +189,8 @@ async def test_search_service_normalizes_and_caches_results() -> None:
     assert first.query == "DoRA paper"
     assert first.cache_hit is False
     assert second.cache_hit is True
+    assert first.results[0].fetched_at is not None
+    assert second.results[0].fetched_at == first.results[0].fetched_at
     assert calls == 1
     assert cache_client.writes == 1
     await service.close()

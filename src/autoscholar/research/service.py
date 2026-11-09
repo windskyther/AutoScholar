@@ -1,5 +1,7 @@
 import hashlib
 import json
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import structlog
@@ -91,6 +93,8 @@ class ResearchSearchService:
                 )
         async with external_operation("search:" + self.name):
             results = await self.provider.search(normalized, limit=bounded_limit)
+            fetched_at = datetime.now(UTC).isoformat()
+            results = [replace(item, fetched_at=fetched_at) for item in results]
         if self._cache is not None:
             await self._cache.set(cache_key, results)
         return SearchResponse(

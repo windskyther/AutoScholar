@@ -21,11 +21,12 @@ class SearchResult:
     section: str | None = None
     published_at: str | None = None
     fulltext_url: str | None = None
+    fetched_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["authors"] = list(self.authors)
-        for name in ("published_at", "fulltext_url"):
+        for name in ("published_at", "fulltext_url", "fetched_at"):
             if payload[name] is None:
                 payload.pop(name)
         return payload
@@ -54,6 +55,7 @@ class SearchResult:
             section=(str(payload["section"]) if payload.get("section") is not None else None),
             published_at=str(payload["published_at"]) if payload.get("published_at") else None,
             fulltext_url=str(payload["fulltext_url"]) if payload.get("fulltext_url") else None,
+            fetched_at=str(payload["fetched_at"]) if payload.get("fetched_at") else None,
         )
 
 

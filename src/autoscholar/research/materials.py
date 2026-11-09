@@ -4,6 +4,7 @@ import hashlib
 import ipaddress
 import json
 from contextlib import suppress
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import httpx
@@ -19,6 +20,7 @@ class ReadResult(BaseModel):
     truncated: bool = False
     error: str | None = None
     cache_hit: bool = False
+    fetched_at: datetime | None = None
 
 
 def public_url(value: str) -> bool:
@@ -113,11 +115,16 @@ class MaterialReader:
             except (ValueError, AttributeError, TypeError):
                 return ReadResult(error="extraction_invalid_response")
             result = ReadResult(
-                text=raw[:12000], truncated=len(raw) > 12000, error=None if raw else "source_empty"
+                text=raw[:12000],
+                truncated=len(raw) > 12000,
+                error=None if raw else "source_empty",
+                fetched_at=datetime.now(UTC) if raw else None,
             )
         if self.cache is not None and self.ttl > 0 and result.text:
             with suppress(Exception):
-                await self.cache.set_json(cache_key, result.model_dump(), ttl_seconds=self.ttl)
+                await self.cache.set_json(
+                    cache_key, result.model_dump(mode="json"), ttl_seconds=self.ttl
+                )
         return result
 
     async def close(self) -> None:

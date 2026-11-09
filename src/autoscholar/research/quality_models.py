@@ -1,5 +1,6 @@
 """Bounded, JSON-only research quality checkpoints and model response contracts."""
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,6 +28,8 @@ class Material(Strict):
     availability: Literal["summary_only", "extracted_text", "document_excerpt"] = "summary_only"
     truncated: bool = False
     read_attempted: bool = False
+    fetched_at: datetime | None = None
+    bank_claim_ids: list[str] = Field(default_factory=list, max_length=40)
 
 
 class Assessment(Strict):
