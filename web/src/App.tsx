@@ -1,13 +1,13 @@
-import { lazy, Suspense } from 'react';
-import { Alert, Button, Layout, Menu } from 'antd';
-import { ApiOutlined, BarChartOutlined, FolderOutlined } from '@ant-design/icons';
+import { lazy, Suspense, useLayoutEffect } from 'react';
+import { Alert, Button } from 'antd';
 import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { useConnection } from './connection';
 import ConnectPage from './connect';
 import PageTransition from './page-transition';
 import { TaskSubmissionProvider, useSubmission } from './task-submission';
+import WorkspaceDock from './workspace-dock';
 
-const ProjectsPage = lazy(() => import('./pages').then((module) => ({ default: module.ProjectsPage })));
+const ProjectsPage = lazy(() => import('./projects-page'));
 const ProjectPage = lazy(() => import('./pages').then((module) => ({ default: module.ProjectPage })));
 const TaskPage = lazy(() => import('./pages').then((module) => ({ default: module.TaskPage })));
 const ModelsPage = lazy(() => import('./models-page'));
@@ -24,28 +24,20 @@ function WorkspaceLayout() {
   const { api } = useConnection();
   const submission = useSubmission();
   const location = useLocation();
+  useLayoutEffect(() => { window.scrollTo(0, 0); }, [location.pathname]);
   if (!api) return <Navigate to="/connect" state={{ from: location.pathname }} replace />;
-  return <Layout className="workbench-shell">
-    <Layout.Sider width={212} breakpoint="lg" collapsedWidth={0} className="sidebar" theme="light">
-      <Link to="/" className="wordmark sidebar-brand">AutoScholar</Link>
-      <div className="sidebar-label">研究工作台</div>
-      <Menu mode="inline" selectedKeys={[location.pathname === '/models' ? 'models' : location.pathname === '/usage' ? 'usage' : 'projects']} items={[
-        { key: 'projects', icon: <FolderOutlined />, label: <Link to="/">项目与任务</Link> },
-        { key: 'models', icon: <ApiOutlined />, label: <Link to="/models">模型管理</Link> },
-        { key: 'usage', icon: <BarChartOutlined />, label: <Link to="/usage">用量统计</Link> },
-      ]} />
-    </Layout.Sider>
-    <Layout>
-      <Layout.Content className="app-content">
+  return <div className="workbench-shell">
+    <a className="skip-link" href="#workspace-content">跳至内容</a>
+    <header className="workspace-header"><Link to="/" className="wordmark workspace-brand">AutoScholar</Link><WorkspaceDock /></header>
+      <main className="app-content" id="workspace-content" tabIndex={-1}>
         {submission.pending && <Alert type="warning" title="有一笔任务提交结果未确认，不要直接新建另一轮。"
           action={<Button onClick={submission.reveal}>核查原提交</Button>} />}
         <PageTransition key={location.pathname}><Suspense fallback={null}><Outlet /></Suspense></PageTransition>
-      </Layout.Content>
-    </Layout>
-  </Layout>;
+      </main>
+  </div>;
 }
 export default function App() {
-  return <Routes>
+  return <div className="app-scene"><div className="geometric-backdrop" aria-hidden="true" /><Routes>
     <Route path="/connect" element={<ConnectPage />} />
     <Route element={<Shell />}>
       <Route index element={<ProjectsPage />} />
@@ -56,5 +48,5 @@ export default function App() {
       <Route path="/projects/:projectId/tasks/:taskId" element={<TaskPage />} />
     </Route>
     <Route path="*" element={<Navigate to="/" replace />} />
-  </Routes>;
+  </Routes></div>;
 }

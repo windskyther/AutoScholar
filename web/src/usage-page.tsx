@@ -22,9 +22,9 @@ function Trend({ daily, metric }: { daily: UsageDay[]; metric: 'total_tokens' | 
       <div className="usage-y-axis" aria-hidden="true"><span>{short(maximum)}</span><span>{short(maximum / 2)}</span><span>0</span></div>
       <svg viewBox="0 0 900 200" preserveAspectRatio="none" role="img" aria-label={`每日${metric === 'calls' ? '调用次数' : '已确认 Token'}趋势`}>
         <title>每日用量；可展开下方的每日明细查看准确数值。</title>
-        {[20, 105, 190].map((y) => <line key={y} x1="0" x2="900" y1={y} y2={y} stroke="#dce5e1" strokeDasharray="3 5" />)}
-        <polygon points={`10,190 ${points} 890,190`} fill="#1f7165" fillOpacity="0.08" />
-        <polyline points={points} fill="none" stroke="#1f7165" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+        {[20, 105, 190].map((y) => <line key={y} x1="0" x2="900" y1={y} y2={y} stroke="var(--border-soft)" strokeDasharray="3 5" />)}
+        <polygon points={`10,190 ${points} 890,190`} fill="var(--ink)" fillOpacity="0.06" />
+        <polyline points={points} fill="none" stroke="var(--ink)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
         {daily.map((day, index) => <rect key={day.date} x={index / daily.length * 900} y="0" width={900 / daily.length} height="200" fill="transparent">
           <title>{`${day.date}：${format(day.total_tokens)} 已确认 Tokens；${format(day.calls)} 次调用；${format(day.unknown_usage_calls)} 次用量未确认`}</title>
         </rect>)}

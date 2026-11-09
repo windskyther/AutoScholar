@@ -5,8 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ApiError } from './api';
 import { useConnection } from './connection';
 import { dateLabel, Loading, Metric, PageHeading, QueryError, Status, statusLabels } from './components';
-import type { Project, Task, TaskStatus } from './types';
-import CreateProject from './create-project';
+import type { Task, TaskStatus } from './types';
 import Documents from './documents';
 import { useSubmission } from './task-submission';
 import Events from './events';
@@ -36,27 +35,6 @@ function failureLabel(code: string | null | undefined): string {
     external_result_uncertain: '有调用结果待核对',
   };
   return code ? (labels[code] ?? '执行失败，请查看任务记录') : '—';
-}
-
-export function ProjectsPage() {
-  const { api } = useConnection();
-  const [page, setPage] = useState(1);
-  const query = useQuery({ queryKey: ['projects', page], queryFn: ({ signal }) => api!.projects(page, signal) });
-  usePageReady(!query.isPending);
-  return <>
-    <PageHeading title="项目" refresh={() => void query.refetch()} />
-    <div className="filters"><CreateProject /></div>
-    {query.isPending ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
-      : <Table<Project> rowKey="id" dataSource={query.data.items} scroll={{ x: 650 }}
-        locale={{ emptyText: <Empty description="暂无项目，点击“新建项目”开始。" /> }}
-        columns={[
-          { title: '项目', dataIndex: 'name', render: (name: string, item) => <Link to={`/projects/${encodeURIComponent(item.id)}`}>{name}</Link> },
-          { title: '说明', dataIndex: 'description', ellipsis: true, render: (value: string | null) => value || '未填写' },
-          { title: '更新时间', dataIndex: 'updated_at', width: 210, render: dateLabel },
-          { title: '操作', width: 150, render: (_, item) => <DeleteProject project={item} onDeleted={() => setPage(1)} /> },
-        ]} pagination={{ current: page, pageSize: 20, total: query.data.total,
-                          showSizeChanger: false, onChange: setPage }} />}
-  </>;
 }
 
 export function ProjectPage() {

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1100" viewBox="0 0 1600 1100" fill="none">
+  <defs>
+    <linearGradient id="paper" x1="150" y1="0" x2="1350" y2="1100" gradientUnits="userSpaceOnUse"><stop stop-color="#f8f8fa"/><stop offset="1" stop-color="#d9dadd"/></linearGradient>
+    <linearGradient id="fold" x1="420" y1="-100" x2="1080" y2="660" gradientUnits="userSpaceOnUse"><stop stop-color="#fff"/><stop offset=".67" stop-color="#f0f0f2"/><stop offset="1" stop-color="#b7b8bc"/></linearGradient>
+    <linearGradient id="graphite" x1="840" y1="-100" x2="1510" y2="1040" gradientUnits="userSpaceOnUse"><stop stop-color="#222225"/><stop offset=".55" stop-color="#101012"/><stop offset="1" stop-color="#48494d"/></linearGradient>
+    <linearGradient id="ribbon" x1="0" y1="580" x2="910" y2="1070" gradientUnits="userSpaceOnUse"><stop stop-color="#fff"/><stop offset=".62" stop-color="#e7e7ea"/><stop offset="1" stop-color="#b5b6bb"/></linearGradient>
+  </defs>
+  <path fill="url(#paper)" d="M0 0h1600v1100H0z"/>
+  <path d="M1050-270 1805 380v900h-366L550 273z" fill="url(#graphite)"/>
+  <path d="M-190-110h1330L565 445-190 885z" fill="url(#fold)"/>
+  <path d="m1138-109-575 555-44-44z" fill="#fff" fill-opacity=".74"/>
+  <path d="M-330 720C-56 356 195 403 464 681c240 249 446 360 687 407H-330z" fill="#c1c2c7"/>
+  <path d="M-353 682C-73 319 189 361 454 642c240 254 448 372 702 458H-353z" fill="url(#ribbon)"/>
+  <path d="M-300 658C-40 342 187 405 428 655" stroke="#fff" stroke-opacity=".8" stroke-width="2"/>
+  <g stroke="#fff" stroke-opacity=".13">
+    <ellipse cx="1640" cy="1120" rx="570" ry="790" transform="rotate(-38 1640 1120)"/>
+    <ellipse cx="1640" cy="1120" rx="613" ry="835" transform="rotate(-38 1640 1120)"/>
+    <ellipse cx="1640" cy="1120" rx="656" ry="880" transform="rotate(-38 1640 1120)"/>
+    <ellipse cx="1640" cy="1120" rx="699" ry="925" transform="rotate(-38 1640 1120)"/>
+  </g>
+</svg>

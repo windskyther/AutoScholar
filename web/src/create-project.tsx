@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Alert, Button, Form, Input, Modal } from 'antd';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { PlusOutlined } from '@ant-design/icons';
 import { errorMessage, isWriteUncertain } from './api';
 import { useConnection } from './connection';
 
@@ -27,7 +28,7 @@ export default function CreateProject() {
     finally { inFlight.current = false; setBusy(false); }
   }
   return <>
-    <Button type="primary" onClick={() => { setError(null); form.resetFields(); setOpen(true); }}>新建项目</Button>
+    <Button type="primary" icon={<PlusOutlined aria-hidden="true" />} onClick={() => { setError(null); form.resetFields(); setOpen(true); }}>新建项目</Button>
     <Modal title="新建项目" open={open} mask={{ closable: false }} onCancel={() => { if (!busy) setOpen(false); }}
       closable={!busy} keyboard={!busy} footer={null}>
       <Form form={form} layout="vertical" onFinish={(values) => void submit(values)} disabled={busy}>
