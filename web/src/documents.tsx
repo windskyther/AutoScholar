@@ -3,7 +3,7 @@ import { Alert, Button, Empty, Form, Input, Modal, Space, Table, Tag } from 'ant
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { errorMessage, isWriteUncertain } from './api';
 import { useConnection } from './connection';
-import { dateLabel, Loading, QueryError } from './components';
+import { dateLabel, QueryError } from './components';
 import type { DocumentStatus, PDFDocument } from './types';
 
 const labels: Record<DocumentStatus, string> = { queued: '等待处理', processing: '处理中', ready: '已就绪', failed: '处理失败', deleting: '等待删除' };
@@ -64,7 +64,7 @@ export default function Documents({ projectId }: { projectId: string }) {
     {notice && <Alert type="success" showIcon title={notice} />}
     {error !== null && !open && <Alert type="error" showIcon title={errorMessage(error)}
       description={isWriteUncertain(error) ? '结果未确认，请刷新文档状态核查，不会自动重复执行。' : undefined} />}
-    {query.isPending ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
+    {query.isPending ? null : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
       : <Table<PDFDocument> rowKey="id" dataSource={query.data.items} scroll={{ x: 950 }} locale={{ emptyText: <Empty description="暂无 PDF 文档。" /> }}
         columns={[
           { title: '文档', dataIndex: 'title', ellipsis: true },

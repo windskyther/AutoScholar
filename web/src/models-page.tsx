@@ -3,7 +3,7 @@ import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConnection } from './connection';
 import { errorMessage, isWriteUncertain } from './api';
-import { dateLabel, Loading, PageHeading, QueryError } from './components';
+import { dateLabel, PageHeading, QueryError } from './components';
 import type { ModelProfile, ModelProfileInput } from './model-types';
 import { usePageReady } from './page-transition';
 
@@ -56,7 +56,7 @@ export default function ModelsPage() {
     <p>保存常用的模型连接，新建任务时选择使用哪一组。支持原生工具调用的 OpenAI 兼容接口。</p>
     <div className="filters"><Button type="primary" onClick={() => { setError(null); setOpen(true); }}>添加模型</Button></div>
     {error !== null && !open && <Alert type="error" title={errorMessage(error)} />}
-    {catalog.isPending ? <Loading /> : catalog.isError ? <QueryError error={catalog.error} retry={() => void catalog.refetch()} /> : <>
+    {catalog.isPending ? null : catalog.isError ? <QueryError error={catalog.error} retry={() => void catalog.refetch()} /> : <>
       <Table<ModelProfile> rowKey="id" dataSource={catalog.data.items} scroll={{ x: 850 }} pagination={{ pageSize: 10 }}
         locale={{ emptyText: '还没有保存模型，点击“添加模型”开始。' }} columns={[
           { title: '名称', dataIndex: 'name' }, { title: '模型', dataIndex: 'model' },

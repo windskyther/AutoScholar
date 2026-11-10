@@ -3,7 +3,7 @@ import { Alert, Button, Descriptions, Empty, Modal, Space, Table, Tabs, Tag } fr
 import { useQuery } from '@tanstack/react-query';
 import { useConnection } from './connection';
 import { errorMessage } from './api';
-import { Loading, QueryError } from './components';
+import { QueryError } from './components';
 import { safeExternalURL } from './resource-guards';
 import type { ArtifactResource, EvidenceResource, ExperimentResource, ModelRun } from './types';
 
@@ -11,7 +11,7 @@ function Evidence({ taskId }: { taskId: string }) {
   const { api } = useConnection(); const [page, setPage] = useState(1);
   const query = useQuery({ queryKey: ['resources', taskId, 'evidence', page],
     queryFn: ({ signal }) => api!.evidence(taskId, page, signal) });
-  return query.isPending ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
+  return query.isPending ? null : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
     : <Table<EvidenceResource> rowKey="id" dataSource={query.data.items} scroll={{ x: 700 }} size="small"
       locale={{ emptyText: <Empty description="暂无检索证据。" /> }} columns={[
         { title: '引用', dataIndex: 'citation_key', width: 90, render: (key: string, item) =>
@@ -54,7 +54,7 @@ function Experiments({ taskId }: { taskId: string }) {
   const { api } = useConnection(); const [page, setPage] = useState(1);
   const query = useQuery({ queryKey: ['resources', taskId, 'experiments', page],
     queryFn: ({ signal }) => api!.experiments(taskId, page, signal) });
-  return query.isPending ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
+  return query.isPending ? null : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
     : <Table<ExperimentResource> rowKey="id" dataSource={query.data.items} scroll={{ x: 650 }} size="small"
       columns={[{ title: '实验', dataIndex: 'name' }, { title: '状态', dataIndex: 'status' },
         { title: '错误码', dataIndex: 'error_code' }]}
@@ -109,7 +109,7 @@ function Files({ taskId }: { taskId: string }) {
   }
   return <>
     {error && !selected && <Alert type="error" title={error} />}
-    {query.isPending ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
+    {query.isPending ? null : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
       : <Table<ArtifactResource> rowKey="id" dataSource={query.data.items} scroll={{ x: 950 }} size="small" columns={[
         { title: '文件', dataIndex: 'path' },
         { title: '大小（字节）', dataIndex: 'size_bytes' },
@@ -120,7 +120,7 @@ function Files({ taskId }: { taskId: string }) {
       ]} pagination={{ current: page, total: query.data.total, pageSize: 20, showSizeChanger: false, onChange: setPage }} />}
     <Modal open={selected !== null} title={selected?.path} onCancel={close} footer={<Button onClick={close}>关闭预览</Button>}
       styles={{ body: { maxHeight: '70dvh', overflow: 'auto' } }} destroyOnHidden>
-      {busy ? <Loading /> : error ? <Alert type="error" title={error} /> : image
+      {busy ? null : error ? <Alert type="error" title={error} /> : image
         ? <img src={image} alt="实验曲线" style={{ maxWidth: '100%' }} /> : <pre className="plain-output">{text}</pre>}
       {truncated && <Alert type="warning" title="预览超过 256 KiB，已截断；导出可取得完整登记产物。" />}
     </Modal>

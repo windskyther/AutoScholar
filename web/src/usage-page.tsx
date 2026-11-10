@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Alert, Collapse, Empty, Segmented, Select, Table } from 'antd';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useConnection } from './connection';
-import { Loading, Metric, PageHeading, QueryError } from './components';
+import { Metric, PageHeading, QueryError } from './components';
 import type { UsageDay, UsageGroup } from './usage-types';
 import { usePageReady } from './page-transition';
 
@@ -72,7 +72,7 @@ export default function UsagePage() {
       <label>统计维度<Segmented aria-label="统计维度" value={groupBy} onChange={setGroupBy}
         options={[{ value: 'api', label: '按 API 配置' }, { value: 'model', label: '按模型' }]} /></label>
     </div>
-    {query.isPending || query.isPlaceholderData ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} /> : data && <>
+    {query.isPending || query.isPlaceholderData ? null : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} /> : data && <>
       <div className="metrics-grid usage-metrics" data-testid="usage-totals">
         <Metric label="已确认 Tokens" value={data.totals.total_tokens} />
         <Metric label="输入 Tokens" value={data.totals.input_tokens} />

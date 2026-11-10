@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Alert, Collapse, Empty, Table, Tag } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { useConnection } from './connection';
-import { Loading, QueryError } from './components';
+import { QueryError } from './components';
 
 import { qualityPhases, verdicts, access } from './quality-types';
 import type { Assessment, QualitySource } from './quality-types';
@@ -15,7 +15,7 @@ function QualityDetails({ taskId, running }: { taskId: string; running: boolean 
   const { api } = useConnection();
   const query = useQuery({ queryKey: ['quality', taskId], queryFn: ({ signal }) => api!.quality(taskId, signal),
     refetchInterval: running ? 5000 : false });
-  if (query.isPending) return <Loading />;
+  if (query.isPending) return null;
   if (query.isError) return <QueryError error={query.error} retry={() => void query.refetch()} />;
   const data = query.data;
   return <>

@@ -3,7 +3,7 @@ import { Alert, Button, Empty, Space, Table, Tag } from 'antd';
 import { useQueryClient } from '@tanstack/react-query';
 import { ApiError, errorMessage } from './api';
 import { useConnection } from './connection';
-import { dateLabel, Loading } from './components';
+import { dateLabel } from './components';
 import type { EventPage, StreamMessage, WorkflowEvent } from './types';
 
 const labels: Record<string, string> = { submitted: '任务已提交', claimed: '任务开始处理', unit_started: '执行单元开始',
@@ -117,7 +117,7 @@ export default function Events({ taskId, projectId }: { taskId: string; projectI
     </Space></div>
     {error !== null && <Alert type="warning" showIcon title={errorMessage(error)} description="任务仍由后台管理，可手动刷新快照；重新加载记录会重新读取最近事件，不会提交任务。" />}
     {historyError !== null && <Alert type="error" title={errorMessage(historyError)} />}
-    {state === 'loading' ? <Loading /> : <>
+    {state === 'loading' ? null : <>
       <Space wrap className="event-navigation"><Button disabled={earliest <= 1 || loadingHistory} aria-busy={loadingHistory} onClick={() => void older()}>更早记录</Button>
         <Button disabled={!history} onClick={() => setHistory(null)}>返回最新</Button>
         <span>{history ? '正在浏览历史页，最新事件仍在后台接收。' : '最近事件视图最多保留 200 项；更早记录按页读取。'}</span></Space>

@@ -112,7 +112,6 @@ p { color: var(--muted); line-height: 1.8; }
 .ant-table-wrapper .ant-table-container { border-radius: inherit; }
 .ant-table-wrapper .ant-table-thead > tr > th { font-size: 13px; font-weight: 600; }
 .ant-collapse { margin-top: 22px; }
-.loading { padding: 70px 20px; text-align: center; color: var(--muted); }
 .connection-screen { min-height: 100dvh; display: grid; place-items: center; padding: 32px 20px; }
 .connection-panel { width: min(100%, 460px); padding: 38px; background: var(--window); border: 1px solid var(--glass-border); border-radius: 28px; box-shadow: var(--window-shadow); }
 .connection-panel h1 { margin-top: 38px; font-size: 28px; }

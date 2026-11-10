@@ -1,7 +1,6 @@
 import { createContext, lazy, Suspense, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Project } from './types';
-import { Loading } from './components';
 
 const SubmissionDialog = lazy(() => import('./task-dialog'));
 interface SubmissionContext {
@@ -20,7 +19,7 @@ export function TaskSubmissionProvider({ children }: { children: ReactNode }) {
     setVisible(true);
   } }}>
     {children}
-    {project && <Suspense fallback={<Loading />}><SubmissionDialog key={project.id} project={project}
+    {project && <Suspense fallback={null}><SubmissionDialog key={project.id} project={project}
       open={visible} close={close} complete={complete} pendingChanged={setPending} /></Suspense>}
   </Context.Provider>;
 }

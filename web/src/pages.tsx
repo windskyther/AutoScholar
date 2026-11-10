@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError } from './api';
 import { useConnection } from './connection';
-import { dateLabel, Loading, Metric, PageHeading, QueryError, Status, statusLabels } from './components';
+import { dateLabel, Metric, PageHeading, QueryError, Status, statusLabels } from './components';
 import type { Task, TaskStatus } from './types';
 import Documents from './documents';
 import { useSubmission } from './task-submission';
@@ -48,7 +48,7 @@ export function ProjectPage() {
   const tasks = useQuery({ queryKey: ['tasks', projectId, page, status, search],
     queryFn: ({ signal }) => api!.tasks(projectId, page, status, search, signal), enabled: project.isSuccess });
   usePageReady(!project.isPending && (!project.isSuccess || !tasks.isPending));
-  if (project.isPending) return <Loading />;
+  if (project.isPending) return null;
   if (project.isError) return <QueryError error={project.error} retry={() => void project.refetch()} />;
   return <>
     <Breadcrumb items={[{ title: <Link to="/projects">项目</Link> }, { title: project.data.name }]} />
@@ -67,7 +67,7 @@ export function ProjectPage() {
         options={Object.entries(statusLabels).map(([value, label]) => ({ value: value as TaskStatus, label }))}
         onChange={(value) => { setStatus(value); setPage(1); }} />
     </Space>
-    {tasks.isPending ? <Loading /> : tasks.isError ? <QueryError error={tasks.error} retry={() => void tasks.refetch()} />
+    {tasks.isPending ? null : tasks.isError ? <QueryError error={tasks.error} retry={() => void tasks.refetch()} />
       : <Table<Task> rowKey="task_id" dataSource={tasks.data.items} scroll={{ x: 850 }}
         locale={{ emptyText: <Empty description="没有符合条件的研究任务。" /> }} columns={[
           { title: '研究目标', dataIndex: 'objective', ellipsis: true, render: (value: string, item) =>
@@ -96,7 +96,7 @@ export function TaskPage() {
     return value;
   } });
   usePageReady(!query.isPending);
-  if (query.isPending) return <Loading />;
+  if (query.isPending) return null;
   if (query.isError) return <QueryError error={query.error} retry={() => void query.refetch()} />;
   const data = query.data;
   const usage = data.execution?.budget_used ?? data.task.metrics;
@@ -150,10 +150,10 @@ export function TaskPage() {
       objective={data.task.objective} available={!!data.answer} /></div>
     {data.answer_truncated && <Alert type="warning" title="输出超过大小上限，下方仅展示部分内容。" />}
     {data.answer ? <pre className="plain-output">{data.answer}</pre> : <Empty description="任务尚未产生最终输出。" />}
-    {session?.capabilities.project_evidence && <Suspense fallback={<Loading />}>
+    {session?.capabilities.project_evidence && <Suspense fallback={null}>
       <EvidenceReuse taskId={taskId!} projectId={projectId!} running={['queued', 'running'].includes(data.execution?.status ?? data.task.status)} />
     </Suspense>}
-    {session?.capabilities.research_quality && data.execution?.research_depth !== 'quick' && <Suspense fallback={<Loading />}>
+    {session?.capabilities.research_quality && data.execution?.research_depth !== 'quick' && <Suspense fallback={null}>
       <ResearchQuality taskId={taskId!} running={['queued', 'running'].includes(data.execution?.status ?? data.task.status)} />
     </Suspense>}
     {session?.capabilities.task_streaming && <Events key={`events:${taskId}`} taskId={taskId!} projectId={projectId!} />}

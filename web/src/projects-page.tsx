@@ -4,7 +4,7 @@ import { ArrowUpOutlined, FolderOpenOutlined, ReloadOutlined } from '@ant-design
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { useConnection } from './connection';
-import { dateLabel, Loading, QueryError } from './components';
+import { dateLabel, QueryError } from './components';
 import CreateProject from './create-project';
 import DeleteProject from './delete-project';
 import { usePageReady } from './page-transition';
@@ -27,7 +27,7 @@ export default function ProjectsPage() {
         <CreateProject />
       </div>
     </div>
-    {query.isPending ? <Loading /> : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} /> : <>
+    {query.isPending ? null : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} /> : <>
       <div className="collection-heading"><h2>研究空间</h2><span>{query.data.total} 个项目</span></div>
       {query.data.items.length ? <div className="project-grid">{query.data.items.map(project => <article className="project-card" key={project.id}>
         <div className="project-card-top"><span className="project-folder" aria-hidden="true"><FolderOpenOutlined /></span>

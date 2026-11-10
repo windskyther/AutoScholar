@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { errorMessage } from './api';
 import { useConnection } from './connection';
-import { dateLabel, Loading, PageHeading, QueryError } from './components';
+import { dateLabel, PageHeading, QueryError } from './components';
 import { usePageReady } from './page-transition';
 import NumberSlider from './number-slider';
 import type { BankClaim, EvidencePolicy } from './evidence-types';
@@ -53,7 +53,7 @@ export default function EvidenceBank() {
         setNotice(`已排队 ${result.queued_tasks} 个目标，整理 ${result.pending_claims} 条待复核结论。${result.next_cursor ? '本批已处理 50 个目标，可继续整理下一批。' : ''}`);
       }) });
   }
-  if (project.isPending) return <Loading />;
+  if (project.isPending) return null;
   if (project.isError) return <QueryError error={project.error} retry={() => void project.refetch()} />;
   if (!enabled) return <Alert type="info" title="项目证据库暂不可用。" />;
   return <>
@@ -73,7 +73,7 @@ export default function EvidenceBank() {
     </Space>
     {error !== null && <Alert type="error" title={errorMessage(error)} />}
     {notice && <Alert type="info" title={notice} />}
-    {bank.isPending ? <Loading /> : bank.isError ? <QueryError error={bank.error} retry={() => void bank.refetch()} /> : <>
+    {bank.isPending ? null : bank.isError ? <QueryError error={bank.error} retry={() => void bank.refetch()} /> : <>
       <p>匹配 {bank.data.total} 条结论</p>
       <Table<BankClaim> rowKey="id" dataSource={bank.data.items} size="small" scroll={{ x: 850 }}
         locale={{ emptyText: <Empty description="暂无匹配成果。完成研究目标，或整理已有成果后，可在这里查看。" /> }} columns={[
@@ -99,7 +99,7 @@ function Policy({ projectId }: { projectId: string }) {
   const { api } = useConnection(); const cache = useQueryClient();
   const query = useQuery({ queryKey: ['evidence-policy', projectId], queryFn: ({ signal }) => api!.evidencePolicy(projectId, signal) });
   const [busy, setBusy] = useState(false); const [error, setError] = useState<unknown>(null);
-  if (query.isPending) return <Loading />;
+  if (query.isPending) return null;
   if (query.isError) return <QueryError error={query.error} retry={() => void query.refetch()} />;
   return <Form<EvidencePolicy> layout="vertical" initialValues={query.data} disabled={busy} onFinish={async values => {
     if (busy) return; setBusy(true); setError(null);

@@ -134,10 +134,14 @@ test('a first visit waits for both lazy code and data before animating the actua
   await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
   await page.getByRole('link', { name: '用量统计', exact: true }).click();
   await expect.poll(() => codeRequested).toBe(true);
+  await expect(page.locator('.loading, .ant-spin-spinning, .anticon-loading, .anticon-spin')).toHaveCount(0);
+  await expect.poll(() => page.getByRole('main').innerText()).toBe('');
   await page.waitForTimeout(250);
   expect((await entries()).filter((entry) => entry.path === '/usage')).toHaveLength(0);
   releaseCode();
   await expect.poll(() => dataRequested).toBe(true);
+  await expect(page.locator('.loading, .ant-spin-spinning, .anticon-loading, .anticon-spin')).toHaveCount(0);
+  await expect(page.getByText('正在读取数据', { exact: true })).toHaveCount(0);
   await page.waitForTimeout(250);
   await expect(page.locator('.page-transition')).toHaveCount(0);
   expect((await entries()).filter((entry) => entry.path === '/usage')).toHaveLength(0);

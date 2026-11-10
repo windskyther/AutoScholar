@@ -18,7 +18,6 @@ export function QueryError({ error, retry }: { error: unknown; retry: () => void
   return <Alert type="error" showIcon title={errorMessage(error)}
     action={<Button onClick={retry}>手动重试查询</Button>} />;
 }
-export function Loading() { return <div className="loading" role="status">正在读取数据</div>; }
 export function PageHeading({ title, subtitle, refresh }: {
   title: string; subtitle?: string; refresh?: () => void;
 }) {

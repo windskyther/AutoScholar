@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { ApiError, errorMessage, isWriteUncertain } from './api';
 import { useConnection } from './connection';
-import { Loading, QueryError } from './components';
+import { QueryError } from './components';
 import { DocumentState } from './documents';
 import type { BudgetLimits, PDFDocument, Project, TaskSubmission } from './types';
 import NumberSlider from './number-slider';
@@ -163,7 +163,7 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
       </Space>
       {documentMode === 'selected' && <>
         <p>已选择 {selected.length} 项；支持跨页选择，最多 100 项。提交时服务端再次核对归属与就绪状态。</p>
-        {docs.isPending ? <Loading /> : docs.isError ? <QueryError error={docs.error} retry={() => void docs.refetch()} />
+        {docs.isPending ? null : docs.isError ? <QueryError error={docs.error} retry={() => void docs.refetch()} />
           : <Table<PDFDocument> rowKey="id" size="small" dataSource={docs.data.items} scroll={{ x: 400 }} columns={[
             { title: '文档', dataIndex: 'title' }, { title: '状态', dataIndex: 'status', render: (value) => <DocumentState value={value} /> },
           ]} rowSelection={{ selectedRowKeys: selected, preserveSelectedRowKeys: true,

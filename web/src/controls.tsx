@@ -4,7 +4,7 @@ import NumberSlider from './number-slider';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, errorMessage, isWriteUncertain } from './api';
 import { useConnection } from './connection';
-import { dateLabel, Loading, QueryError, Status } from './components';
+import { dateLabel, QueryError, Status } from './components';
 import type { Approval, ApprovalAction, ControlAction, ExpectedState, ExperimentSpecification } from './types';
 
 const controlLabels: Record<ControlAction, string> = { pause: '暂停任务', resume: '恢复任务', cancel: '取消任务' };
@@ -106,7 +106,7 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
     {error !== null && <Alert type="error" showIcon title={errorMessage(error)}
       description={uncertain ? '写入结果未确认，已锁定变更操作。请核查最新任务及审批记录后手动解锁；不会自动重发。' : '未自动重试，请刷新后重新选择操作。'}
       action={uncertain ? <Button disabled={busy} aria-busy={busy} onClick={() => void inspect()}>核查并解锁</Button> : undefined} />}
-    {controls.isPending ? <Loading /> : controls.isError ? <QueryError error={controls.error} retry={refresh} />
+    {controls.isPending ? null : controls.isError ? <QueryError error={controls.error} retry={refresh} />
       : !controls.data.expected ? <Alert type="info" title="此历史任务仅支持查看。" /> : <>
         <Space wrap><Status value={controls.data.status} />
           {(['pause', 'resume', 'cancel'] as const).map((action) => <Button key={action} danger={action === 'cancel'}
@@ -115,7 +115,7 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
         </Space>
         {controls.data.status === 'recovery_required' && <Alert className="snapshot-note" type="warning" showIcon
           title="此任务有执行结果待核对，暂时无法继续。" description="请核对结果，或取消任务。" />}
-        {approvals.isPending ? <Loading /> : approvals.isError ? <QueryError error={approvals.error} retry={() => void approvals.refetch()} />
+        {approvals.isPending ? null : approvals.isError ? <QueryError error={approvals.error} retry={() => void approvals.refetch()} />
           : <Table<Approval> className="approval-table" rowKey="id" dataSource={approvals.data.items} scroll={{ x: 800 }} size="small"
             locale={{ emptyText: <Empty description="暂无人工审批记录。" /> }} columns={[
               { title: '审批', render: (_, _item, index) => `执行参数确认 ${(page - 1) * 20 + index + 1}` },
