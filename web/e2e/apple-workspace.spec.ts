@@ -49,6 +49,12 @@ test('top glass dock replaces the sidebar, preserves navigation and renders proj
   const position = await dock.boundingBox();
   expect(position && Math.abs(position.x + position.width / 2 - 720)).toBeLessThan(2);
   expect(position?.y).toBeLessThan(40);
+  // A non-uniform test backdrop makes refraction measurable on the white workspace.
+  await page.locator('.app-scene').evaluate(element => {
+    const style = (element as HTMLElement).style;
+    style.backgroundImage = 'linear-gradient(135deg, #fff 40%, #202024 40%, #202024 65%, #fff 65%)';
+    style.backgroundSize = '100% 140px'; style.backgroundRepeat = 'no-repeat';
+  });
   await page.waitForTimeout(200);
   const refracted = await dock.screenshot();
   const originalFilter = await page.locator('.glass-backdrop').evaluate(element => {
@@ -60,6 +66,10 @@ test('top glass dock replaces the sidebar, preserves navigation and renders proj
   await page.waitForTimeout(100);
   expect(refracted.equals(await dock.screenshot())).toBe(false);
   await page.locator('.glass-backdrop').evaluate((element, value) => { (element as HTMLElement).style.backdropFilter = value; }, originalFilter);
+  await page.locator('.app-scene').evaluate(element => {
+    const style = (element as HTMLElement).style;
+    for (const property of ['background-image', 'background-size', 'background-repeat']) style.removeProperty(property);
+  });
   await page.screenshot({ path: test.info().outputPath('desktop.png'), fullPage: true });
   await page.getByRole('link', { name: projects[0].name }).click();
   await expect(page.getByRole('heading', { name: projects[0].name, exact: true })).toBeVisible();
@@ -110,14 +120,16 @@ test('reduced motion and increased contrast update the glass material and keep n
   await expect(page.locator('.glass-definitions filter')).toHaveCount(1);
 });
 
-test('dark appearance follows the system while the geometric wallpaper stays static', async ({ page }) => {
+test('the workspace stays white when the system requests dark appearance', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await fixture(page); await page.goto('/projects');
   await expect(page.locator('.project-card')).toHaveCount(3);
   await expect(page.locator('.app-content')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-  await expect(page.locator('.project-card').first()).toHaveCSS('background-color', 'rgb(36, 36, 38)');
-  expect(await page.locator('.geometric-backdrop').evaluate(element => getComputedStyle(element).animationName)).toBe('none');
+  await expect(page.locator('.project-card').first()).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
+  await expect(page.locator('.geometric-backdrop')).toHaveCount(0);
   await page.waitForTimeout(200);
   await page.screenshot({ path: test.info().outputPath('dark.png'), fullPage: true });
   await page.emulateMedia({ colorScheme: 'light' });
@@ -181,17 +193,16 @@ test('project pagination loads each real page and navigating from a scrolled col
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
 });
 
-test('forced colors replace the wallpaper and glass with readable system surfaces', async ({ page }) => {
+test('forced colors retain readable system surfaces and navigation', async ({ page }) => {
   await page.emulateMedia({ forcedColors: 'active' });
   await fixture(page); await page.goto('/projects');
   await expect(page.locator('.glass-surface')).toHaveAttribute('data-refraction', 'css');
-  expect(await page.locator('.geometric-backdrop').evaluate(element => getComputedStyle(element).backgroundImage)).toBe('none');
-  expect(await page.locator('.geometric-backdrop').evaluate(element => getComputedStyle(element, '::before').display)).toBe('none');
+  await expect(page.locator('.geometric-backdrop')).toHaveCount(0);
   await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '项目与任务' })).toBeVisible();
   await expect(page.getByRole('button', { name: '新建项目', exact: true })).toBeVisible();
 });
 
-test('home is independent, spaces the three dock choices and blends its content into the wallpaper', async ({ page }) => {
+test('home is independent, spaces the three dock choices and uses an open white layout', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   const requests = await fixture(page);
   await page.goto('/');
@@ -241,7 +252,7 @@ for (const width of [320, 390, 768, 1024]) {
     if (width === 390) await page.screenshot({ path: test.info().outputPath('home-mobile.png'), fullPage: true });
     await page.emulateMedia({ colorScheme: 'dark' });
     await expect(page.getByRole('main')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-    await expect(page.locator('#home-title')).toHaveCSS('color', 'rgb(245, 245, 247)');
+    await expect(page.locator('#home-title')).toHaveCSS('color', 'rgb(20, 20, 20)');
     if (width === 1024) {
       await page.waitForTimeout(300);
       await page.screenshot({ path: test.info().outputPath('home-dark.png'), fullPage: true });

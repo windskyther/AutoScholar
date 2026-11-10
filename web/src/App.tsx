@@ -38,7 +38,7 @@ function WorkspaceLayout() {
   </div>;
 }
 export default function App() {
-  return <div className="app-scene"><div className="geometric-backdrop" aria-hidden="true" /><Routes>
+  return <div className="app-scene"><Routes>
     <Route path="/connect" element={<ConnectPage />} />
     <Route element={<Shell />}>
       <Route index element={<HomePage />} />
