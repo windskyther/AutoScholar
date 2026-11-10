@@ -105,7 +105,7 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
     {notice && <Alert type="success" showIcon title={notice} />}
     {error !== null && <Alert type="error" showIcon title={errorMessage(error)}
       description={uncertain ? '写入结果未确认，已锁定变更操作。请核查最新任务及审批记录后手动解锁；不会自动重发。' : '未自动重试，请刷新后重新选择操作。'}
-      action={uncertain ? <Button loading={busy} onClick={() => void inspect()}>核查并解锁</Button> : undefined} />}
+      action={uncertain ? <Button disabled={busy} aria-busy={busy} onClick={() => void inspect()}>核查并解锁</Button> : undefined} />}
     {controls.isPending ? <Loading /> : controls.isError ? <QueryError error={controls.error} retry={refresh} />
       : !controls.data.expected ? <Alert type="info" title="此历史任务仅支持查看。" /> : <>
         <Space wrap><Status value={controls.data.status} />

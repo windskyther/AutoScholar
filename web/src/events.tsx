@@ -118,7 +118,7 @@ export default function Events({ taskId, projectId }: { taskId: string; projectI
     {error !== null && <Alert type="warning" showIcon title={errorMessage(error)} description="任务仍由后台管理，可手动刷新快照；重新加载记录会重新读取最近事件，不会提交任务。" />}
     {historyError !== null && <Alert type="error" title={errorMessage(historyError)} />}
     {state === 'loading' ? <Loading /> : <>
-      <Space wrap className="event-navigation"><Button disabled={earliest <= 1} loading={loadingHistory} onClick={() => void older()}>更早记录</Button>
+      <Space wrap className="event-navigation"><Button disabled={earliest <= 1 || loadingHistory} aria-busy={loadingHistory} onClick={() => void older()}>更早记录</Button>
         <Button disabled={!history} onClick={() => setHistory(null)}>返回最新</Button>
         <span>{history ? '正在浏览历史页，最新事件仍在后台接收。' : '最近事件视图最多保留 200 项；更早记录按页读取。'}</span></Space>
       <Table<WorkflowEvent> key={history ? 'history-' + history.next_cursor : 'live'} rowKey="sequence" dataSource={[...visible].reverse()} size="small" scroll={{ x: 620 }} locale={{ emptyText: <Empty description="暂无执行记录。" /> }} columns={[

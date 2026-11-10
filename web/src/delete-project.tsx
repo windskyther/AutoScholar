@@ -58,7 +58,7 @@ export default function DeleteProject({ project, onDeleted }: { project: Project
       {uncertain && <Alert type="warning" title="删除结果尚未确认，请先核对结果。" />}
       <Space className="filters">
         <Button disabled={busy} onClick={() => setOpen(false)}>取消</Button>
-        {uncertain ? <Button loading={busy} onClick={() => void verify()}>核对删除结果</Button>
+        {uncertain ? <Button disabled={busy} aria-busy={busy} onClick={() => void verify()}>核对删除结果</Button>
           : <Button type="primary" danger loading={busy} disabled={confirmation !== project.name || !!submission.pending}
             onClick={() => void remove()}>确认删除项目</Button>}
       </Space>

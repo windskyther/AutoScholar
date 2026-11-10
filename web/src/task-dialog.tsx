@@ -112,8 +112,9 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
       reuse_project_evidence: true,
     }}>
       <>
-        <Form.Item name="model_profile_id" label="使用模型" rules={[{ required: true, message: '请选择模型管理中的模型' }]}>
-          <Select loading={models.isPending} placeholder="选择模型连接" options={[
+        <Form.Item name="model_profile_id" label="使用模型" extra={models.isPending ? '正在读取模型…' : undefined}
+          rules={[{ required: true, message: '请选择模型管理中的模型' }]}>
+          <Select aria-busy={models.isPending} placeholder="选择模型连接" options={[
             ...(models.data?.items.filter((item) => item.enabled).map((item) => ({ value: item.id, label: `${item.name} · ${item.model}` })) ?? []),
           ]} />
         </Form.Item>

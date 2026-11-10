@@ -32,6 +32,6 @@ export default function ExportMarkdown({ taskId, objective, available }: { taskI
     finally { if (active.current === controller) { active.current = null; setBusy(false); } }
   }
   if (!session?.capabilities.markdown_export) return null;
-  return <><Button aria-label="导出 Markdown" icon={<DownloadOutlined />} loading={busy} disabled={!available} onClick={() => void exportFile()}>导出 Markdown</Button>
+  return <><Button aria-label="导出 Markdown" icon={<DownloadOutlined />} aria-busy={busy} disabled={!available || busy} onClick={() => void exportFile()}>导出 Markdown</Button>
     {error !== null && <Alert type="error" title={errorMessage(error)} />}</>;
 }

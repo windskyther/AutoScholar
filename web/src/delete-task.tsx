@@ -44,7 +44,7 @@ export default function DeleteTask({ task, projectId, onDeleted }: { task: Task;
       {error !== null && <Alert type="error" title={errorMessage(error)} />}
       {uncertain && <Alert type="warning" title="删除结果尚未确认，请先核对结果。" />}
       <Space className="filters"><Button disabled={busy} onClick={() => setOpen(false)}>取消</Button>
-        {uncertain ? <Button key="verify" aria-label="核对删除结果" loading={busy} onClick={() => void verify()}>核对删除结果</Button>
+        {uncertain ? <Button key="verify" aria-label="核对删除结果" disabled={busy} aria-busy={busy} onClick={() => void verify()}>核对删除结果</Button>
           : <Button key="remove" aria-label="删除此目标" type="primary" danger loading={busy} onClick={() => void remove()}>删除此目标</Button>}
       </Space>
     </Modal>
