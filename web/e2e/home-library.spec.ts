@@ -59,3 +59,26 @@ test('the white home and research guide fit a narrow screen with reduced motion'
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
   await page.screenshot({ path: test.info().outputPath('guide-mobile.png') });
 });
+
+test('larger reading text reflows the home and keeps search and guides usable', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await expect(page.locator('.research-card')).toHaveCount(6);
+  await page.addStyleTag({ content: ':root { font-size: 200%; }' });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  for (const card of await page.locator('.research-card').all()) {
+    expect(await card.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  }
+  const search = page.getByRole('searchbox', { name: '搜索研究方式' });
+  await search.fill('PDF');
+  await expect(page.locator('.research-card')).toHaveCount(1);
+  const trigger = page.getByRole('button', { name: '了解项目文档分析', exact: true });
+  await trigger.click();
+  await expect(page.getByRole('dialog', { name: '项目文档分析', exact: true }).getByRole('link', { name: '查看项目', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+  await page.getByRole('button', { name: '清空搜索', exact: true }).click();
+  await expect(page.locator('.research-card')).toHaveCount(6);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});

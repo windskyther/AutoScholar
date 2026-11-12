@@ -52,8 +52,7 @@ export default function ModelsPage() {
     void catalog.refetch();
   }
   return <>
-    <PageHeading title="模型管理" refresh={() => void catalog.refetch()} />
-    <p>保存常用的模型连接，新建任务时选择使用哪一组。支持原生工具调用的 OpenAI 兼容接口。</p>
+    <PageHeading title="模型管理" subtitle="保存常用的模型连接，新建任务时选择使用哪一组。支持原生工具调用的 OpenAI 兼容接口。" refresh={() => void catalog.refetch()} />
     <div className="filters"><Button type="primary" onClick={() => { setError(null); setOpen(true); }}>添加模型</Button></div>
     {error !== null && !open && <Alert type="error" title={errorMessage(error)} />}
     {catalog.isPending ? null : catalog.isError ? <QueryError error={catalog.error} retry={() => void catalog.refetch()} /> : <>

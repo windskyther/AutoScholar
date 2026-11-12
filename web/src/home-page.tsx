@@ -53,8 +53,10 @@ export default function HomePage() {
     </section>
     <section className="research-library" aria-labelledby="research-library-title">
       <div className="research-library-intro">
-        <h2 id="research-library-title">每个问题，<br />都有合适的研究方式。</h2>
-        <p>寻找线索、梳理文献，或深入自己的资料。<br />从你想做的事情开始。</p>
+        <div className="research-library-copy">
+          <h2 id="research-library-title">每个问题，<br />都有合适的研究方式。</h2>
+          <p>寻找线索、梳理文献，或深入自己的资料。<br />从你想做的事情开始。</p>
+        </div>
         <div className="research-search" role="search">
           <SearchOutlined aria-hidden="true" />
           <input type="search" aria-label="搜索研究方式" placeholder="搜索研究方式，例如：论文、PDF、对比" value={query} onChange={event => setQuery(event.target.value)} />
