@@ -25,9 +25,11 @@ function WorkspaceLayout() {
   const { api } = useConnection();
   const submission = useSubmission();
   const location = useLocation();
+  const { pathname } = location;
+  const showPageScrollbar = pathname === '/models' || pathname === '/projects' || pathname.startsWith('/projects/');
   useLayoutEffect(() => { window.scrollTo(0, 0); }, [location.pathname]);
   if (!api) return <Navigate to="/connect" state={{ from: location.pathname }} replace />;
-  return <div className="workbench-shell">
+  return <div className={showPageScrollbar ? 'workbench-shell with-page-scrollbar' : 'workbench-shell'}>
     <a className="skip-link" href="#workspace-content">跳至内容</a>
     <header className="workspace-header"><Link to="/" className="wordmark workspace-brand">AutoScholar</Link><WorkspaceDock /></header>
       <main className="app-content" id="workspace-content" tabIndex={-1}>

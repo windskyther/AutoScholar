@@ -13,6 +13,8 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; background: #fff; font-family: inherit; font-size: var(--text-body); -webkit-font-smoothing: antialiased; }
+/* Keep the native viewport scrollbar while allowing modal scroll locks to override it. */
+body:where(:has(.with-page-scrollbar)) { min-width: 0; overflow-y: scroll; }
 a { color: var(--link); text-underline-offset: 3px; }
 button, input, select, textarea { font: inherit; }
 h1 { color: var(--ink); font-size: var(--text-page); font-weight: 600; line-height: 1.16; margin: 0 0 16px; letter-spacing: -.025em; overflow-wrap: anywhere; }
