@@ -76,7 +76,10 @@ test('unknown deletion is checked by reading instead of sending another delete',
 test('deletion from project details reports unfinished tasks without removing the project', async ({ page }) => {
   const state = await fixture(page, 'active');
   await page.getByRole('link', { name: target.name, exact: true }).click();
-  await page.getByRole('button', { name: `删除项目 ${target.name}`, exact: true }).click();
+  const remove = page.getByRole('button', { name: `删除项目 ${target.name}`, exact: true });
+  const create = page.getByRole('button', { name: '创建研究任务', exact: true });
+  await expect(remove).toHaveCSS('border-top-left-radius', await create.evaluate(button => getComputedStyle(button).borderTopLeftRadius));
+  await remove.click();
   const dialog = page.getByRole('dialog', { name: '删除项目', exact: true });
   await dialog.getByLabel('输入项目名称以确认删除').fill(target.name);
   await dialog.getByRole('button', { name: '确认删除项目' }).click();

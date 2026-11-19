@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Button, Empty, Pagination } from 'antd';
-import { ArrowUpOutlined, FolderOpenOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Empty, Pagination } from 'antd';
+import { ArrowUpOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation } from 'react-router-dom';
 import { useConnection } from './connection';
@@ -9,6 +9,7 @@ import CreateProject from './create-project';
 import DeleteProject from './delete-project';
 import { usePageReady } from './page-transition';
 import { projectDestination, readResearchEntry, researchEntryLabels } from './research-entry';
+import { SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
 
 function updated(value: string) {
   const date = new Date(value);
@@ -19,17 +20,15 @@ export default function ProjectsPage() {
   const { api } = useConnection();
   const entry = readResearchEntry(useLocation().search);
   const [page, setPage] = useState(1);
-  const query = useQuery({ queryKey: ['projects', page], queryFn: ({ signal }) => api!.projects(page, signal) });
+  const query = useQuery({ queryKey: ['projects', page], queryFn: ({ signal }) => api!.projects(page, signal),
+    refetchInterval: SNAPSHOT_REFRESH_MS });
   usePageReady(!query.isPending);
   return <div className="projects-overview">
     <div className="projects-intro">
       <div><h1>{entry ? `${researchEntryLabels[entry]} · 选择项目` : '项目'}</h1></div>
-      <div className="projects-actions">
-        <Button icon={<ReloadOutlined />} onClick={() => void query.refetch()}>刷新快照</Button>
-        <CreateProject researchEntry={entry} />
-      </div>
+      <CreateProject researchEntry={entry} />
     </div>
-    {query.isPending ? null : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} /> : <>
+    {query.isPending ? null : !query.data ? <QueryError error={query.error} retry={() => void query.refetch()} /> : <>
       <div className="collection-heading"><h2>研究空间</h2><span>{query.data.total} 个项目</span></div>
       {query.data.items.length ? <div className="project-grid">{query.data.items.map(project => <article className="project-card" key={project.id}>
         <div className="project-card-top"><span className="project-folder" aria-hidden="true"><FolderOpenOutlined /></span>

@@ -6,6 +6,7 @@ import { errorMessage, isWriteUncertain } from './api';
 import { useConnection } from './connection';
 import { dateLabel, QueryError } from './components';
 import type { DocumentStatus, PDFDocument } from './types';
+import { documentRefreshInterval } from './snapshot-refresh';
 
 const labels: Record<DocumentStatus, string> = { queued: '等待处理', processing: '处理中', ready: '已就绪', failed: '处理失败', deleting: '等待删除' };
 export function DocumentState({ value }: { value: DocumentStatus }) {
@@ -28,7 +29,7 @@ export default function Documents({ projectId, analysisAction, analysisNotice }:
   const [modal, contextHolder] = Modal.useModal();
   const maxBytes = Math.min(session?.capabilities.document_max_bytes ?? 52428800, 52428800);
   const query = useQuery({ queryKey: ['documents', projectId, page], queryFn: ({ signal }) => api!.documents(projectId, page, signal),
-    refetchInterval: (state) => state.state.data?.items.some((item) => ['queued', 'processing', 'deleting'].includes(item.status)) ? 3000 : false });
+    refetchInterval: ({ state }) => documentRefreshInterval(state.data) });
   function refresh() { void cache.invalidateQueries({ queryKey: ['documents', projectId] }); }
   async function upload(values: { title?: string }) {
     if (!api || inFlight.current || isWriteUncertain(error)) return;
@@ -39,7 +40,7 @@ export default function Documents({ projectId, analysisAction, analysisNotice }:
       if (!api.connected) return;
       setOpen(false); setFile(null); form.resetFields(); setPage(1);
       setNotice('PDF 已保存并排队，尚未完成解析与索引。'); refresh();
-    } catch (failure) { setError(failure); }
+    } catch (failure) { setError(failure); if (isWriteUncertain(failure)) refresh(); }
     finally { inFlight.current = false; setBusy(false); }
   }
   async function action(document: PDFDocument, kind: 'retry' | 'reindex' | 'delete') {
@@ -61,15 +62,14 @@ export default function Documents({ projectId, analysisAction, analysisNotice }:
   return <section id="project-pdfs" className="document-section">
     {contextHolder}
     <div className="section-heading"><h2>PDF 知识库</h2><Space wrap>
-      <Button onClick={refresh}>刷新文档</Button>
       <Button disabled={busy} onClick={() => { setError(null); setFile(null); form.resetFields(); setOpen(true); }}>上传 PDF</Button>
       {analysisAction}
     </Space></div>
     {analysisNotice}
     {notice && <Alert type="success" showIcon title={notice} />}
     {error !== null && !open && <Alert type="error" showIcon title={errorMessage(error)}
-      description={isWriteUncertain(error) ? '结果未确认，请刷新文档状态核查，不会自动重复执行。' : undefined} />}
-    {query.isPending ? null : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} />
+      description={isWriteUncertain(error) ? '结果未确认，请等待文档列表更新后核查。' : undefined} />}
+    {query.isPending ? null : !query.data ? <QueryError error={query.error} retry={() => void query.refetch()} />
       : <Table<PDFDocument> rowKey="id" dataSource={query.data.items} scroll={{ x: 950 }} locale={{ emptyText: <Empty description="暂无 PDF 文档。" /> }}
         columns={[
           { title: '文档', dataIndex: 'title', ellipsis: true },
@@ -97,7 +97,7 @@ export default function Documents({ projectId, analysisAction, analysisNotice }:
         </Form.Item>
         <Form.Item label="文档标题（可选）" name="title" rules={[{ max: 500 }]}><Input maxLength={500} /></Form.Item>
         {error !== null && <Alert type="error" showIcon title={file ? errorMessage(error) : '请选择 PDF 文件。'}
-          description={isWriteUncertain(error) ? '请关闭窗口并刷新文档列表核查，不要直接重复上传。' : undefined} />}
+          description={isWriteUncertain(error) ? '请关闭窗口，核对列表中的文档后再操作。' : undefined} />}
         <Button type="primary" htmlType="submit" loading={busy} disabled={!file || isWriteUncertain(error)}>确认上传并索引</Button>
       </Form>
     </Modal>

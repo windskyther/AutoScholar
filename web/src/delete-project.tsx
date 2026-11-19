@@ -46,7 +46,7 @@ export default function DeleteProject({ project, onDeleted }: { project: Project
   }
   if (!session?.capabilities.project_deletion) return null;
   return <>
-    <Button danger icon={<DeleteOutlined />} aria-label={`删除项目 ${project.name}`}
+    <Button className="pill-action" danger icon={<DeleteOutlined />} aria-label={`删除项目 ${project.name}`}
       disabled={!!submission.pending} onClick={() => { setOpen(true); setConfirmation(''); setError(null); setUncertain(false); }}>删除项目</Button>
     <Modal title="删除项目" open={open} footer={null} mask={{ closable: false }} closable={!busy} keyboard={!busy}
       onCancel={() => { if (!busy) setOpen(false); }}>

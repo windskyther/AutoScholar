@@ -151,8 +151,9 @@ test('home document analysis goes to PDF upload until documents are ready, then 
   await expect(continuation).toBeDisabled();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   ready = true;
-  await page.getByRole('button', { name: '刷新文档', exact: true }).click();
-  await expect(continuation).toBeEnabled();
+  await expect(page.getByRole('button', { name: '刷新文档', exact: true })).toHaveCount(0);
+  await expect(continuation).toBeEnabled({ timeout: 10000 });
+  await expect(page.getByRole('row').filter({ hasText: document.title }).getByText('已就绪', { exact: true })).toBeVisible({ timeout: 10000 });
   await continuation.click();
   await expect(page.getByRole('dialog').getByText('项目文档分析', { exact: true })).toBeVisible();
   expect(calls.every(call => call.method === 'GET')).toBe(true);
@@ -375,6 +376,10 @@ test('task budget and explicit consent remain usable on a narrow mobile viewport
   const calls = await fixture(page); await draftTask(page);
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('提交后自动执行研究任务，可能产生模型和检索费用', { exact: true })).toHaveCount(0);
+  const cancel = dialog.getByRole('button', { name: '取消', exact: true });
+  const confirm = dialog.getByRole('button', { name: '确认提交并自动执行', exact: true });
+  await expect(cancel).toHaveCSS('border-top-left-radius', await confirm.evaluate(button => getComputedStyle(button).borderTopLeftRadius));
   const bounds = await dialog.boundingBox();
   expect(bounds!.width).toBeLessThanOrEqual(390);
   await page.getByLabel('总 Token 预算', { exact: true }).fill('500');

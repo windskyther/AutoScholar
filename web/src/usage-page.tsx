@@ -5,6 +5,7 @@ import { useConnection } from './connection';
 import { Metric, PageHeading, QueryError } from './components';
 import type { UsageDay, UsageGroup } from './usage-types';
 import { usePageReady } from './page-transition';
+import { SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
 
 const format = (value: number) => value.toLocaleString('zh-CN');
 const short = (value: number) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
@@ -43,7 +44,7 @@ export default function UsagePage() {
   const [metric, setMetric] = useState<'total_tokens' | 'calls'>('total_tokens');
   const query = useQuery({ queryKey: ['usage', groupBy, days, apiId, model],
     queryFn: ({ signal }) => api!.usage(groupBy, days, apiId, model, signal),
-    placeholderData: keepPreviousData, refetchInterval: 15000 });
+    placeholderData: keepPreviousData, refetchInterval: SNAPSHOT_REFRESH_MS });
   usePageReady(!query.isPending);
   const data = query.data;
   const columns = [
@@ -60,7 +61,7 @@ export default function UsagePage() {
   ];
   const maximum = Math.max(1, ...(data?.groups.map((item) => item[metric]) ?? []));
   return <>
-    <PageHeading title="用量统计" refresh={() => void query.refetch()} />
+    <PageHeading title="用量统计" />
     <div className="usage-filters">
       <label>时间范围<Select aria-label="时间范围" value={days} onChange={setDays} options={[
         { value: 7, label: '最近 7 天' }, { value: 30, label: '最近 30 天' }, { value: 90, label: '最近 90 天' }, { value: 0, label: '全部时间' },
@@ -72,7 +73,7 @@ export default function UsagePage() {
       <label>统计维度<Segmented aria-label="统计维度" value={groupBy} onChange={setGroupBy}
         options={[{ value: 'api', label: '按 API 配置' }, { value: 'model', label: '按模型' }]} /></label>
     </div>
-    {query.isPending || query.isPlaceholderData ? null : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} /> : data && <>
+    {query.isPending || query.isPlaceholderData ? null : !data ? <QueryError error={query.error} retry={() => void query.refetch()} /> : <>
       <div className="metrics-grid usage-metrics" data-testid="usage-totals">
         <Metric label="已确认 Tokens" value={data.totals.total_tokens} />
         <Metric label="输入 Tokens" value={data.totals.input_tokens} />

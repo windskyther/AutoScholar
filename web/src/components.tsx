@@ -1,5 +1,4 @@
 import { Alert, Button, Space, Tag } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
 import { errorMessage } from './api';
 import type { TaskStatus } from './types';
 
@@ -18,11 +17,8 @@ export function QueryError({ error, retry }: { error: unknown; retry: () => void
   return <Alert type="error" showIcon title={errorMessage(error)}
     action={<Button onClick={retry}>手动重试查询</Button>} />;
 }
-export function PageHeading({ title, subtitle, refresh }: {
-  title: string; subtitle?: string; refresh?: () => void;
-}) {
-  return <div className="page-heading"><div><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>
-    {refresh && <Button icon={<ReloadOutlined />} onClick={refresh}>刷新快照</Button>}</div>;
+export function PageHeading({ title, subtitle }: { title: string; subtitle?: string }) {
+  return <div className="page-heading"><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>;
 }
 export function Metric({ label, value, limit }: { label: string; value: number; limit?: number }) {
   return <div className="metric"><span>{label}</span><Space align="baseline">

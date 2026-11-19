@@ -16,6 +16,7 @@ import DeleteTask from './delete-task';
 import ExportMarkdown from './export-markdown';
 import { usePageReady } from './page-transition';
 import { readResearchEntry } from './research-entry';
+import { ACTIVE_TASK_REFRESH_MS, DOCUMENT_PROCESSING_REFRESH_MS, isActiveTask, SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
 
 function failureLabel(code: string | null | undefined): string {
   const labels: Record<string, string> = {
@@ -54,10 +55,11 @@ export function ProjectPage() {
   const [search, setSearch] = useState('');
   const project = useQuery({ queryKey: ['project', projectId], queryFn: ({ signal }) => api!.project(projectId, signal) });
   const tasks = useQuery({ queryKey: ['tasks', projectId, page, status, search],
-    queryFn: ({ signal }) => api!.tasks(projectId, page, status, search, signal), enabled: project.isSuccess });
+    queryFn: ({ signal }) => api!.tasks(projectId, page, status, search, signal), enabled: project.isSuccess,
+    refetchInterval: query => query.state.data?.items.some(task => isActiveTask(task.status)) ? ACTIVE_TASK_REFRESH_MS : SNAPSHOT_REFRESH_MS });
   const documents = useQuery({ queryKey: ['documents', projectId, 'readiness'],
     queryFn: ({ signal }) => api!.documentReadiness(projectId, signal), enabled: documentEntry && project.isSuccess,
-    refetchInterval: query => query.state.data?.processing ? 3000 : false });
+    refetchInterval: query => query.state.data?.processing ? DOCUMENT_PROCESSING_REFRESH_MS : SNAPSHOT_REFRESH_MS });
   const pageReady = !project.isPending && (!project.isSuccess || !tasks.isPending);
   usePageReady(pageReady);
   const openSelectedResearch = useCallback(() => {
@@ -93,7 +95,7 @@ export function ProjectPage() {
   if (project.isError) return <QueryError error={project.error} retry={() => void project.refetch()} />;
   return <>
     <Breadcrumb items={[{ title: <Link to="/projects">项目</Link> }, { title: project.data.name }]} />
-    <PageHeading title={project.data.name} subtitle={project.data.description || undefined} refresh={() => void tasks.refetch()} />
+    <PageHeading title={project.data.name} subtitle={project.data.description || undefined} />
     <div className="section-heading"><h2>研究任务</h2><Space>
       {session?.capabilities.project_evidence && <Link to={`/projects/${encodeURIComponent(projectId)}/evidence`}><Button>项目证据库</Button></Link>}
       <DeleteProject project={project.data} /><Button type="primary"
@@ -107,7 +109,7 @@ export function ProjectPage() {
         options={Object.entries(statusLabels).map(([value, label]) => ({ value: value as TaskStatus, label }))}
         onChange={(value) => { setStatus(value); setPage(1); }} />
     </Space>
-    {tasks.isPending ? null : tasks.isError ? <QueryError error={tasks.error} retry={() => void tasks.refetch()} />
+    {tasks.isPending ? null : !tasks.data ? <QueryError error={tasks.error} retry={() => void tasks.refetch()} />
       : <Table<Task> rowKey="task_id" dataSource={tasks.data.items} scroll={{ x: 850 }}
         locale={{ emptyText: <Empty description="没有符合条件的研究任务。" /> }} columns={[
           { title: '研究目标', dataIndex: 'objective', ellipsis: true, render: (value: string, item) =>
@@ -133,21 +135,29 @@ export function TaskPage() {
   const { projectId, taskId } = useParams();
   const { api, session } = useConnection();
   const [page, setPage] = useState(1);
-  const query = useQuery({ queryKey: ['overview', projectId, taskId, page], queryFn: async ({ signal }) => {
-    const value = await api!.overview(taskId!, page, signal);
-    if (value.task.project_id !== projectId) throw new ApiError('workbench_task_not_found', 404);
-    return value;
-  } });
+  const query = useQuery({ queryKey: ['overview', projectId, taskId, page],
+    queryFn: async ({ signal }) => {
+      const value = await api!.overview(taskId!, page, signal);
+      if (value.task.project_id !== projectId) throw new ApiError('workbench_task_not_found', 404);
+      return value;
+    },
+    refetchInterval: ({ state }) => {
+      if (state.error instanceof ApiError && state.error.status === 404) return false;
+      const status = state.data?.execution?.status ?? state.data?.task.status;
+      return status && isActiveTask(status) ? ACTIVE_TASK_REFRESH_MS : SNAPSHOT_REFRESH_MS;
+    } });
   usePageReady(!query.isPending);
   if (query.isPending) return null;
-  if (query.isError) return <QueryError error={query.error} retry={() => void query.refetch()} />;
+  if (!query.data || (query.error instanceof ApiError && query.error.status === 404)) {
+    return <QueryError error={query.error} retry={() => void query.refetch()} />;
+  }
   const data = query.data;
   const usage = data.execution?.budget_used ?? data.task.metrics;
   const limits = data.execution?.budget_limits;
   return <>
     <Breadcrumb items={[{ title: <Link to="/projects">项目</Link> },
       { title: <Link to={`/projects/${encodeURIComponent(projectId!)}`}>项目任务</Link> }, { title: '任务详情' }]} />
-    <PageHeading title="任务详情" subtitle={data.task.objective} refresh={() => void query.refetch()} />
+    <PageHeading title="任务详情" subtitle={data.task.objective} />
     <Space wrap data-testid="task-status"><Status value={data.execution?.status ?? data.task.status} />
       <Tag>{data.task.mode}</Tag></Space>
     {data.execution?.error_code === 'external_result_uncertain' && <Alert type="warning" showIcon

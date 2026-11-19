@@ -86,13 +86,11 @@ p { color: var(--muted); line-height: 1.65; }
 .research-glyph { display: grid; place-items: center; width: 76px; height: 76px; border: 1px solid rgb(255 255 255 / .85); border-radius: 22px; color: var(--research-ink); background: rgb(255 255 255 / .85); box-shadow: 0 12px 20px rgb(0 0 0 / .04); font-size: 38px; transform: rotate(-9deg); }
 .research-card:nth-child(even) .research-glyph { transform: rotate(8deg); }
 .research-arrow { position: absolute; right: 24px; bottom: 28px; color: var(--research-ink); font-size: 18px; }
-.page-heading { display: flex; gap: 24px; align-items: center; justify-content: space-between; margin: 12px 0 36px; }
-.page-heading > div { min-width: 0; flex: 1; }
+.page-heading { margin: 12px 0 36px; }
 .page-heading h1:last-child { margin-bottom: 0; }
 .page-heading p { margin: 0; max-width: 46em; font-size: var(--text-body); overflow-wrap: anywhere; white-space: pre-wrap; }
-.page-heading button { flex: none; }
 .ant-breadcrumb { margin-bottom: 24px; font-size: 13px; }
-.ant-btn-primary { border-radius: 999px; padding-inline: 21px; }
+.ant-btn-primary, .ant-btn.pill-action { border-radius: 999px; padding-inline: 21px; }
 .ant-btn-sm { min-height: 30px; }
 .ant-alert { margin-bottom: 18px; }
 .ant-modal .ant-modal-content { box-shadow: 0 30px 90px rgb(0 0 0 / .22); }
@@ -108,7 +106,6 @@ p { color: var(--muted); line-height: 1.65; }
 .connection-panel .ant-form button { margin-top: 18px; }
 .projects-intro { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 24px; padding: 12px 0 36px; border-bottom: 1px solid var(--border-soft); }
 .projects-intro h1 { margin: 0; font-size: var(--text-page); }
-.projects-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .collection-heading { display: flex; align-items: baseline; gap: 12px; margin: 40px 0 24px; }
 .collection-heading h2 { margin: 0; font-size: var(--text-section); }
 .collection-heading > span { color: var(--muted); font-size: 13px; }
@@ -247,10 +244,9 @@ input[type='file'] { max-width: 100%; }
   .research-art { min-height: 144px; gap: 16px; }
   .research-glyph { width: 64px; height: 64px; border-radius: 18px; font-size: 32px; }
   .research-arrow { right: 16px; bottom: 20px; font-size: 15px; }
-  .page-heading { flex-direction: column; align-items: flex-start; margin-top: 10px; gap: 16px; }
+  .page-heading { margin-top: 10px; }
   .projects-intro { align-items: flex-start; gap: 20px; padding: 4px 0 26px; }
   .projects-intro h1 { margin: 0; font-size: var(--text-page); }
-  .projects-actions { width: 100%; justify-content: space-between; }
   .project-grid { grid-template-columns: 1fr; gap: 20px; }
   .project-card { padding: 24px; }
   .project-card-action .ant-btn { min-height: 36px; }

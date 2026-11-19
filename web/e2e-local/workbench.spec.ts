@@ -12,7 +12,7 @@ test('browser connects through the real Vite proxy to authenticated FastAPI and 
   await page.getByRole('link', { name: '比较 MNIST 模型' }).click();
   await expect(page.getByText('中文输出：隔离 HTTP 联测，不调用付费接口。')).toBeVisible();
   await expect(page.getByText('查找公开资料')).toBeVisible();
-  await page.getByRole('button', { name: '刷新快照' }).click();
+  await page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/overview') && response.ok(), { timeout: 10000 });
   await expect(page.getByText('已暂停', { exact: true })).toBeVisible();
   const api = await request.get('/api/workbench/session', { headers: { Authorization: 'Bearer ' + TOKEN } });
   expect(api.status()).toBe(200);

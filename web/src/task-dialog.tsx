@@ -11,6 +11,7 @@ import NumberSlider from './number-slider';
 import { Link } from 'react-router-dom';
 import { researchLabels } from './research-entry';
 import type { ResearchKind } from './research-entry';
+import { documentRefreshInterval, SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
 
 interface Values {
   objective: string; budget: BudgetLimits; sources: ('web' | 'paper')[];
@@ -58,7 +59,7 @@ export default function TaskDialog({ project, initialKind, open, close, complete
   const ceiling = session?.capabilities.budget_limits;
   const modelId = Form.useWatch('model_profile_id', form) ?? '';
   const models = useQuery({ queryKey: ['models'], queryFn: ({ signal }) => api!.models(signal),
-    enabled: open });
+    enabled: open, refetchInterval: SNAPSHOT_REFRESH_MS });
   const chosenModel = modelId ? models.data?.items.find((item) => item.id === modelId && item.enabled) : null;
   const modelReady = !!chosenModel;
   useEffect(() => {
@@ -68,7 +69,7 @@ export default function TaskDialog({ project, initialKind, open, close, complete
     }
   }, [models.data, session?.capabilities.llm_configured, form]);
   const docs = useQuery({ queryKey: ['documents', project.id, page], queryFn: ({ signal }) => api!.documents(project.id, page, signal),
-    enabled: open && documentMode === 'selected' });
+    enabled: open && documentMode === 'selected', refetchInterval: ({ state }) => documentRefreshInterval(state.data) });
   useEffect(() => {
     if (!busy && !uncertain) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
@@ -109,8 +110,6 @@ export default function TaskDialog({ project, initialKind, open, close, complete
   }
   return <Modal title={`提交研究任务 · ${project.name}`} open={open} width={820} mask={{ closable: false }}
     keyboard={!busy} closable={!busy} onCancel={() => { if (!busy) close(); }} footer={null}>
-    <Alert type="warning" showIcon title="提交后自动执行研究任务，可能产生模型和检索费用"
-      description="预算限制资源用量，不等同于金额；单次模型响应可能使 Token 用量超过上限。" />
     <Form form={form} layout="vertical" disabled={busy || uncertain} onFinish={(values) => void submit(values)} initialValues={{
       budget: ceiling, sources: initialKind === 'literature_review' || !session?.capabilities.web_search_configured ? ['paper'] : ['web'],
       workflowKind: initialKind, documentMode: initialDocumentMode, retrieval: 'hybrid_rerank', consent: false,
@@ -164,7 +163,7 @@ export default function TaskDialog({ project, initialKind, open, close, complete
       </Space>
       {documentMode === 'selected' && <>
         <p>已选 {selected.length} 项 / 最多 100 项</p>
-        {docs.isPending ? null : docs.isError ? <QueryError error={docs.error} retry={() => void docs.refetch()} />
+        {docs.isPending ? null : !docs.data ? <QueryError error={docs.error} retry={() => void docs.refetch()} />
           : <Table<PDFDocument> rowKey="id" size="small" dataSource={docs.data.items} scroll={{ x: 400 }} columns={[
             { title: '文档', dataIndex: 'title' }, { title: '状态', dataIndex: 'status', render: (value) => <DocumentState value={value} /> },
           ]} rowSelection={{ selectedRowKeys: selected, preserveSelectedRowKeys: true,
@@ -185,7 +184,7 @@ export default function TaskDialog({ project, initialKind, open, close, complete
       <Space wrap>
         {!uncertain && <Button type="primary" htmlType="submit" loading={busy} disabled={!ceiling || !modelReady || (!!session?.capabilities.model_management && !models.isSuccess)}>确认提交并自动执行</Button>}
         {uncertain && <Button type="primary" loading={busy} disabled={busy} onClick={() => void send()}>确认 / 重试原提交</Button>}
-        <Button disabled={busy} onClick={close}>{uncertain ? '保留请求并关闭' : '取消'}</Button>
+        <Button className="pill-action" disabled={busy} onClick={close}>{uncertain ? '保留请求并关闭' : '取消'}</Button>
       </Space>
     </Form>
   </Modal>;

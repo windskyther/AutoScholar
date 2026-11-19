@@ -30,8 +30,7 @@ test('isolated PostgreSQL + Qdrant + workers + real Docker training from browser
     const response = await request.get(`${api}/projects/${projectId}/documents`, { headers });
     return (await response.json()).items[0]?.status;
   }, { timeout: 30000 }).toBe('ready');
-  await page.getByRole('button', { name: '刷新文档' }).click();
-  await expect(page.getByRole('row').filter({ hasText: '公开 MNIST 验收 PDF' }).getByText('已就绪', { exact: true })).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: '公开 MNIST 验收 PDF' }).getByText('已就绪', { exact: true })).toBeVisible({ timeout: 20000 });
   await page.getByRole('button', { name: '创建研究任务' }).click();
   await page.getByLabel('任务类型', { exact: true }).click();
   await page.getByTitle('MNIST CPU 实验', { exact: true }).click();
@@ -89,7 +88,7 @@ test('isolated PostgreSQL + Qdrant + workers + real Docker training from browser
   expect(createHash('sha256').update(bytes).digest('hex')).toBe(report.sha256); expect(bytes.length).toBe(report.size_bytes);
   expect((await request.get(`${api}/tasks/${id}/resources/artifacts/${report.id}/content`)).status()).toBe(401);
   await page.screenshot({ path: 'test-results/phase9g-completed.png', fullPage: true });
-  await page.getByRole('button', { name: '刷新快照' }).click();
+  await page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/overview') && response.ok(), { timeout: 20000 });
   await expect(page.getByTestId('task-status').getByText('已完成', { exact: true })).toBeVisible();
   const again = await request.get(`${api}/tasks/${id}/overview`, { headers });
   expect((await again.json()).execution.budget_used.training_runs).toBe(expectedRuns);

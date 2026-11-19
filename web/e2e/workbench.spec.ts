@@ -49,7 +49,8 @@ async function connect(page: Page) {
   await page.goto('/projects');
 }
 
-test('repeated overview refresh keeps one control section alongside task resources', async ({ page }) => {
+test('automatic overview refresh keeps content and controls through a temporary error', async ({ page }) => {
+  await page.clock.install();
   await mockAPI(page);
   await page.route('**/api/workbench/session', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
     ...session, capabilities: { ...session.capabilities, task_controls: true, resource_browser: true },
@@ -65,17 +66,30 @@ test('repeated overview refresh keeps one control section alongside task resourc
     }));
   }
   let sequence = 0;
-  await page.route('**/api/workbench/tasks/task-a/overview?*', (route) => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ ...overview, answer: `Snapshot ${++sequence}` }),
-  }));
+  let unavailable = false;
+  await page.route('**/api/workbench/tasks/task-a/overview?*', (route) => {
+    expect(route.request().method()).toBe('GET');
+    sequence++;
+    if (unavailable) return route.fulfill({ status: 503, json: { error: { code: 'workbench_store_unavailable' } } });
+    return route.fulfill({ json: { ...overview, answer: `Snapshot ${sequence}` } });
+  });
   await connect(page);
   await page.getByRole('link', { name: project.name }).click();
   await page.getByRole('link', { name: task.objective }).click();
   const output = page.locator('pre.plain-output').filter({ hasText: /^Snapshot \d+$/ });
   await expect(output).toBeVisible();
-  for (let index = 0; index < 5; index += 1) {
+  await expect(page.getByRole('button', { name: '刷新快照', exact: true })).toHaveCount(0);
+  const previous = sequence;
+  unavailable = true;
+  await page.clock.fastForward(5000);
+  await expect.poll(() => sequence).toBeGreaterThan(previous);
+  await page.clock.runFor(30);
+  await expect(output).toHaveText(`Snapshot ${previous}`);
+  await expect(page.getByRole('heading', { name: '任务控制与审批', exact: true })).toHaveCount(1);
+  unavailable = false;
+  for (let index = 0; index < 2; index += 1) {
     const before = sequence;
-    await page.getByRole('button', { name: /刷新快照$/ }).click();
+    await page.clock.fastForward(5000);
     await expect.poll(() => sequence).toBeGreaterThan(before);
     await expect(output).toHaveText(`Snapshot ${sequence}`);
     await expect(page.getByRole('heading', { name: '任务控制与审批', exact: true })).toHaveCount(1);
@@ -173,6 +187,7 @@ test('malformed backend records show a query error instead of a blank page', asy
 });
 
 test('expired authenticated session clears cached pages and does not retry automatically', async ({ page }) => {
+  await page.clock.install();
   await mockAPI(page);
   await connect(page);
   await expect(page.getByRole('link', { name: project.name })).toBeVisible();
@@ -181,7 +196,7 @@ test('expired authenticated session clears cached pages and does not retry autom
     failedRequests += 1;
     await route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
   });
-  await page.getByRole('button', { name: '刷新快照' }).click();
+  await page.clock.fastForward(15000);
   await expect(page.getByRole('heading', { name: '连接研究工作台' })).toBeVisible();
   await expect(page.getByLabel('操作者 Token', { exact: true })).toHaveCount(0);
   expect(failedRequests).toBe(1);

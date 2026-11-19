@@ -46,7 +46,7 @@ const messages: Record<string, string> = {
   response_too_large: '响应超过安全大小上限。',
   request_validation_error: '输入或查询参数不合法。',
   write_result_unknown: '请求结果未确认，请先核查；不会自动重试。',
-  duplicate_document: '该 PDF 已存在于此项目，请刷新文档列表。',
+  duplicate_document: '该 PDF 已存在于此项目。',
   invalid_pdf: '文件内容不是 PDF。',
   unsupported_document_type: '只支持 PDF 文件。',
   document_too_large: 'PDF 超过允许的大小。',
@@ -77,7 +77,7 @@ export function isWriteUncertain(error: unknown): boolean {
 }
 export function errorMessage(error: unknown): string {
   return error instanceof ApiError ? (messages[error.code] ?? `请求失败（${error.status || '网络'}）。`)
-    : '请求失败，请稍后手动刷新。';
+    : '请求失败，请稍后重试。';
 }
 
 async function readJSON(response: Response): Promise<unknown> {

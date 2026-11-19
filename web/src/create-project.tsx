@@ -39,7 +39,7 @@ export default function CreateProject({ researchEntry }: { researchEntry?: Resea
         </Form.Item>
         <Form.Item name="description" label="项目说明" rules={[{ max: 2000 }]}><Input.TextArea maxLength={2000} rows={3} /></Form.Item>
         {error !== null && <Alert type="error" showIcon title={errorMessage(error)}
-          description={isWriteUncertain(error) ? '创建结果尚未确认，请关闭窗口并刷新项目列表核对，再决定是否重新创建。' : undefined} />}
+          description={isWriteUncertain(error) ? '创建结果尚未确认，请关闭窗口并核对项目列表后再操作。' : undefined} />}
         <Button aria-label="创建项目" type="primary" htmlType="submit" loading={busy} disabled={isWriteUncertain(error)}>创建项目</Button>
       </Form>
     </Modal>

@@ -115,7 +115,7 @@ export default function Events({ taskId, projectId }: { taskId: string; projectI
       <Tag color={state === 'live' ? 'success' : state === 'error' ? 'error' : 'default'}>{states[state]}</Tag>
       <Button onClick={() => setReload((value) => value + 1)}>重新加载记录</Button>
     </Space></div>
-    {error !== null && <Alert type="warning" showIcon title={errorMessage(error)} description="任务仍由后台管理，可手动刷新快照；重新加载记录会重新读取最近事件，不会提交任务。" />}
+    {error !== null && <Alert type="warning" showIcon title={errorMessage(error)} description="任务状态会自动更新，可重新加载执行记录。" />}
     {historyError !== null && <Alert type="error" title={errorMessage(historyError)} />}
     {state === 'loading' ? null : <>
       <Space wrap className="event-navigation"><Button disabled={earliest <= 1 || loadingHistory} aria-busy={loadingHistory} onClick={() => void older()}>更早记录</Button>

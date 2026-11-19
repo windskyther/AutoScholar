@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, errorMessage, isWriteUncertain } from './api';
 import { useConnection } from './connection';
 import { dateLabel, QueryError, Status } from './components';
+import { isActiveTask } from './snapshot-refresh';
 import type { Approval, ApprovalAction, ControlAction, ExpectedState, ExperimentSpecification } from './types';
 
 const controlLabels: Record<ControlAction, string> = { pause: '暂停任务', resume: '恢复任务', cancel: '取消任务' };
@@ -14,7 +15,6 @@ type Dialog = { expected: ExpectedState } & (
   { kind: 'control'; action: ControlAction } | { kind: 'approval'; action: ApprovalAction | 'view'; approval: Approval }
 );
 type Values = ExperimentSpecification & { reason: string };
-const terminal = new Set(['succeeded', 'partial', 'failed', 'budget_exceeded', 'cancelled']);
 
 export default function Controls({ taskId, projectId }: { taskId: string; projectId: string }) {
   const { api } = useConnection(); const cache = useQueryClient();
@@ -28,7 +28,7 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
   const [modal, contextHolder] = Modal.useModal();
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const controls = useQuery({ queryKey: ['controls', taskId], queryFn: ({ signal }) => api!.controls(taskId, signal),
-    refetchInterval: (query) => query.state.data?.expected && !terminal.has(query.state.data.status) ? 3000 : false });
+    refetchInterval: (query) => query.state.data?.expected && isActiveTask(query.state.data.status) ? 3000 : false });
   const approvals = useQuery({ queryKey: ['approvals', taskId, page], queryFn: ({ signal }) => api!.approvals(taskId, page, signal),
     enabled: !!controls.data?.expected,
     refetchInterval: controls.data?.status === 'awaiting_approval' ? 3000 : false });

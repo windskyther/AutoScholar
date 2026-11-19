@@ -6,13 +6,15 @@ import { errorMessage, isWriteUncertain } from './api';
 import { dateLabel, PageHeading, QueryError } from './components';
 import type { ModelProfile, ModelProfileInput } from './model-types';
 import { usePageReady } from './page-transition';
+import { SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
 
 interface Values extends ModelProfileInput { pricing_enabled?: boolean }
 
 export default function ModelsPage() {
   const { api, session } = useConnection();
   const cache = useQueryClient();
-  const catalog = useQuery({ queryKey: ['models'], queryFn: ({ signal }) => api!.models(signal) });
+  const catalog = useQuery({ queryKey: ['models'], queryFn: ({ signal }) => api!.models(signal),
+    refetchInterval: SNAPSHOT_REFRESH_MS });
   usePageReady(!catalog.isPending);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -52,10 +54,10 @@ export default function ModelsPage() {
     void catalog.refetch();
   }
   return <>
-    <PageHeading title="模型管理" refresh={() => void catalog.refetch()} />
+    <PageHeading title="模型管理" />
     <div className="filters"><Button type="primary" onClick={() => { setError(null); setOpen(true); }}>添加模型</Button></div>
     {error !== null && !open && <Alert type="error" title={errorMessage(error)} />}
-    {catalog.isPending ? null : catalog.isError ? <QueryError error={catalog.error} retry={() => void catalog.refetch()} /> : <>
+    {catalog.isPending ? null : !catalog.data ? <QueryError error={catalog.error} retry={() => void catalog.refetch()} /> : <>
       <Table<ModelProfile> rowKey="id" dataSource={catalog.data.items} scroll={{ x: 850 }} pagination={{ pageSize: 10 }}
         locale={{ emptyText: '暂无模型' }} columns={[
           { title: '名称', dataIndex: 'name' }, { title: '模型', dataIndex: 'model' },
@@ -86,7 +88,7 @@ export default function ModelsPage() {
             <Form.Item name={['pricing', 'output_per_million']} label="输出单价 / 百万 Token" rules={[{ required: true }]}><InputNumber min={0} max={1000000} precision={6} /></Form.Item>
           </>}
         </>}
-        {error !== null && <Alert type="error" title={errorMessage(error)} description={uncertain ? '保存结果未确认，可使用原配置重试，或关闭后刷新列表核对。' : undefined} />}
+        {error !== null && <Alert type="error" title={errorMessage(error)} description={uncertain ? '保存结果未确认，可使用原配置重试，或关闭后核对模型列表。' : undefined} />}
         <Space>
           {!uncertain && <Button type="primary" htmlType="submit" loading={busy}>保存模型</Button>}
           {uncertain && <Button type="primary" loading={busy} disabled={busy} onClick={() => void save()}>确认 / 重试保存</Button>}

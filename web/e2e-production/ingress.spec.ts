@@ -64,8 +64,7 @@ test('real PDF upload, asynchronous worker indexing and verified download throug
     documentId = document.id;
     return document.status;
   }, { timeout: 25000 }).toBe('ready');
-  await page.getByRole('button', { name: '刷新文档' }).click();
-  await expect(page.getByRole('row').filter({ hasText: '生产入口公开 PDF' }).getByText('已就绪', { exact: true })).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: '生产入口公开 PDF' }).getByText('已就绪', { exact: true })).toBeVisible({ timeout: 20000 });
   const download = await request.get(`/api/workbench/projects/${seeded.project_id}/documents/${documentId}/content`, { headers });
   expect(download.status()).toBe(200);
   expect(download.headers()['content-type']).toContain('application/pdf');

@@ -8,6 +8,7 @@ import { dateLabel, PageHeading, QueryError } from './components';
 import { usePageReady } from './page-transition';
 import NumberSlider from './number-slider';
 import type { BankClaim, EvidencePolicy } from './evidence-types';
+import { SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
 
 const statuses = { ready: '已审查', pending: '待复核', withdrawn: '来源不可用' };
 const access: Record<string, string> = { summary_only: '摘要', extracted_text: '正文片段', document_excerpt: '项目文档片段' };
@@ -30,7 +31,7 @@ export default function EvidenceBank() {
   const enabled = !!session?.capabilities.project_evidence;
   const project = useQuery({ queryKey: ['project', projectId], queryFn: ({ signal }) => api!.project(projectId, signal) });
   const bank = useQuery({ queryKey: ['evidence-bank', projectId, page, q, status, kind], enabled: enabled && project.isSuccess,
-    queryFn: ({ signal }) => api!.projectEvidence(projectId, page, q, status, kind, signal), refetchInterval: 15000 });
+    queryFn: ({ signal }) => api!.projectEvidence(projectId, page, q, status, kind, signal), refetchInterval: SNAPSHOT_REFRESH_MS });
   usePageReady(!project.isPending && (!enabled || !bank.isPending || project.isError));
   async function act(action: () => Promise<unknown>) {
     if (inFlight.current) return;
@@ -59,7 +60,7 @@ export default function EvidenceBank() {
   return <>
     {contextHolder}
     <Breadcrumb items={[{ title: <Link to="/projects">项目</Link> }, { title: <Link to={`/projects/${encodeURIComponent(projectId)}`}>{project.data.name}</Link> }, { title: '证据库' }]} />
-    <PageHeading title="项目证据库" subtitle={project.data.name} refresh={() => void bank.refetch()} />
+    <PageHeading title="项目证据库" subtitle={project.data.name} />
     <Space className="filters" wrap>
       <Input.Search aria-label="搜索项目证据" placeholder="搜索论点或研究目标" maxLength={200} allowClear onSearch={v => { setQuery(v.trim()); setPage(1); }} />
       <Select aria-label="证据状态" value={status} style={{ width: 150 }} onChange={v => { setStatus(v); setPage(1); }} options={[
@@ -72,7 +73,7 @@ export default function EvidenceBank() {
     </Space>
     {error !== null && <Alert type="error" title={errorMessage(error)} />}
     {notice && <Alert type="info" title={notice} />}
-    {bank.isPending ? null : bank.isError ? <QueryError error={bank.error} retry={() => void bank.refetch()} /> : <>
+    {bank.isPending ? null : !bank.data ? <QueryError error={bank.error} retry={() => void bank.refetch()} /> : <>
       <p>匹配 {bank.data.total} 条结论</p>
       <Table<BankClaim> rowKey="id" dataSource={bank.data.items} size="small" scroll={{ x: 850 }}
         locale={{ emptyText: <Empty description="暂无匹配成果" /> }} columns={[
