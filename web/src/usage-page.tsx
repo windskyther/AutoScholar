@@ -9,9 +9,6 @@ import { SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
 
 const format = (value: number) => value.toLocaleString('zh-CN');
 const short = (value: number) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-const reported = (value: number | null | undefined) => value == null ? '未提供' : format(value);
-const money = (value: number | null | undefined) => value == null ? '未提供'
-  : value > 0 && value < 0.00000001 ? '<0.00000001' : value.toLocaleString('zh-CN', { maximumFractionDigits: 8 });
 const stageLabels: Record<string, string> = { planning: '研究规划', screening: '资料初筛',
   reading: '精读资料', refining: '独立复筛', writing: '综合写作', review: '结论审稿', other: '其他调用' };
 
@@ -54,10 +51,6 @@ export default function UsagePage() {
     { title: '调用次数', dataIndex: 'calls', render: format },
     { title: '用量未确认', dataIndex: 'unknown_usage_calls', render: format },
     { title: '失败响应', dataIndex: 'failed_calls', render: format },
-    { title: '已报告命中输入', dataIndex: 'cached_input_tokens', render: reported },
-    { title: '已报告未命中输入', dataIndex: 'uncached_input_tokens', render: reported },
-    { title: '估算 CNY', dataIndex: 'estimated_cny', render: money },
-    { title: '估算 USD', dataIndex: 'estimated_usd', render: money },
   ];
   const maximum = Math.max(1, ...(data?.groups.map((item) => item[metric]) ?? []));
   return <>
@@ -80,26 +73,9 @@ export default function UsagePage() {
         <Metric label="输出 Tokens" value={data.totals.output_tokens} />
         <Metric label="调用次数" value={data.totals.calls} />
       </div>
-      <section className="usage-surface" aria-label="缓存复用">
-        <h2>缓存复用</h2>
-        <div className="metrics-grid">
-          <div className="metric"><span>已报告命中输入</span><strong>{reported(data.totals.cached_input_tokens)}</strong></div>
-          <div className="metric"><span>已报告未命中输入</span><strong>{reported(data.totals.uncached_input_tokens)}</strong></div>
-          <div className="metric"><span>已报告输入的命中率</span><strong>{data.totals.cache_hit_rate == null ? '未提供' : `${(data.totals.cache_hit_rate * 100).toFixed(1)}%`}</strong></div>
-          <div className="metric"><span>缓存用量未确认的调用</span><strong>{format(data.totals.unknown_cache_calls ?? data.totals.calls)}</strong></div>
-        </div>
-      </section>
-      <section className="usage-surface" aria-label="模型费用估算">
-        <h2>模型费用估算</h2>
-        <p>{data.totals.estimated_cny == null && data.totals.estimated_usd == null ? '暂不可估算' : [
-          data.totals.estimated_cny == null ? null : `CNY ${money(data.totals.estimated_cny)}`,
-          data.totals.estimated_usd == null ? null : `USD ${money(data.totals.estimated_usd)}`,
-        ].filter(Boolean).join(' · ')}</p>
-        <p>已估算 {data.totals.cost_known_calls ?? 0} 次；{data.totals.unknown_cost_calls ?? data.totals.calls} 次缺少价格或用量信息。</p>
-      </section>
       {!!data.stages?.length && <section className="usage-surface" aria-label="研究阶段用量">
         <h2>研究阶段用量</h2>
-        <Table<UsageGroup> rowKey="id" size="small" pagination={false} dataSource={data.stages} scroll={{ x: 1100 }}
+        <Table<UsageGroup> rowKey="id" size="small" pagination={false} dataSource={data.stages} scroll={{ x: 800 }}
           columns={[{ title: '阶段', dataIndex: 'id', render: (value: string) => stageLabels[value] ?? '其他调用' }, ...columns]} />
       </section>}
       {data.totals.unknown_usage_calls > 0 && <Alert showIcon type="warning" title={`${format(data.totals.unknown_usage_calls)} 次调用的用量尚未确认`}
@@ -120,12 +96,12 @@ export default function UsagePage() {
             <span className="usage-rank-name">{item.label}</span><span className="usage-rank-track"><span style={{ width: `${item[metric] / maximum * 100}%` }} /></span>
             <strong>{format(item[metric])}</strong>
           </button>)}</div>
-          <Table<UsageGroup> rowKey="id" size="small" dataSource={data.groups} scroll={{ x: 950 }} pagination={{ pageSize: 10, showSizeChanger: false }}
+          <Table<UsageGroup> rowKey="id" size="small" dataSource={data.groups} scroll={{ x: 800 }} pagination={{ pageSize: 10, showSizeChanger: false }}
             columns={[{ title: groupBy === 'api' ? 'API 配置' : '模型', dataIndex: 'label', width: 200, ellipsis: true }, ...columns]} />
           {data.has_more_groups && <p>展示用量最高的 500 项；上方合计仍包含全部分组。</p>}
         </section>
         <Collapse className="usage-daily" items={[{ key: 'daily', label: '查看每日明细', children: <Table<UsageDay> rowKey="date" size="small"
-          dataSource={data.daily} scroll={{ x: 950 }} pagination={{ pageSize: 10, showSizeChanger: false }} columns={[{ title: '日期（UTC+8）', dataIndex: 'date' }, ...columns]} /> }]} />
+          dataSource={data.daily} scroll={{ x: 800 }} pagination={{ pageSize: 10, showSizeChanger: false }} columns={[{ title: '日期（UTC+8）', dataIndex: 'date' }, ...columns]} /> }]} />
       </>}
       <p className="usage-footnote">更新于 {new Date(query.dataUpdatedAt).toLocaleTimeString('zh-CN')}</p>
     </>}

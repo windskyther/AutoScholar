@@ -191,7 +191,6 @@ input[type='file'] { max-width: 100%; }
 .usage-surface { border: 1px solid var(--border-soft); border-radius: 24px; padding: 32px; background: var(--surface); margin: 36px 0; min-width: 0; }
 .usage-surface > h2:first-child { margin-top: 0; }
 .usage-surface > p:last-child { margin-bottom: 0; }
-.usage-surface > .metrics-grid:last-child { margin-bottom: 0; }
 .usage-section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
 .usage-section-heading h2 { margin: 0; }
 .usage-section-heading p { margin: 8px 0 0; font-size: .875rem; }

@@ -4,7 +4,7 @@ import type { UsageCounts, UsageSummary } from '../src/usage-types';
 
 const zero: UsageCounts = { calls: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0, unknown_usage_calls: 0, failed_calls: 0 };
 const measured: UsageCounts = { calls: 8, input_tokens: 1200, output_tokens: 800, total_tokens: 2000, unknown_usage_calls: 1, failed_calls: 1 };
-async function fixture(page: Page, empty = false, failure = false, cache = false, priced = false) {
+async function fixture(page: Page, empty = false, failure = false, includeLegacyMetrics = false) {
   const queries: URL[] = [];
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
@@ -19,18 +19,21 @@ async function fixture(page: Page, empty = false, failure = false, cache = false
       if (failure) return route.fulfill({ status: 503, headers: { 'X-Request-ID': 'ff0cf6b9-e4cd-4d78-8aa4-5b864c2019c6' }, json: { error: { code: 'workbench_store_unavailable' } } });
       const days = Number(url.searchParams.get('days')) as UsageSummary['days'];
       const group = url.searchParams.get('group_by') as UsageSummary['group_by'];
+      const legacyMetrics = includeLegacyMetrics ? {
+        cached_input_tokens: 600, uncached_input_tokens: 400, cache_hit_rate: 0.6, unknown_cache_calls: 7,
+        estimated_cny: 0.00285, estimated_usd: 0.00125, cost_known_calls: 2, unknown_cost_calls: 6,
+      } : {};
       const summary: UsageSummary = { group_by: group, days, utc_offset_minutes: 480, recorded_since: '2026-11-07T00:00:00Z',
-        trend_from: '2026-11-01', totals: empty ? zero : { ...measured, ...(cache ? {
-          cached_input_tokens: 600, uncached_input_tokens: 400, cache_known_calls: 1,
-          unknown_cache_calls: 7, cache_known_input_tokens: 1000, cache_hit_rate: 0.6,
-        } : {}), ...(priced ? { estimated_cny: 0.00285, estimated_usd: 0.00125, cost_known_calls: 2, unknown_cost_calls: 6 } : {}) }, ...(cache ? { stages: [{ id: 'refining', label: 'refining', ...measured }] } : {}), groups: empty ? [] : [
-          { id: group === 'api' ? 'reader' : 'model/中文 *', label: group === 'api' ? '阅读 API' : 'model/中文 *', ...measured },
+        trend_from: '2026-11-01', totals: empty ? zero : { ...measured, ...legacyMetrics },
+        ...(includeLegacyMetrics ? { stages: [{ id: 'refining', label: 'refining', ...measured, ...legacyMetrics }] } : {}),
+        groups: empty ? [] : [
+          { id: group === 'api' ? 'reader' : 'model/中文 *', label: group === 'api' ? '阅读 API' : 'model/中文 *', ...measured, ...legacyMetrics },
         ], daily: Array.from({ length: days || 90 }, (_, index) => {
           const count = days || 90; const active = index - (count - 7);
           const tokens = active < 0 ? 0 : [100, 150, 250, 300, 400, 500, 300][active];
           return { date: new Date(Date.UTC(2026, 10, 8 - count + index)).toISOString().slice(0, 10),
             ...(empty || active < 0 ? zero : { calls: active === 6 ? 2 : 1, input_tokens: tokens * .6, output_tokens: tokens * .4,
-              total_tokens: tokens, unknown_usage_calls: active === 6 ? 1 : 0, failed_calls: active === 5 ? 1 : 0 }) };
+              total_tokens: tokens, unknown_usage_calls: active === 6 ? 1 : 0, failed_calls: active === 5 ? 1 : 0 }), ...legacyMetrics };
         }),
         options: empty ? { apis: [], models: [] } : { apis: [{ id: 'reader', name: '阅读 API' }, { id: 'writer', name: '写作 API' }], models: ['model/中文 *', 'second-model'] }, has_more_groups: false };
       return route.fulfill({ json: summary });
@@ -40,12 +43,14 @@ async function fixture(page: Page, empty = false, failure = false, cache = false
   return queries;
 }
 
-test('cost estimates keep currencies separate and report incomplete price coverage', async ({ page }) => {
-  await fixture(page, false, false, true, true);
+test('usage shows token and call counts without cache or currency details from older responses', async ({ page }) => {
+  await fixture(page, false, false, true);
   await page.goto('/usage');
-  const costs = page.getByRole('region', { name: '模型费用估算' });
-  await expect(costs).toContainText('CNY 0.00285 · USD 0.00125');
-  await expect(costs).toContainText('已估算 2 次；6 次缺少价格或用量信息');
+  await expect(page.getByTestId('usage-totals')).toContainText('2,000');
+  await expect(page.getByRole('region', { name: '研究阶段用量' })).toContainText('独立复筛');
+  await page.getByRole('button', { name: '查看每日明细' }).click();
+  await expect(page.getByRole('columnheader', { name: '已确认 Tokens', exact: true })).toHaveCount(3);
+  await expect(page.getByRole('main').getByText(/缓存复用|已报告.*输入|缓存用量|费用估算|CNY|USD|已估算|缺少价格/)).toHaveCount(0);
 });
 
 test('usage totals, dimension and API/model/date filters stay read-only and survive refresh', async ({ page }) => {
@@ -68,23 +73,6 @@ test('usage totals, dimension and API/model/date filters stay read-only and surv
   await expect(page.getByRole('img', { name: '每日已确认 Token趋势' })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: '用量统计', exact: true })).toBeVisible();
-});
-
-test('cache totals preserve unknown reports and show the known-input denominator', async ({ page }) => {
-  await fixture(page, false, false, true);
-  await page.goto('/usage');
-  const cache = page.getByRole('region', { name: '缓存复用' });
-  await expect(cache).toContainText('600');
-  await expect(cache).toContainText('400');
-  await expect(cache).toContainText('60.0%');
-  await expect(page.getByRole('region', { name: '研究阶段用量' })).toContainText('独立复筛');
-});
-
-test('a supplier without cache details displays unknown instead of zero hits', async ({ page }) => {
-  await fixture(page);
-  await page.goto('/usage');
-  const cache = page.getByRole('region', { name: '缓存复用' });
-  await expect(cache.getByText('未提供', { exact: true })).toHaveCount(3);
 });
 
 test('usage charts and table fit a mobile viewport', async ({ page }) => {
