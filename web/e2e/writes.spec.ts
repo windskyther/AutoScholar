@@ -83,6 +83,81 @@ async function draftTask(page: Page) {
   await page.getByLabel('研究目标', { exact: true }).fill('公开的 MNIST 验收目标');
 }
 
+for (const [label, source, hint] of [
+  ['资料调研', 'Tavily Web', undefined],
+  ['论文综述', 'Semantic Scholar 论文（无密钥时匿名）', '主题与时间范围'],
+  ['技术对比', 'Tavily Web', '比较对象与维度'],
+] as const) {
+  test(`home shortcut opens the ${label} draft with its own defaults`, async ({ page }) => {
+    const calls = await fixture(page, { researchWorkflows: true });
+    await page.getByRole('link', { name: 'AutoScholar', exact: true }).click();
+    await page.getByRole('link', { name: label, exact: true }).click();
+    await expect(page.getByRole('heading', { name: `${label} · 选择项目` })).toBeVisible();
+    await enterProject(page);
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText(label, { exact: true })).toBeVisible();
+    await expect(dialog.getByText(source, { exact: true })).toBeVisible();
+    if (hint) await expect(dialog.getByPlaceholder(hint)).toHaveValue('');
+    await expect(dialog.getByRole('checkbox', { name: /我确认提交后自动执行/ })).not.toBeChecked();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(/\/projects\/project-a$/);
+    expect(calls.every(call => call.method === 'GET')).toBe(true);
+  });
+}
+
+test('home research proposal continues in a newly created project', async ({ page }) => {
+  const calls = await fixture(page, { researchWorkflows: true });
+  await page.getByRole('link', { name: 'AutoScholar', exact: true }).click();
+  await page.getByRole('link', { name: '研究方案', exact: true }).click();
+  await page.getByRole('button', { name: '新建项目', exact: true }).click();
+  const create = page.getByRole('dialog', { name: '新建项目', exact: true });
+  await create.getByLabel('项目名称').fill('方案新项目');
+  await create.getByRole('button', { name: '创建项目', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '提交研究任务 · 方案新项目', exact: true }).getByPlaceholder('研究目标与约束')).toBeVisible();
+  await expect(page).toHaveURL(/\/projects\/project-created$/);
+  expect(calls.filter(call => call.method === 'POST').map(call => call.path)).toEqual(['/api/workbench/projects']);
+});
+
+test('home document analysis finds a ready PDF on a later page before opening the draft', async ({ page }) => {
+  const calls = await fixture(page, { researchWorkflows: true });
+  await page.route('**/api/workbench/projects/project-a/documents?*', route => {
+    const offset = Number(new URL(route.request().url()).searchParams.get('offset'));
+    const items = offset === 0 ? Array.from({ length: 20 }, (_, i) => ({ ...document, id: `failed-${i}`, status: 'failed' })) : [document];
+    return route.fulfill({ json: { items, total: 21, offset, limit: 20 } });
+  });
+  await page.getByRole('link', { name: 'AutoScholar', exact: true }).click();
+  await page.getByRole('link', { name: '项目文档分析', exact: true }).click();
+  await enterProject(page);
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('项目文档分析', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('全部已就绪 PDF', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('检索来源')).toHaveCount(0);
+  expect(calls.every(call => call.method === 'GET')).toBe(true);
+});
+
+test('home document analysis goes to PDF upload until documents are ready, then can resume', async ({ page }) => {
+  const calls = await fixture(page, { researchWorkflows: true });
+  let ready = false;
+  await page.route('**/api/workbench/projects/project-a/documents?*', route => route.fulfill({ json: {
+    items: [{ ...document, status: ready ? 'ready' : 'processing' }], total: 1, offset: 0, limit: 20,
+  } }));
+  await page.getByRole('link', { name: 'AutoScholar', exact: true }).click();
+  await page.getByRole('link', { name: '项目文档分析', exact: true }).click();
+  await enterProject(page);
+  await expect(page.getByText('暂无已就绪 PDF', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '上传 PDF', exact: true })).toBeInViewport();
+  const continuation = page.getByRole('button', { name: '继续文档分析', exact: true });
+  await expect(continuation).toBeDisabled();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  ready = true;
+  await page.getByRole('button', { name: '刷新文档', exact: true }).click();
+  await expect(continuation).toBeEnabled();
+  await continuation.click();
+  await expect(page.getByRole('dialog').getByText('项目文档分析', { exact: true })).toBeVisible();
+  expect(calls.every(call => call.method === 'GET')).toBe(true);
+});
+
 test('an empty model manager blocks task submission without a fallback model', async ({ page }) => {
   await fixture(page);
   await page.route('**/api/workbench/models', (route) => route.fulfill({ json: { items: [] } }));
@@ -271,7 +346,13 @@ test('lost task acknowledgement freezes the original draft and survives route ch
   await expect(page.getByLabel('研究目标', { exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '保留请求并关闭' }).click();
   await page.getByRole('link', { name: '项目与任务' }).click();
+  await page.getByRole('link', { name: 'AutoScholar', exact: true }).click();
+  await page.getByRole('link', { name: '技术对比', exact: true }).click();
+  await enterProject(page);
+  await expect(page.getByRole('heading', { name: project.name, exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('button', { name: '核查原提交' }).click();
+  await expect(page.getByRole('dialog').getByText('资料调研', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '确认 / 重试原提交' }).click();
   await expect(page.getByRole('heading', { name: '任务详情', exact: true })).toBeVisible();
   const submissions = calls.filter((item) => item.path === '/api/workbench/agent/tasks');

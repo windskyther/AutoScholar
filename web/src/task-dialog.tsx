@@ -9,10 +9,12 @@ import { DocumentState } from './documents';
 import type { BudgetLimits, PDFDocument, Project, TaskSubmission } from './types';
 import NumberSlider from './number-slider';
 import { Link } from 'react-router-dom';
+import { researchLabels } from './research-entry';
+import type { ResearchKind } from './research-entry';
 
 interface Values {
   objective: string; budget: BudgetLimits; sources: ('web' | 'paper')[];
-  workflowKind: NonNullable<TaskSubmission['workflow_kind']>;
+  workflowKind: ResearchKind;
   model_profile_id: string;
   research_depth: 'quick' | 'standard' | 'deep';
   reuse_project_evidence: boolean;
@@ -31,8 +33,13 @@ const fields: { key: keyof BudgetLimits; label: string; min: number; max: number
   { key: 'wall_seconds', label: '活跃执行时间（秒）', min: 1, max: 7200 },
 ];
 
-export default function TaskDialog({ project, open, close, complete, pendingChanged }: {
-  project: Project; open: boolean; close: () => void; complete: () => void; pendingChanged: (value: boolean) => void;
+const objectiveHints: Partial<Record<ResearchKind, string>> = {
+  literature_review: '主题与时间范围', comparison: '比较对象与维度', research_proposal: '研究目标与约束',
+};
+
+export default function TaskDialog({ project, initialKind, open, close, complete, pendingChanged }: {
+  project: Project; initialKind: ResearchKind; open: boolean;
+  close: () => void; complete: () => void; pendingChanged: (value: boolean) => void;
 }) {
   const { api, session } = useConnection();
   const cache = useQueryClient();
@@ -45,9 +52,9 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
   const [error, setError] = useState<unknown>(null);
   const draft = useRef<{ key: string; payload: TaskSubmission } | null>(null);
   const inFlight = useRef(false);
-  const documentMode = Form.useWatch('documentMode', form) ?? 'all';
-  const defaultKind = 'research';
-  const workflowKind = Form.useWatch('workflowKind', form) ?? defaultKind;
+  const initialDocumentMode = initialKind === 'document_analysis' ? 'all' : 'none';
+  const documentMode = Form.useWatch('documentMode', form) ?? initialDocumentMode;
+  const workflowKind = Form.useWatch('workflowKind', form) ?? initialKind;
   const ceiling = session?.capabilities.budget_limits;
   const modelId = Form.useWatch('model_profile_id', form) ?? '';
   const models = useQuery({ queryKey: ['models'], queryFn: ({ signal }) => api!.models(signal),
@@ -105,8 +112,8 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
     <Alert type="warning" showIcon title="提交后自动执行研究任务，可能产生模型和检索费用"
       description="预算限制资源用量，不等同于金额；单次模型响应可能使 Token 用量超过上限。" />
     <Form form={form} layout="vertical" disabled={busy || uncertain} onFinish={(values) => void submit(values)} initialValues={{
-      budget: ceiling, sources: session?.capabilities.web_search_configured ? ['web'] : ['paper'],
-      workflowKind: defaultKind, documentMode: 'none', retrieval: 'hybrid_rerank', consent: false,
+      budget: ceiling, sources: initialKind === 'literature_review' || !session?.capabilities.web_search_configured ? ['paper'] : ['web'],
+      workflowKind: initialKind, documentMode: initialDocumentMode, retrieval: 'hybrid_rerank', consent: false,
       model_profile_id: '',
       research_depth: 'standard',
       reuse_project_evidence: true,
@@ -130,17 +137,13 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
         ]} />
       </Form.Item>}
       <Form.Item name="workflowKind" label="任务类型" rules={[{ required: true }]}>
-        <Select options={[
-          { value: 'research', label: '资料调研' }, { value: 'literature_review', label: '论文综述' },
-          { value: 'comparison', label: '技术对比' }, { value: 'research_proposal', label: '研究方案' },
-          { value: 'document_analysis', label: '项目文档分析' },
-        ]} onChange={(value) => {
+        <Select<ResearchKind> options={Object.entries(researchLabels).map(([value, label]) => ({ value: value as ResearchKind, label }))} onChange={(value) => {
           form.setFieldValue('documentMode', value === 'document_analysis' ? 'all' : 'none');
           if (value === 'literature_review') form.setFieldValue('sources', ['paper']);
         }} />
       </Form.Item>
       <Form.Item name="objective" label="研究目标" rules={[{ required: true, whitespace: true, max: 10000, message: '填写 1–10000 字符的研究目标' }]}>
-        <Input.TextArea rows={3} maxLength={10000} showCount />
+        <Input.TextArea rows={3} maxLength={10000} showCount placeholder={objectiveHints[workflowKind]} />
       </Form.Item>
       {session?.capabilities.project_evidence && <Form.Item name="reuse_project_evidence" valuePropName="checked">
         <Checkbox>复用本项目已有证据</Checkbox>

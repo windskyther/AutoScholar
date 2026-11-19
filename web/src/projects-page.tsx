@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { Button, Empty, Pagination } from 'antd';
 import { ArrowUpOutlined, FolderOpenOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useConnection } from './connection';
 import { dateLabel, QueryError } from './components';
 import CreateProject from './create-project';
 import DeleteProject from './delete-project';
 import { usePageReady } from './page-transition';
+import { projectDestination, readResearchEntry, researchEntryLabels } from './research-entry';
 
 function updated(value: string) {
   const date = new Date(value);
@@ -16,15 +17,16 @@ function updated(value: string) {
 
 export default function ProjectsPage() {
   const { api } = useConnection();
+  const entry = readResearchEntry(useLocation().search);
   const [page, setPage] = useState(1);
   const query = useQuery({ queryKey: ['projects', page], queryFn: ({ signal }) => api!.projects(page, signal) });
   usePageReady(!query.isPending);
   return <div className="projects-overview">
     <div className="projects-intro">
-      <div><h1>项目</h1></div>
+      <div><h1>{entry ? `${researchEntryLabels[entry]} · 选择项目` : '项目'}</h1></div>
       <div className="projects-actions">
         <Button icon={<ReloadOutlined />} onClick={() => void query.refetch()}>刷新快照</Button>
-        <CreateProject />
+        <CreateProject researchEntry={entry} />
       </div>
     </div>
     {query.isPending ? null : query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} /> : <>
@@ -33,7 +35,7 @@ export default function ProjectsPage() {
         <div className="project-card-top"><span className="project-folder" aria-hidden="true"><FolderOpenOutlined /></span>
           <div className="project-card-action"><DeleteProject project={project} onDeleted={() => setPage(1)} /></div>
         </div>
-        <h2 className="project-card-title"><Link to={`/projects/${encodeURIComponent(project.id)}`}>{project.name}</Link></h2>
+        <h2 className="project-card-title"><Link to={projectDestination(project.id, entry)}>{project.name}</Link></h2>
         <p className="project-description">{project.description}</p>
         <div className="project-card-footer"><time dateTime={project.updated_at} title={dateLabel(project.updated_at)}>更新于 {updated(project.updated_at)}</time>
           <ArrowUpOutlined className="project-open-icon" aria-hidden="true" /></div>

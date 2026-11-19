@@ -5,8 +5,10 @@ import { useNavigate } from 'react-router-dom';
 import { PlusOutlined } from '@ant-design/icons';
 import { errorMessage, isWriteUncertain } from './api';
 import { useConnection } from './connection';
+import { projectDestination } from './research-entry';
+import type { ResearchEntry } from './research-entry';
 
-export default function CreateProject() {
+export default function CreateProject({ researchEntry }: { researchEntry?: ResearchEntry }) {
   const { api } = useConnection();
   const cache = useQueryClient();
   const navigate = useNavigate();
@@ -23,7 +25,7 @@ export default function CreateProject() {
       if (!api.connected) return;
       void cache.invalidateQueries({ queryKey: ['projects'] });
       setOpen(false); form.resetFields();
-      navigate(`/projects/${encodeURIComponent(project.id)}`);
+      navigate(projectDestination(project.id, researchEntry));
     } catch (failure) { setError(failure); }
     finally { inFlight.current = false; setBusy(false); }
   }

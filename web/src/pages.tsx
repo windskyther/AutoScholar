@@ -1,6 +1,6 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Breadcrumb, Button, Descriptions, Empty, Input, Select, Space, Table, Tag } from 'antd';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError } from './api';
 import { useConnection } from './connection';
@@ -15,6 +15,7 @@ import DeleteProject from './delete-project';
 import DeleteTask from './delete-task';
 import ExportMarkdown from './export-markdown';
 import { usePageReady } from './page-transition';
+import { readResearchEntry } from './research-entry';
 
 function failureLabel(code: string | null | undefined): string {
   const labels: Record<string, string> = {
@@ -40,14 +41,54 @@ function failureLabel(code: string | null | undefined): string {
 export function ProjectPage() {
   const projectId = useParams().projectId!;
   const { api, session } = useConnection();
-  const submission = useSubmission();
+  const { openProject, pending } = useSubmission();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const entry = readResearchEntry(location.search);
+  const kind = entry === 'evidence' ? undefined : entry;
+  const documentEntry = kind === 'document_analysis';
+  const canCreate = !!((session?.capabilities.llm_configured || session?.capabilities.model_management) && session.capabilities.budget_limits);
+  const handledEntry = useRef<string | null>(null);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<TaskStatus | undefined>();
   const [search, setSearch] = useState('');
   const project = useQuery({ queryKey: ['project', projectId], queryFn: ({ signal }) => api!.project(projectId, signal) });
   const tasks = useQuery({ queryKey: ['tasks', projectId, page, status, search],
     queryFn: ({ signal }) => api!.tasks(projectId, page, status, search, signal), enabled: project.isSuccess });
-  usePageReady(!project.isPending && (!project.isSuccess || !tasks.isPending));
+  const documents = useQuery({ queryKey: ['documents', projectId, 'readiness'],
+    queryFn: ({ signal }) => api!.documentReadiness(projectId, signal), enabled: documentEntry && project.isSuccess,
+    refetchInterval: query => query.state.data?.processing ? 3000 : false });
+  const pageReady = !project.isPending && (!project.isSuccess || !tasks.isPending);
+  usePageReady(pageReady);
+  const openSelectedResearch = useCallback(() => {
+    if (!kind || !project.data || pending || !canCreate) return;
+    openProject(project.data, kind);
+    const search = new URLSearchParams(location.search);
+    search.delete('research');
+    void navigate({ pathname: location.pathname, search: search.toString() }, { replace: true });
+  }, [kind, project.data, pending, canCreate, openProject, location.pathname, location.search, navigate]);
+  useEffect(() => {
+    if (!kind || handledEntry.current === location.key) return;
+    if (pending) {
+      // Do not replay a blocked shortcut when the original submission clears its pending flag.
+      handledEntry.current = location.key;
+      return;
+    }
+    if (!project.data || !pageReady) return;
+    if (documentEntry) {
+      if (documents.isPending || documents.isFetching) return;
+      if (!documents.isSuccess || !documents.data.ready || !canCreate) {
+        const frame = requestAnimationFrame(() => {
+          handledEntry.current = location.key;
+          document.getElementById('project-pdfs')?.scrollIntoView({ block: 'start' });
+        });
+        return () => cancelAnimationFrame(frame);
+      }
+    } else if (!canCreate) return;
+    handledEntry.current = location.key;
+    openSelectedResearch();
+  }, [kind, project.data, pageReady, pending, location.key, documentEntry, documents.isPending,
+    documents.isFetching, documents.isSuccess, documents.data, canCreate, openSelectedResearch]);
   if (project.isPending) return null;
   if (project.isError) return <QueryError error={project.error} retry={() => void project.refetch()} />;
   return <>
@@ -56,8 +97,7 @@ export function ProjectPage() {
     <div className="section-heading"><h2>研究任务</h2><Space>
       {session?.capabilities.project_evidence && <Link to={`/projects/${encodeURIComponent(projectId)}/evidence`}><Button>项目证据库</Button></Link>}
       <DeleteProject project={project.data} /><Button type="primary"
-      disabled={(!session?.capabilities.llm_configured && !session?.capabilities.model_management) || !session?.capabilities.budget_limits}
-      onClick={() => submission.openProject(project.data)}>创建研究任务</Button></Space></div>
+      disabled={!canCreate} onClick={() => openProject(project.data)}>创建研究任务</Button></Space></div>
     {!session?.capabilities.llm_configured && !session?.capabilities.model_management && <Alert type="warning" title="研究服务尚未配置，暂时无法创建任务。" />}
     {!session?.capabilities.budget_limits && <Alert type="warning" title="暂时无法读取任务配置，请稍后刷新。" />}
     <Space className="filters" wrap>
@@ -78,7 +118,10 @@ export function ProjectPage() {
           { title: '更新时间', dataIndex: 'updated_at', width: 210, render: dateLabel },
           { title: '操作', width: 120, render: (_, item) => <DeleteTask task={item} projectId={projectId} onDeleted={() => setPage(1)} /> },
         ]} pagination={{ current: page, pageSize: 20, total: tasks.data.total, showSizeChanger: false, onChange: setPage }} />}
-    <Documents projectId={projectId} />
+    <Documents projectId={projectId} analysisAction={documentEntry && <Button type="primary"
+      disabled={!canCreate || pending || !documents.isSuccess || !documents.data.ready} onClick={openSelectedResearch}>继续文档分析</Button>}
+      analysisNotice={documentEntry && (documents.isError ? <QueryError error={documents.error} retry={() => void documents.refetch()} />
+        : documents.isSuccess && !documents.data.ready && <Alert type="info" title="暂无已就绪 PDF" />)} />
   </>;
 }
 

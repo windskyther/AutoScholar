@@ -8,7 +8,9 @@ export default function ConnectPage() {
   const location = useLocation();
   if (api) {
     const destination = (location.state as { from?: string } | null)?.from;
-    return <Navigate to={destination === '/projects' || destination?.startsWith('/projects/') || destination === '/models' || destination === '/usage' ? destination : '/'} replace />;
+    const path = destination?.split('?')[0];
+    const isWorkspacePath = path === '/projects' || path?.startsWith('/projects/') || path === '/models' || path === '/usage';
+    return <Navigate to={isWorkspacePath && destination ? destination : '/'} replace />;
   }
   if (checking) return null;
   return <main className="connection-screen"><section className="connection-panel">

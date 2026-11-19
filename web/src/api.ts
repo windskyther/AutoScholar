@@ -252,6 +252,17 @@ export class ApiClient {
     return this.checked(`/projects/${encodeURIComponent(projectId)}/documents?limit=20&offset=${(page - 1) * 20}`,
       (value) => isPage(value, (item): item is PDFDocument => isDocument(item) && item.project_id === projectId), signal);
   }
+  async documentReadiness(projectId: string, signal: AbortSignal) {
+    let processing = false;
+    let total = Infinity;
+    for (let page = 1; ; page++) {
+      const result = await this.documents(projectId, page, signal);
+      if (result.items.some(item => item.status === 'ready')) return { ready: true, processing: false };
+      processing ||= result.items.some(item => item.status === 'queued' || item.status === 'processing');
+      total = Math.min(total, result.total);
+      if (result.items.length === 0 || result.offset + result.limit >= total) return { ready: false, processing };
+    }
+  }
   async uploadPDF(projectId: string, file: File, title: string, maxBytes: number): Promise<PDFDocument> {
     if (!file.name.toLowerCase().endsWith('.pdf') || !['', 'application/pdf', 'application/x-pdf', 'application/octet-stream'].includes(file.type)) {
       throw new ApiError('unsupported_document_type', 415);

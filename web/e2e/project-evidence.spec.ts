@@ -14,6 +14,7 @@ test('project evidence supports original links, withdrawal, history pagination a
       llm_configured: false, web_search_configured: false, task_streaming: false, research_backend: 'native', filesystem_backend: 'native', experiment_backend: 'native', project_evidence: true,
     } } });
     if (path.endsWith('/local-access')) return route.fulfill({ json: { mode: 'local_proxy' } });
+    if (path === '/api/workbench/projects') return route.fulfill({ json: { items: [project], total: 1, limit: 20, offset: 0 } });
     if (path === '/api/workbench/projects/project-a') return route.fulfill({ json: project });
     if (path.endsWith('/tasks') || path.endsWith('/documents')) return route.fulfill({ json: { items: [], total: 0, limit: 20, offset: 0 } });
     if (path.endsWith('/evidence/policy')) {
@@ -32,8 +33,10 @@ test('project evidence supports original links, withdrawal, history pagination a
     if (path.endsWith('/evidence')) return route.fulfill({ json: { items: [claim], total: 1, limit: 20, offset: 0 } });
     throw new Error('Unexpected evidence route: ' + path);
   });
-  await page.goto('/projects/project-a');
-  await page.getByRole('button', { name: '项目证据库', exact: true }).click();
+  await page.goto('/');
+  await page.getByRole('link', { name: '项目证据库', exact: true }).click();
+  await page.getByRole('link', { name: project.name, exact: true }).click();
+  await expect(page).toHaveURL(/\/projects\/project-a\/evidence$/);
   await expect(page.getByRole('heading', { name: '项目证据库', exact: true })).toBeVisible();
   await expect(page.getByText(claim.text, { exact: true })).toBeVisible();
   await expect(page.locator('body')).not.toContainText(claim.id);

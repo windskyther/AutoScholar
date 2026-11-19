@@ -14,16 +14,18 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('mode cards lead directly to projects with keyboard support and no task creation', async ({ page }) => {
+test('mode cards retain distinct choices when opened with the keyboard or restored after reload', async ({ page }) => {
   await page.goto('/');
   const trigger = page.getByRole('link', { name: '论文综述', exact: true });
   await trigger.focus(); await page.keyboard.press('Enter');
-  await expect(page).toHaveURL(/\/projects$/);
+  await expect(page).toHaveURL(/\/projects\?research=literature_review$/);
+  await page.reload();
+  await expect(page.getByRole('heading', { name: '论文综述 · 选择项目', exact: true })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('link', { name: 'AutoScholar', exact: true }).click();
   await page.getByRole('link', { name: '项目证据库', exact: true }).click();
-  await expect(page).toHaveURL(/\/projects$/);
-  await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/projects\?research=evidence$/);
+  await expect(page.getByRole('heading', { name: '项目证据库 · 选择项目', exact: true })).toBeVisible();
 });
 
 test('the white home and direct research links fit a narrow screen with reduced motion', async ({ page }) => {
@@ -36,8 +38,8 @@ test('the white home and direct research links fit a narrow screen with reduced 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
   await page.screenshot({ path: test.info().outputPath('home-mobile.png'), fullPage: true });
   await page.getByRole('link', { name: '研究方案', exact: true }).click();
-  await expect(page).toHaveURL(/\/projects$/);
-  await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/projects\?research=research_proposal$/);
+  await expect(page.getByRole('heading', { name: '研究方案 · 选择项目', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
 });
 
@@ -52,6 +54,6 @@ test('larger reading text reflows the home and keeps direct links usable', async
     expect(await card.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   }
   await page.getByRole('link', { name: '项目文档分析', exact: true }).click();
-  await expect(page).toHaveURL(/\/projects$/);
-  await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/projects\?research=document_analysis$/);
+  await expect(page.getByRole('heading', { name: '项目文档分析 · 选择项目', exact: true })).toBeVisible();
 });

@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Alert, Button, Empty, Form, Input, Modal, Space, Table, Tag } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { errorMessage, isWriteUncertain } from './api';
@@ -11,7 +12,9 @@ export function DocumentState({ value }: { value: DocumentStatus }) {
   return <Tag color={value === 'ready' ? 'success' : value === 'failed' ? 'error' : 'default'}>{labels[value]}</Tag>;
 }
 
-export default function Documents({ projectId }: { projectId: string }) {
+export default function Documents({ projectId, analysisAction, analysisNotice }: {
+  projectId: string; analysisAction?: ReactNode; analysisNotice?: ReactNode;
+}) {
   const { api, session } = useConnection();
   const cache = useQueryClient();
   const [page, setPage] = useState(1);
@@ -55,12 +58,14 @@ export default function Documents({ projectId }: { projectId: string }) {
       okText: kind === 'delete' ? '确认删除' : '确认重建', cancelText: '取消', okButtonProps: { danger: kind === 'delete' },
       onOk: () => action(document, kind) });
   }
-  return <section className="document-section">
+  return <section id="project-pdfs" className="document-section">
     {contextHolder}
     <div className="section-heading"><h2>PDF 知识库</h2><Space wrap>
-      <Button onClick={() => void query.refetch()}>刷新文档</Button>
+      <Button onClick={refresh}>刷新文档</Button>
       <Button disabled={busy} onClick={() => { setError(null); setFile(null); form.resetFields(); setOpen(true); }}>上传 PDF</Button>
+      {analysisAction}
     </Space></div>
+    {analysisNotice}
     {notice && <Alert type="success" showIcon title={notice} />}
     {error !== null && !open && <Alert type="error" showIcon title={errorMessage(error)}
       description={isWriteUncertain(error) ? '结果未确认，请刷新文档状态核查，不会自动重复执行。' : undefined} />}

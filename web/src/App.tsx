@@ -18,7 +18,7 @@ const EvidenceBank = lazy(() => import('./evidence-bank'));
 function Shell() {
   const { api } = useConnection();
   const location = useLocation();
-  if (!api) return <Navigate to="/connect" state={{ from: location.pathname }} replace />;
+  if (!api) return <Navigate to="/connect" state={{ from: location.pathname + location.search }} replace />;
   return <TaskSubmissionProvider><WorkspaceLayout /></TaskSubmissionProvider>;
 }
 function WorkspaceLayout() {
@@ -28,7 +28,7 @@ function WorkspaceLayout() {
   const { pathname } = location;
   const showPageScrollbar = pathname === '/models' || pathname === '/projects' || pathname.startsWith('/projects/');
   useLayoutEffect(() => { window.scrollTo(0, 0); }, [location.pathname]);
-  if (!api) return <Navigate to="/connect" state={{ from: location.pathname }} replace />;
+  if (!api) return <Navigate to="/connect" state={{ from: pathname + location.search }} replace />;
   return <div className={showPageScrollbar ? 'workbench-shell with-page-scrollbar' : 'workbench-shell'}>
     <a className="skip-link" href="#workspace-content">跳至内容</a>
     <header className="workspace-header"><Link to="/" className="wordmark workspace-brand">AutoScholar</Link><WorkspaceDock /></header>
