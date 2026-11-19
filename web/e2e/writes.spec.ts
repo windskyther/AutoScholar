@@ -83,6 +83,36 @@ async function draftTask(page: Page) {
   await page.getByLabel('研究目标', { exact: true }).fill('公开的 MNIST 验收目标');
 }
 
+for (const mode of ['light', 'dark'] as const) {
+  test(`research task dropdown selection follows the menu outline in ${mode} mode`, async ({ page }) => {
+    const calls = await fixture(page, { researchWorkflows: true, researchQuality: true });
+    if (mode === 'dark') await page.getByRole('button', { name: '切换到夜间模式' }).click();
+    await draftTask(page);
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.locator('.ant-modal-container')).toHaveCSS('background-color', mode === 'dark' ? 'rgb(38, 39, 43)' : 'rgb(255, 255, 255)');
+    const menu = page.locator('.ant-select-dropdown:visible');
+    const model = dialog.getByLabel('使用模型', { exact: true });
+    await model.click();
+    await menu.getByTitle('Managed fixture · fixture', { exact: true }).click();
+    for (const label of ['使用模型', '任务类型', '研究深度', '检索来源', '项目 PDF 范围', '检索方式']) {
+      const select = dialog.getByLabel(label, { exact: true });
+      await select.click();
+      await expect(menu).toHaveCSS('background-color', mode === 'dark' ? 'rgb(38, 39, 43)' : 'rgb(255, 255, 255)');
+      const insetRadius = await menu.evaluate(element => {
+        const style = getComputedStyle(element);
+        return parseFloat(style.borderTopLeftRadius) - parseFloat(style.paddingLeft);
+      });
+      expect(insetRadius).toBeGreaterThan(0);
+      const selected = menu.locator('.ant-select-item-option-selected');
+      await expect(selected.first()).toHaveCSS('border-top-left-radius', `${insetRadius}px`);
+      await expect(selected.first()).toHaveCSS('color', mode === 'dark' ? 'rgb(241, 241, 243)' : 'rgb(255, 255, 255)');
+      await select.press('Escape');
+      await expect(menu).toHaveCount(0);
+    }
+    expect(calls.every(call => call.method === 'GET')).toBe(true);
+  });
+}
+
 for (const [label, source, hint] of [
   ['资料调研', 'Tavily Web', undefined],
   ['论文综述', 'Semantic Scholar 论文（无密钥时匿名）', '主题与时间范围'],

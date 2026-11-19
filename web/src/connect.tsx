@@ -2,6 +2,7 @@ import { Alert, Button } from 'antd';
 import { Navigate, useLocation } from 'react-router-dom';
 import { errorMessage } from './api';
 import { useConnection } from './connection';
+import { ThemeToggle } from './appearance';
 
 export default function ConnectPage() {
   const { api, checking, connectionError, connect } = useConnection();
@@ -13,7 +14,7 @@ export default function ConnectPage() {
     return <Navigate to={isWorkspacePath && destination ? destination : '/'} replace />;
   }
   if (checking) return null;
-  return <main className="connection-screen"><section className="connection-panel">
+  return <main className="connection-screen"><ThemeToggle /><section className="connection-panel">
     <div className="wordmark">AutoScholar</div><h1>连接研究工作台</h1>
     <p>本机后台暂时未连接，请确认一键启动器已运行。</p>
     <Alert type="error" showIcon title={errorMessage(connectionError)} />

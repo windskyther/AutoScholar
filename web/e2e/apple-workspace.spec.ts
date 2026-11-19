@@ -96,6 +96,11 @@ for (const width of [320, 390]) {
       expect(rect!.x).toBeGreaterThanOrEqual(0); expect(rect!.x + rect!.width).toBeLessThanOrEqual(width);
     }
     const main = await page.getByRole('main').boundingBox(); const nav = await dock.boundingBox();
+    const toggle = await page.getByRole('button', { name: '切换到夜间模式' }).boundingBox();
+    const brand = await page.getByRole('banner').getByRole('link', { name: 'AutoScholar' }).boundingBox();
+    expect(toggle!.x).toBeGreaterThan(brand!.x + brand!.width);
+    expect(toggle!.x + toggle!.width).toBeLessThanOrEqual(width);
+    expect(toggle!.y + toggle!.height).toBeLessThanOrEqual(nav!.y);
     expect(main!.y).toBeGreaterThan(nav!.y + nav!.height);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await page.getByRole('button', { name: '新建项目', exact: true }).click();
@@ -135,6 +140,33 @@ test('the workspace stays white when the system requests dark appearance', async
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('.project-card').first()).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   await expect(page.locator('.app-content')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+});
+
+test('the top-right theme toggle updates the workspace and remembers the choice', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await fixture(page); await page.goto('/projects');
+  const darkMode = page.getByRole('button', { name: '切换到夜间模式' });
+  await expect(darkMode.locator('[data-icon="moon"]')).toBeVisible();
+  const position = await darkMode.boundingBox();
+  expect(position!.x).toBeGreaterThan(1000);
+  expect(position!.y).toBeLessThan(60);
+  await darkMode.focus();
+  await page.keyboard.press('Enter');
+  const lightMode = page.getByRole('button', { name: '切换到浅色模式' });
+  await expect(lightMode.locator('[data-icon="sun"]')).toBeVisible();
+  await expect(lightMode).toBeFocused();
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(20, 20, 22)');
+  await expect(page.locator('.project-card').first()).toHaveCSS('background-color', 'rgb(31, 32, 35)');
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '模型管理' }).click();
+  await expect(page.getByRole('heading', { name: '模型管理', exact: true })).toBeVisible();
+  await page.reload();
+  await expect(lightMode).toBeVisible();
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
+  await lightMode.click();
+  await page.reload();
+  await expect(darkMode).toBeVisible();
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
 });
 
 test('keyboard users can skip to content and select every dock destination', async ({ page }) => {

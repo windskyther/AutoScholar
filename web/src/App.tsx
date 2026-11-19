@@ -6,6 +6,7 @@ import ConnectPage from './connect';
 import PageTransition from './page-transition';
 import { TaskSubmissionProvider, useSubmission } from './task-submission';
 import WorkspaceDock from './workspace-dock';
+import { ThemeToggle } from './appearance';
 
 const HomePage = lazy(() => import('./home-page'));
 const ProjectsPage = lazy(() => import('./projects-page'));
@@ -31,7 +32,9 @@ function WorkspaceLayout() {
   if (!api) return <Navigate to="/connect" state={{ from: pathname + location.search }} replace />;
   return <div className={showPageScrollbar ? 'workbench-shell with-page-scrollbar' : 'workbench-shell'}>
     <a className="skip-link" href="#workspace-content">跳至内容</a>
-    <header className="workspace-header"><Link to="/" className="wordmark workspace-brand">AutoScholar</Link><WorkspaceDock /></header>
+    <header className="workspace-header">
+      <Link to="/" className="wordmark workspace-brand">AutoScholar</Link><WorkspaceDock /><ThemeToggle />
+    </header>
       <main className="app-content" id="workspace-content" tabIndex={-1}>
         {submission.pending && <Alert type="warning" title="有一笔任务提交结果未确认，不要直接新建另一轮。"
           action={<Button onClick={submission.reveal}>核查原提交</Button>} />}
