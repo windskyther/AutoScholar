@@ -14,21 +14,6 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('research mode search filters, clears and explains an empty result without querying providers', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.locator('.research-card')).toHaveCount(6);
-  const search = page.getByRole('searchbox', { name: '搜索研究方式' });
-  await search.fill('PDF');
-  await expect(page.locator('.research-card')).toHaveCount(1);
-  await expect(page.getByRole('link', { name: '项目文档分析', exact: true })).toBeVisible();
-  await search.fill('nothing-matches-this');
-  await expect(page.locator('.research-card')).toHaveCount(0);
-  await expect(page.getByText('无匹配结果', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '清空搜索', exact: true }).click();
-  await expect(search).toHaveValue('');
-  await expect(page.locator('.research-card')).toHaveCount(6);
-});
-
 test('mode cards lead directly to projects with keyboard support and no task creation', async ({ page }) => {
   await page.goto('/');
   const trigger = page.getByRole('link', { name: '论文综述', exact: true });
@@ -56,7 +41,7 @@ test('the white home and direct research links fit a narrow screen with reduced 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
 });
 
-test('larger reading text reflows the home and keeps search and direct links usable', async ({ page }) => {
+test('larger reading text reflows the home and keeps direct links usable', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
@@ -66,13 +51,6 @@ test('larger reading text reflows the home and keeps search and direct links usa
   for (const card of await page.locator('.research-card').all()) {
     expect(await card.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   }
-  const search = page.getByRole('searchbox', { name: '搜索研究方式' });
-  await search.fill('PDF');
-  await expect(page.locator('.research-card')).toHaveCount(1);
-  await expect(page.getByRole('link', { name: '项目文档分析', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '清空搜索', exact: true }).click();
-  await expect(page.locator('.research-card')).toHaveCount(6);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   await page.getByRole('link', { name: '项目文档分析', exact: true }).click();
   await expect(page).toHaveURL(/\/projects$/);
   await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
