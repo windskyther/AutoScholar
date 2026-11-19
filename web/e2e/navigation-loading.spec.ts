@@ -51,7 +51,7 @@ for (const [path, label, title] of [['/projects', '项目与任务', '项目'], 
     state.response.release();
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
     await expectNoLoading(page);
-    await expect(page.locator('.page-transition')).toHaveCSS('animation-duration', '0.72s');
+    await expect(page.locator('.page-transition')).toHaveCSS('animation-duration', '0.9s');
   });
 }
 

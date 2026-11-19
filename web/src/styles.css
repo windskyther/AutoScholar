@@ -7,6 +7,7 @@
   color: var(--ink); background: #fff; color-scheme: light; font-synthesis: none;
   --font-ui: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --text-page: clamp(2rem, 3.2vw, 2.625rem); --text-section: 1.5rem; --text-body: 1.0625rem;
+  --navigation-duration: 900ms; --navigation-easing: cubic-bezier(.22, .61, .36, 1);
   font-family: var(--font-ui);
   scroll-padding-top: 140px;
 }
@@ -33,11 +34,14 @@ p { color: var(--muted); line-height: 1.65; }
 .dock-items { display: flex; gap: 36px; padding: 8px; }
 .dock-item { position: relative; flex: 1 1 0; min-width: 0; height: 76px; padding: 5px 6px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; color: #313136; text-decoration: none; border-radius: 21px; -webkit-tap-highlight-color: transparent; }
 .dock-item:hover { color: #1d1d1f; background: var(--dock-hover); }
-.dock-icon { display: grid; place-items: center; width: 38px; height: 36px; border: 1px solid rgb(255 255 255 / .70); border-radius: 12px; color: #45454c; background: linear-gradient(145deg, #fff, #e7e7ec); box-shadow: 0 2px 5px rgb(0 0 0 / .07); font-size: 21px; }
+.dock-icon { position: relative; display: grid; place-items: center; width: 38px; height: 36px; border: 1px solid rgb(255 255 255 / .70); border-radius: 12px; color: #45454c; background: linear-gradient(145deg, #fff, #e7e7ec); box-shadow: 0 2px 5px rgb(0 0 0 / .07); font-size: 21px; }
+.dock-icon::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(145deg, #444448, #1d1d1f); opacity: 0; pointer-events: none; }
+.dock-icon > .anticon { position: relative; }
 .dock-label { font-size: 14px; font-weight: 500; white-space: nowrap; line-height: 18px; }
 .dock-selection { position: absolute; bottom: 3px; width: 13px; height: 3px; border-radius: 2px; background: transparent; }
 .dock-item.is-current { background: var(--dock-hover); }
-.dock-item.is-current .dock-icon { background: linear-gradient(145deg, #444448, #1d1d1f); border-color: #4e4e54; color: #fff; }
+.dock-item.is-current .dock-icon { border-color: #4e4e54; color: #fff; }
+.dock-item.is-current .dock-icon::before { opacity: 1; }
 .dock-item.is-current .dock-label { font-weight: 650; }
 .dock-item.is-current .dock-selection { background: #343439; }
 .skip-link { position: fixed; top: -80px; left: 20px; z-index: 100; padding: 12px 18px; color: var(--ink); background: var(--surface); border-radius: 12px; }
@@ -198,9 +202,10 @@ input[type='file'] { max-width: 100%; }
 .usage-empty { padding: 70px 10px; }
 .usage-metrics strong { overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: no-preference) {
-  .page-transition { animation: page-enter 720ms cubic-bezier(.22, .61, .36, 1) both; }
-  .dock-icon { transition: transform 260ms ease, box-shadow 260ms ease; }
-  .dock-item { transition: background-color 260ms ease; }
+  .page-transition { animation: page-enter var(--navigation-duration) var(--navigation-easing) both; }
+  .dock-icon { transition: transform 260ms ease, box-shadow 260ms ease, color var(--navigation-duration) var(--navigation-easing), border-color var(--navigation-duration) var(--navigation-easing); }
+  .dock-item, .dock-selection { transition: background-color var(--navigation-duration) var(--navigation-easing); }
+  .dock-icon::before { transition: opacity var(--navigation-duration) var(--navigation-easing); }
   .home-actions a { transition: background-color 260ms ease, color 260ms ease; }
   .research-card { transition: transform 260ms ease, box-shadow 260ms ease; }
   .project-card { transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease; }
@@ -222,7 +227,7 @@ input[type='file'] { max-width: 100%; }
   .research-card { background: var(--surface); border-color: var(--ink); }
 }
 @media (forced-colors: active) {
-  .glass-backdrop, .glass-rim { display: none; }
+  .glass-backdrop, .glass-rim, .dock-icon::before { display: none; }
   .glass-surface { background: Canvas; border: 1px solid CanvasText; }
   .home-primary { border-color: ButtonText; color: ButtonText; background: ButtonFace; }
   .dock-item { color: LinkText; }
