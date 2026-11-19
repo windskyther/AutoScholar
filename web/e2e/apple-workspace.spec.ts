@@ -220,7 +220,7 @@ test('home is independent, spaces the three dock choices and uses an open white 
   await expect(main).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expect(main).toHaveCSS('border-top-width', '0px');
   await expect(main).toHaveCSS('box-shadow', 'none');
-  await expect(page.locator('.page-transition')).toHaveCSS('animation-duration', '0.48s');
+  await expect(page.locator('.page-transition')).toHaveCSS('animation-duration', '0.72s');
   await page.waitForTimeout(500);
   await page.screenshot({ path: test.info().outputPath('home-desktop.png'), fullPage: true });
   await page.getByRole('link', { name: '开始研究', exact: true }).click();

@@ -164,7 +164,7 @@ test('route entry is brief, filters do not remount it, and reduced motion disabl
   await expect(page.getByTestId('usage-totals')).toBeVisible();
   const frame = page.locator('.page-transition');
   await expect(frame).toHaveCSS('animation-name', 'page-enter');
-  await expect(frame).toHaveCSS('animation-duration', '0.48s');
+  await expect(frame).toHaveCSS('animation-duration', '0.72s');
   const sameFrame = await frame.elementHandle();
   await page.getByText('按模型', { exact: true }).click();
   await expect(page.getByRole('heading', { name: '模型用量分布' })).toBeVisible();

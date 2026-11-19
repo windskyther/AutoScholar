@@ -198,7 +198,7 @@ input[type='file'] { max-width: 100%; }
 .usage-empty { padding: 70px 10px; }
 .usage-metrics strong { overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: no-preference) {
-  .page-transition { animation: page-enter 480ms cubic-bezier(.22, .68, .25, 1) both; }
+  .page-transition { animation: page-enter 720ms cubic-bezier(.22, .61, .36, 1) both; }
   .dock-icon { transition: transform 260ms ease, box-shadow 260ms ease; }
   .dock-item { transition: background-color 260ms ease; }
   .home-actions a { transition: background-color 260ms ease, color 260ms ease; }
@@ -210,7 +210,7 @@ input[type='file'] { max-width: 100%; }
   .project-card:hover { transform: translateY(-3px); border-color: var(--border); box-shadow: 0 12px 26px rgb(0 0 0 / .06); }
   .research-card:hover { transform: translateY(-4px); box-shadow: 0 12px 24px rgb(0 0 0 / .05); }
 }
-@keyframes page-enter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes page-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .ant-modal, .ant-modal-mask { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
