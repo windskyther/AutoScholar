@@ -97,11 +97,11 @@ test('usage charts and table fit a mobile viewport', async ({ page }) => {
   await page.screenshot({ path: test.info().outputPath('usage-mobile.png'), fullPage: true });
 });
 
-test('empty usage explains historical coverage and shows no fabricated metrics', async ({ page }) => {
+test('empty usage keeps a short state and update time without fabricated charts', async ({ page }) => {
   await fixture(page, true);
   await page.goto('/usage');
-  await expect(page.getByText('暂无调用记录。执行研究任务后，这里会自动更新。')).toBeVisible();
-  await expect(page.getByText(/旧任务仍可在任务详情查看/)).toBeVisible();
+  await expect(page.getByText('暂无调用记录', { exact: true })).toBeVisible();
+  await expect(page.locator('.usage-footnote')).toContainText('更新于');
   await expect(page.getByRole('img', { name: /每日/ })).toHaveCount(0);
 });
 

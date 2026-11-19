@@ -20,31 +20,28 @@ test('research mode search filters, clears and explains an empty result without 
   const search = page.getByRole('searchbox', { name: '搜索研究方式' });
   await search.fill('PDF');
   await expect(page.locator('.research-card')).toHaveCount(1);
-  await expect(page.getByRole('button', { name: '了解项目文档分析', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: '项目文档分析', exact: true })).toBeVisible();
   await search.fill('nothing-matches-this');
   await expect(page.locator('.research-card')).toHaveCount(0);
-  await expect(page.getByText('没有找到相关的研究方式，试试“论文”“资料”或“PDF”。')).toBeVisible();
+  await expect(page.getByText('无匹配结果', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '清空搜索', exact: true }).click();
   await expect(search).toHaveValue('');
   await expect(page.locator('.research-card')).toHaveCount(6);
 });
 
-test('mode guides support keyboard dismissal and lead to real projects without creating a task', async ({ page }) => {
+test('mode cards lead directly to projects with keyboard support and no task creation', async ({ page }) => {
   await page.goto('/');
-  const trigger = page.getByRole('button', { name: '了解论文综述', exact: true });
+  const trigger = page.getByRole('link', { name: '论文综述', exact: true });
   await trigger.focus(); await page.keyboard.press('Enter');
-  const dialog = page.getByRole('dialog', { name: '论文综述', exact: true });
-  await expect(dialog.getByText('可以这样开始', { exact: true })).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(dialog).toHaveCount(0);
-  await expect(trigger).toBeFocused();
-  await page.getByRole('button', { name: '了解项目证据库', exact: true }).click();
-  await page.getByRole('dialog', { name: '项目证据库', exact: true }).getByRole('link', { name: '查看项目', exact: true }).click();
+  await expect(page).toHaveURL(/\/projects$/);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('link', { name: 'AutoScholar', exact: true }).click();
+  await page.getByRole('link', { name: '项目证据库', exact: true }).click();
   await expect(page).toHaveURL(/\/projects$/);
   await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
 });
 
-test('the white home and research guide fit a narrow screen with reduced motion', async ({ page }) => {
+test('the white home and direct research links fit a narrow screen with reduced motion', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
   await page.goto('/');
@@ -52,15 +49,14 @@ test('the white home and research guide fit a narrow screen with reduced motion'
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   await expect(page.locator('.page-transition')).toHaveCSS('animation-name', 'none');
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
-  await page.getByRole('button', { name: '了解研究方案', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '研究方案', exact: true });
-  await expect(dialog.getByRole('link', { name: '查看项目', exact: true })).toBeVisible();
-  expect(await dialog.evaluate(element => parseFloat(getComputedStyle(element).animationDuration))).toBeLessThanOrEqual(.001);
+  await page.screenshot({ path: test.info().outputPath('home-mobile.png'), fullPage: true });
+  await page.getByRole('link', { name: '研究方案', exact: true }).click();
+  await expect(page).toHaveURL(/\/projects$/);
+  await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
-  await page.screenshot({ path: test.info().outputPath('guide-mobile.png') });
 });
 
-test('larger reading text reflows the home and keeps search and guides usable', async ({ page }) => {
+test('larger reading text reflows the home and keeps search and direct links usable', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
@@ -73,12 +69,11 @@ test('larger reading text reflows the home and keeps search and guides usable', 
   const search = page.getByRole('searchbox', { name: '搜索研究方式' });
   await search.fill('PDF');
   await expect(page.locator('.research-card')).toHaveCount(1);
-  const trigger = page.getByRole('button', { name: '了解项目文档分析', exact: true });
-  await trigger.click();
-  await expect(page.getByRole('dialog', { name: '项目文档分析', exact: true }).getByRole('link', { name: '查看项目', exact: true })).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(trigger).toBeFocused();
+  await expect(page.getByRole('link', { name: '项目文档分析', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '清空搜索', exact: true }).click();
   await expect(page.locator('.research-card')).toHaveCount(6);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  await page.getByRole('link', { name: '项目文档分析', exact: true }).click();
+  await expect(page).toHaveURL(/\/projects$/);
+  await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
 });

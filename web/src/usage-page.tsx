@@ -60,7 +60,7 @@ export default function UsagePage() {
   ];
   const maximum = Math.max(1, ...(data?.groups.map((item) => item[metric]) ?? []));
   return <>
-    <PageHeading title="用量统计" subtitle="查看各模型与 API 配置的实际调用及 Token 用量。" refresh={() => void query.refetch()} />
+    <PageHeading title="用量统计" refresh={() => void query.refetch()} />
     <div className="usage-filters">
       <label>时间范围<Select aria-label="时间范围" value={days} onChange={setDays} options={[
         { value: 7, label: '最近 7 天' }, { value: 30, label: '最近 30 天' }, { value: 90, label: '最近 90 天' }, { value: 0, label: '全部时间' },
@@ -87,7 +87,6 @@ export default function UsagePage() {
           <div className="metric"><span>已报告输入的命中率</span><strong>{data.totals.cache_hit_rate == null ? '未提供' : `${(data.totals.cache_hit_rate * 100).toFixed(1)}%`}</strong></div>
           <div className="metric"><span>缓存用量未确认的调用</span><strong>{format(data.totals.unknown_cache_calls ?? data.totals.calls)}</strong></div>
         </div>
-        <p>命中输入已包含在输入 Token 中，不重复计数。供应商未提供的缓存数据和旧记录显示为“未提供”；命中率仅计算已报告缓存明细的输入。</p>
       </section>
       <section className="usage-surface" aria-label="模型费用估算">
         <h2>模型费用估算</h2>
@@ -95,8 +94,7 @@ export default function UsagePage() {
           data.totals.estimated_cny == null ? null : `CNY ${money(data.totals.estimated_cny)}`,
           data.totals.estimated_usd == null ? null : `USD ${money(data.totals.estimated_usd)}`,
         ].filter(Boolean).join(' · ')}</p>
-        <p>已估算 {data.totals.cost_known_calls ?? 0} 次；{data.totals.unknown_cost_calls ?? data.totals.calls} 次缺少价格或用量信息。
-          按调用时保存的单价计算，各币种分别汇总；不包含检索费用，不代表服务商账单。</p>
+        <p>已估算 {data.totals.cost_known_calls ?? 0} 次；{data.totals.unknown_cost_calls ?? data.totals.calls} 次缺少价格或用量信息。</p>
       </section>
       {!!data.stages?.length && <section className="usage-surface" aria-label="研究阶段用量">
         <h2>研究阶段用量</h2>
@@ -105,8 +103,7 @@ export default function UsagePage() {
       </section>}
       {data.totals.unknown_usage_calls > 0 && <Alert showIcon type="warning" title={`${format(data.totals.unknown_usage_calls)} 次调用的用量尚未确认`}
         description="Token 合计只包含模型已返回的用量。进行中、中断或未返回用量的调用会单独标记，不会自动重发。" />}
-      {data.totals.calls === 0 ? <Empty className="usage-empty" description={apiId || model || data.options.apis.length
-        ? '当前筛选下没有调用记录，可调整时间范围、API 或模型。' : '暂无调用记录。执行研究任务后，这里会自动更新。'} /> : <>
+      {data.totals.calls === 0 ? <Empty className="usage-empty" description="暂无调用记录" /> : <>
         <section className="usage-surface" aria-label="每日趋势">
           <div className="usage-section-heading"><div><h2>每日趋势</h2><p>{days === 0 ? '最近 90 天的趋势，汇总涵盖全部时间。' : `最近 ${days} 天`} · UTC+8</p></div>
             <Segmented aria-label="图表指标" value={metric} onChange={setMetric} options={[
@@ -129,8 +126,7 @@ export default function UsagePage() {
         <Collapse className="usage-daily" items={[{ key: 'daily', label: '查看每日明细', children: <Table<UsageDay> rowKey="date" size="small"
           dataSource={data.daily} scroll={{ x: 950 }} pagination={{ pageSize: 10, showSizeChanger: false }} columns={[{ title: '日期（UTC+8）', dataIndex: 'date' }, ...columns]} /> }]} />
       </>}
-      <p className="usage-footnote">统计从启用用量记录后开始，旧任务仍可在任务详情查看。仅统计本工作台内的模型调用，不代表服务商账户账单。
-        <span>更新于 {new Date(query.dataUpdatedAt).toLocaleTimeString('zh-CN')}</span></p>
+      <p className="usage-footnote">更新于 {new Date(query.dataUpdatedAt).toLocaleTimeString('zh-CN')}</p>
     </>}
   </>;
 }

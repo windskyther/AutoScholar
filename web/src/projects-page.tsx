@@ -21,7 +21,7 @@ export default function ProjectsPage() {
   usePageReady(!query.isPending);
   return <div className="projects-overview">
     <div className="projects-intro">
-      <div><h1>项目</h1><p>从一个问题开始，让每次探索都有迹可循。</p></div>
+      <div><h1>项目</h1></div>
       <div className="projects-actions">
         <Button icon={<ReloadOutlined />} onClick={() => void query.refetch()}>刷新快照</Button>
         <CreateProject />
@@ -34,10 +34,10 @@ export default function ProjectsPage() {
           <div className="project-card-action"><DeleteProject project={project} onDeleted={() => setPage(1)} /></div>
         </div>
         <h2 className="project-card-title"><Link to={`/projects/${encodeURIComponent(project.id)}`}>{project.name}</Link></h2>
-        <p className="project-description">{project.description || '为这个项目留一个想探索的问题。'}</p>
+        <p className="project-description">{project.description}</p>
         <div className="project-card-footer"><time dateTime={project.updated_at} title={dateLabel(project.updated_at)}>更新于 {updated(project.updated_at)}</time>
           <ArrowUpOutlined className="project-open-icon" aria-hidden="true" /></div>
-      </article>)}</div> : <div className="projects-empty"><Empty description="暂无项目，点击“新建项目”开始。" /></div>}
+      </article>)}</div> : <div className="projects-empty"><Empty description="暂无项目" /></div>}
       {query.data.total > 20 && <Pagination className="project-pagination" current={page} pageSize={20} total={query.data.total} showSizeChanger={false} onChange={setPage} />}
     </>}
   </div>;

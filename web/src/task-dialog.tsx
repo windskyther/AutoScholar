@@ -120,9 +120,9 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
         </Form.Item>
         {models.isError && <QueryError error={models.error} retry={() => void models.refetch()} />}
         {!modelReady && models.isSuccess && <Alert type="info" title="请先添加或选择一个可用模型" />}
-        <p><Link to="/models" onClick={close}>管理模型连接</Link>；任务提交后会一直使用所选配置。</p>
+        <p><Link to="/models" onClick={close}>管理模型连接</Link></p>
       </>
-      {session?.capabilities.research_quality && <Form.Item name="research_depth" label="研究深度" extra="标准模式会复筛资料、综合写作并审稿；深入模式最多修订两轮。所有调用共用下方预算。">
+      {session?.capabilities.research_quality && <Form.Item name="research_depth" label="研究深度">
         <Select options={[
           { value: 'quick', label: '快速 · 基础资料整理' },
           { value: 'standard', label: '标准 · 独立复筛与审稿' },
@@ -139,12 +139,10 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
           if (value === 'literature_review') form.setFieldValue('sources', ['paper']);
         }} />
       </Form.Item>
-      <p>{{ research: '检索、阅读资料并整理带引用的报告。', literature_review: '梳理论文脉络、研究方法、局限与开放问题。', comparison: '按统一维度比较技术路线，给出证据和适用条件。', research_proposal: '设计研究假设、方法、评估步骤与风险，不将拟议实验冒充实际结果。', document_analysis: '基于项目中已就绪的 PDF 分析内容并给出引用，至少需要一份文档。' }[workflowKind]}</p>
       <Form.Item name="objective" label="研究目标" rules={[{ required: true, whitespace: true, max: 10000, message: '填写 1–10000 字符的研究目标' }]}>
         <Input.TextArea rows={3} maxLength={10000} showCount />
       </Form.Item>
-      {session?.capabilities.project_evidence && <Form.Item name="reuse_project_evidence" valuePropName="checked"
-        extra="仅查找本项目已审查的成果，重新核对原始资料；仍会检索缺失或需要更新的信息。">
+      {session?.capabilities.project_evidence && <Form.Item name="reuse_project_evidence" valuePropName="checked">
         <Checkbox>复用本项目已有证据</Checkbox>
       </Form.Item>}
       {workflowKind !== 'document_analysis' && <><Form.Item name="sources" label="检索来源" rules={[{ required: true, type: 'array', min: 1, max: 2 }]}>
@@ -162,7 +160,7 @@ export default function TaskDialog({ project, open, close, complete, pendingChan
         ]} /></Form.Item>
       </Space>
       {documentMode === 'selected' && <>
-        <p>已选择 {selected.length} 项；支持跨页选择，最多 100 项。提交时服务端再次核对归属与就绪状态。</p>
+        <p>已选 {selected.length} 项 / 最多 100 项</p>
         {docs.isPending ? null : docs.isError ? <QueryError error={docs.error} retry={() => void docs.refetch()} />
           : <Table<PDFDocument> rowKey="id" size="small" dataSource={docs.data.items} scroll={{ x: 400 }} columns={[
             { title: '文档', dataIndex: 'title' }, { title: '状态', dataIndex: 'status', render: (value) => <DocumentState value={value} /> },

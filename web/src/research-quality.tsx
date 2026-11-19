@@ -21,7 +21,6 @@ function QualityDetails({ taskId, running }: { taskId: string; running: boolean 
   return <>
     <Alert type={data.accepted ? 'success' : 'info'} title={data.accepted ? '结论已通过资料审查' : qualityPhases[data.phase]}
       description={`候选资料 ${data.sources.length} 项 · 正文提取 ${data.reads} 项 · 修订 ${data.rounds} 轮 · 补充检索 ${data.supplemental_queries} 次`} />
-    <p>审查用于核对依据与局限，仍可能遗漏错误。仅有摘要的来源会单独标明。</p>
     <Table<QualitySource> rowKey="reference" dataSource={data.sources} size="small" pagination={{ pageSize: 10 }} scroll={{ x: 800 }} columns={[
       { title: '来源', render: (_, item) => <><Tag>{item.reference}</Tag>{item.url && /^https?:\/\//i.test(item.url)
         ? <a href={item.url} target="_blank" rel="noreferrer">{item.title}</a> : item.title}

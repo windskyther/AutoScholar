@@ -52,12 +52,12 @@ export default function ModelsPage() {
     void catalog.refetch();
   }
   return <>
-    <PageHeading title="模型管理" subtitle="保存常用的模型连接，新建任务时选择使用哪一组。支持原生工具调用的 OpenAI 兼容接口。" refresh={() => void catalog.refetch()} />
+    <PageHeading title="模型管理" refresh={() => void catalog.refetch()} />
     <div className="filters"><Button type="primary" onClick={() => { setError(null); setOpen(true); }}>添加模型</Button></div>
     {error !== null && !open && <Alert type="error" title={errorMessage(error)} />}
     {catalog.isPending ? null : catalog.isError ? <QueryError error={catalog.error} retry={() => void catalog.refetch()} /> : <>
       <Table<ModelProfile> rowKey="id" dataSource={catalog.data.items} scroll={{ x: 850 }} pagination={{ pageSize: 10 }}
-        locale={{ emptyText: '还没有保存模型，点击“添加模型”开始。' }} columns={[
+        locale={{ emptyText: '暂无模型' }} columns={[
           { title: '名称', dataIndex: 'name' }, { title: '模型', dataIndex: 'model' },
           { title: '接口地址', dataIndex: 'base_url', ellipsis: true },
           { title: '状态', render: (_, item) => <Tag color={item.enabled ? 'success' : 'default'}>{item.enabled ? '可选用' : '已停用'}</Tag> },
@@ -65,7 +65,6 @@ export default function ModelsPage() {
           { title: '添加时间', dataIndex: 'created_at', render: dateLabel },
           { title: '操作', render: (_, item) => <Button disabled={busy} onClick={() => void toggle(item)}>{item.enabled ? '停用' : '启用'}</Button> },
         ]} />
-      <p>停用后不再用于新任务，已有任务继续使用原配置。API Key 保存后不会回显；更换密钥时请添加一组新配置。</p>
     </>}
     <Modal title="添加模型" open={open} onCancel={close} footer={null} mask={{ closable: false }} closable={!busy} keyboard={!busy}>
       <Form form={form} layout="vertical" disabled={busy || uncertain} onFinish={(values) => void save(values)} initialValues={{ compatibility_profile: 'auto' }}>
@@ -76,7 +75,6 @@ export default function ModelsPage() {
         <Form.Item name="compatibility_profile" label="接口兼容方式"><Select options={[
           { value: 'auto', label: '自动识别' }, { value: 'generic', label: '标准兼容接口' }, { value: 'deepseek', label: 'DeepSeek 兼容网关' },
         ]} /></Form.Item>
-        <p>保存只记录配置，不会发送模型请求或产生 API 费用。</p>
         {session?.capabilities.model_pricing && <>
           <Form.Item name="pricing_enabled" valuePropName="checked"><Checkbox>设置可选单价，用于估算模型费用</Checkbox></Form.Item>
           {priced && <>
@@ -86,7 +84,6 @@ export default function ModelsPage() {
             <Form.Item name={['pricing', 'input_per_million']} label="普通输入单价 / 百万 Token" rules={[{ required: true }]}><InputNumber min={0} max={1000000} precision={6} /></Form.Item>
             <Form.Item name={['pricing', 'cached_input_per_million']} label="缓存命中输入单价 / 百万 Token（可选）"><InputNumber min={0} max={1000000} precision={6} placeholder="留空按普通输入计价" /></Form.Item>
             <Form.Item name={['pricing', 'output_per_million']} label="输出单价 / 百万 Token" rules={[{ required: true }]}><InputNumber min={0} max={1000000} precision={6} /></Form.Item>
-            <p>请填写服务商当前适用于你的单价。每次调用保存当时价格；币种分别统计，估算不包含检索费用，也不替代账单。</p>
           </>}
         </>}
         {error !== null && <Alert type="error" title={errorMessage(error)} description={uncertain ? '保存结果未确认，可使用原配置重试，或关闭后刷新列表核对。' : undefined} />}

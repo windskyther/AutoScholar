@@ -84,7 +84,7 @@ export default function Documents({ projectId }: { projectId: string }) {
     <Modal title="上传 PDF" open={open} mask={{ closable: false }} closable={!busy} keyboard={!busy}
       onCancel={() => { if (!busy) { setOpen(false); setError(null); } }} footer={null}>
       <Alert type="warning" showIcon title="文件会发送到本地 API 并交给后台索引"
-        description="只选择用于研究的 PDF，不要选择密钥、.env 或设计文档。配置远程 Embedding 时可能产生费用。" />
+        description="仅支持 PDF；远程 Embedding 可能产生费用。" />
       <Form form={form} layout="vertical" disabled={busy} onFinish={(values) => void upload(values)}>
         <Form.Item label={`PDF 文件（最多 ${(maxBytes / 1048576).toFixed(1)} MiB）`} required>
           <input key={String(open)} aria-label="PDF 文件" type="file" accept=".pdf,application/pdf" disabled={busy}

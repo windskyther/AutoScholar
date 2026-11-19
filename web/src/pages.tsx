@@ -52,7 +52,7 @@ export function ProjectPage() {
   if (project.isError) return <QueryError error={project.error} retry={() => void project.refetch()} />;
   return <>
     <Breadcrumb items={[{ title: <Link to="/projects">项目</Link> }, { title: project.data.name }]} />
-    <PageHeading title={project.data.name} subtitle={project.data.description || '该项目尚未填写说明。'} refresh={() => void tasks.refetch()} />
+    <PageHeading title={project.data.name} subtitle={project.data.description || undefined} refresh={() => void tasks.refetch()} />
     <div className="section-heading"><h2>研究任务</h2><Space>
       {session?.capabilities.project_evidence && <Link to={`/projects/${encodeURIComponent(projectId)}/evidence`}><Button>项目证据库</Button></Link>}
       <DeleteProject project={project.data} /><Button type="primary"

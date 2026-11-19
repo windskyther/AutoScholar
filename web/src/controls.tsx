@@ -101,7 +101,6 @@ export default function Controls({ taskId, projectId }: { taskId: string; projec
   return <section className="control-section">
     {contextHolder}
     <div className="section-heading"><h2>任务控制与审批</h2><Button onClick={refresh}>刷新控制状态</Button></div>
-    <p>状态每 3 秒只读核查。所有变更都需要确认，不自动重试；审批通过与恢复执行是两次独立操作。</p>
     {notice && <Alert type="success" showIcon title={notice} />}
     {error !== null && <Alert type="error" showIcon title={errorMessage(error)}
       description={uncertain ? '写入结果未确认，已锁定变更操作。请核查最新任务及审批记录后手动解锁；不会自动重发。' : '未自动重试，请刷新后重新选择操作。'}

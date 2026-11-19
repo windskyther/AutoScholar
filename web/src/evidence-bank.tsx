@@ -60,7 +60,6 @@ export default function EvidenceBank() {
     {contextHolder}
     <Breadcrumb items={[{ title: <Link to="/projects">项目</Link> }, { title: <Link to={`/projects/${encodeURIComponent(projectId)}`}>{project.data.name}</Link> }, { title: '证据库' }]} />
     <PageHeading title="项目证据库" subtitle={project.data.name} refresh={() => void bank.refetch()} />
-    <p>研究目标通过审查后，在这里积累结论与原文依据。新目标会先查找相关成果，再补充需要的资料。</p>
     <Space className="filters" wrap>
       <Input.Search aria-label="搜索项目证据" placeholder="搜索论点或研究目标" maxLength={200} allowClear onSearch={v => { setQuery(v.trim()); setPage(1); }} />
       <Select aria-label="证据状态" value={status} style={{ width: 150 }} onChange={v => { setStatus(v); setPage(1); }} options={[
@@ -76,7 +75,7 @@ export default function EvidenceBank() {
     {bank.isPending ? null : bank.isError ? <QueryError error={bank.error} retry={() => void bank.refetch()} /> : <>
       <p>匹配 {bank.data.total} 条结论</p>
       <Table<BankClaim> rowKey="id" dataSource={bank.data.items} size="small" scroll={{ x: 850 }}
-        locale={{ emptyText: <Empty description="暂无匹配成果。完成研究目标，或整理已有成果后，可在这里查看。" /> }} columns={[
+        locale={{ emptyText: <Empty description="暂无匹配成果" /> }} columns={[
           { title: '结论', dataIndex: 'text', width: 340 },
           { title: '贡献目标', render: (_, item) => <Link to={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(item.task_id)}`}>{item.objective}</Link> },
           { title: '状态', render: (_, item) => <Tag>{item.enabled ? statuses[item.status] : '已移除'}</Tag> },
@@ -106,7 +105,6 @@ function Policy({ projectId }: { projectId: string }) {
     try { await api!.saveEvidencePolicy(projectId, values); void cache.invalidateQueries({ queryKey: ['evidence-policy', projectId] }); void cache.invalidateQueries({ queryKey: ['evidence-bank', projectId] }); }
     catch (failure) { setError(failure); } finally { setBusy(false); }
   }}>
-    <p>超过期限提示重新核验；最新研究目标仍会补充新检索。复用旧资料不会刷新其取得时间。</p>
     <Form.Item name="web_days" label="网页复核间隔（天）" rules={[{ required: true, type: 'integer', min: 1, max: 365 }]}><NumberSlider min={1} max={365} label="网页复核间隔（天）" /></Form.Item>
     <Form.Item name="paper_days" label="论文复核间隔（天）" rules={[{ required: true, type: 'integer', min: 1, max: 365 }]}><NumberSlider min={1} max={365} label="论文复核间隔（天）" /></Form.Item>
     {error !== null && <Alert type="error" title={errorMessage(error)} />}

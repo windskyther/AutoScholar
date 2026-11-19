@@ -207,7 +207,7 @@ test('home is independent, spaces the three dock choices and uses an open white 
   const requests = await fixture(page);
   await page.goto('/');
   const dock = page.getByRole('navigation', { name: '主导航' });
-  await expect(page.getByRole('heading', { name: /让好奇，\s*成为新的发现。/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'AutoScholar', exact: true })).toBeVisible();
   await expect(dock.getByRole('link')).toHaveCount(3);
   await expect(dock.locator('[aria-current]')).toHaveCount(0);
   await expect(page.locator('.project-card')).toHaveCount(0);
@@ -229,7 +229,7 @@ test('home is independent, spaces the three dock choices and uses an open white 
   await expect(dock.getByRole('link', { name: '项目与任务' })).toHaveAttribute('aria-current', 'page');
   await page.getByRole('link', { name: 'AutoScholar', exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole('heading', { name: /让好奇，\s*成为新的发现。/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'AutoScholar', exact: true })).toBeVisible();
   await expect(dock.locator('[aria-current]')).toHaveCount(0);
   await page.getByRole('link', { name: '管理模型', exact: true }).click();
   await expect(page.getByRole('heading', { name: '模型管理', exact: true })).toBeVisible();
