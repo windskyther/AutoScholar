@@ -54,11 +54,23 @@ test('usage shows token and call counts without cache or currency details from o
   for (const header of await tokenHeaders.all()) await expect(header).toHaveCSS('text-align', 'right');
   await expect(page.getByRole('main').getByText(/缓存复用|已报告.*输入|缓存用量|费用估算|CNY|USD|已估算|缺少价格/)).toHaveCount(0);
   const distribution = page.getByRole('region', { name: '分组用量' });
-  await expect(distribution.locator('.ant-table')).toHaveCSS('border-top-left-radius', '10px');
-  await expect(distribution.getByRole('columnheader', { name: 'API 配置', exact: true })).toHaveCSS('background-color', 'rgb(247, 247, 247)');
+  const table = distribution.locator('.ant-table');
+  const header = distribution.getByRole('columnheader', { name: 'API 配置', exact: true });
+  await expect(table).toHaveCSS('border-top-left-radius', '12px');
+  await expect(table).toHaveCSS('border-top-color', 'rgb(145, 167, 227)');
+  await expect(table).toHaveCSS('border-left-color', 'rgb(195, 207, 235)');
+  await expect(table).toHaveCSS('background-color', 'rgb(250, 252, 255)');
+  await expect(header).toHaveCSS('background-color', 'rgb(234, 240, 255)');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: test.info().outputPath('usage-tables-light.png'), fullPage: true, animations: 'disabled' });
   await page.getByRole('button', { name: '切换到夜间模式' }).click();
-  await expect(distribution.getByRole('columnheader', { name: 'API 配置', exact: true })).toHaveCSS('background-color', 'rgb(39, 40, 44)');
-  await page.screenshot({ path: test.info().outputPath('usage-tables-dark.png'), fullPage: true });
+  await expect(table).toHaveCSS('border-top-color', 'rgb(99, 119, 166)');
+  await expect(table).toHaveCSS('border-left-color', 'rgb(62, 80, 110)');
+  await expect(table).toHaveCSS('background-color', 'rgb(27, 34, 48)');
+  await expect(header).toHaveCSS('background-color', 'rgb(39, 52, 74)');
+  await page.screenshot({ path: test.info().outputPath('usage-tables-dark.png'), fullPage: true, animations: 'disabled' });
+  await page.emulateMedia({ forcedColors: 'active' });
+  await expect(table).toHaveCSS('box-shadow', 'none');
 });
 
 test('usage totals, dimension and API/model/date filters stay read-only and survive refresh', async ({ page }) => {

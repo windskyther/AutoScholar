@@ -13,14 +13,16 @@ const lightColors = {
   page: '#ffffff', surface: '#ffffff', elevated: '#ffffff', inset: '#f7f7f7',
   ink: '#141414', muted: '#696969', placeholder: '#737373',
   border: '#d9d9d9', borderSoft: '#e8e8e8', borderHover: '#989898',
-  link: '#0066cc', linkHover: '#004f9e', primaryText: '#ffffff', rowHover: '#fafafa',
+  link: '#0066cc', linkHover: '#004f9e', primaryText: '#ffffff',
+  table: { surface: '#fafcff', header: '#eaf0ff', headerText: '#475678', separator: '#e1e8f7', hover: '#edf3ff' },
   selectedOption: '#222225', selectedOptionHover: '#37373d', selectedOptionText: '#ffffff',
 };
 const darkColors = {
   page: '#141416', surface: '#1f2023', elevated: '#26272b', inset: '#27282c',
   ink: '#f1f1f3', muted: '#b4b4bc', placeholder: '#a2a3ad',
   border: '#55565f', borderSoft: '#34353d', borderHover: '#8a8b94',
-  link: '#8cbdff', linkHover: '#b3d4ff', primaryText: '#141416', rowHover: '#2b2c31',
+  link: '#8cbdff', linkHover: '#b3d4ff', primaryText: '#141416',
+  table: { surface: '#1b2230', header: '#27344a', headerText: '#cad6f0', separator: '#303d53', hover: '#243046' },
   selectedOption: '#3e3f46', selectedOptionHover: '#505159', selectedOptionText: '#f1f1f3',
 };
 
@@ -55,8 +57,9 @@ export default function Appearance({ children }: { children: ReactNode }) {
     components: {
       Button: { primaryColor: colors.primaryText, primaryShadow: '0 3px 8px rgb(0 0 0 / .06)', fontWeight: 500 },
       Table: {
-        headerBg: colors.inset, headerColor: colors.muted, headerSplitColor: 'transparent', headerBorderRadius: 10,
-        borderColor: colors.borderSoft, rowHoverBg: colors.rowHover, fontSize: 14,
+        colorBgContainer: colors.table.surface, headerBg: colors.table.header, headerColor: colors.table.headerText,
+        headerSplitColor: 'transparent', headerBorderRadius: 12,
+        borderColor: colors.table.separator, rowHoverBg: colors.table.hover, fontSize: 14,
         cellPaddingBlock: 11, cellPaddingBlockSM: 9, cellPaddingInline: 14, cellPaddingInlineSM: 14,
       },
       Modal: { contentBg: colors.elevated, headerBg: colors.elevated, borderRadiusLG: 24 },
