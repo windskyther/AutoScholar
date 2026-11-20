@@ -37,4 +37,7 @@ test('optional prices are saved with a model without contacting any provider', a
   expect(submitted?.pricing).toEqual({ currency: 'CNY', input_per_million: 2, cached_input_per_million: 0.5, output_per_million: 8 });
   expect(submitted).not.toHaveProperty('pricing_enabled');
   await expect(page.getByText('CNY · 已设置单价')).toBeVisible();
+  const row = page.getByRole('row').filter({ hasText: '计价阅读模型' });
+  await expect(row.getByRole('cell', { name: '计价阅读模型' })).toHaveCSS('font-weight', '600');
+  await expect(row.getByRole('button', { name: '停用', exact: true })).toBeEnabled();
 });

@@ -60,12 +60,13 @@ export default function ModelsPage() {
     {catalog.isPending ? null : !catalog.data ? <QueryError error={catalog.error} retry={() => void catalog.refetch()} /> : <>
       <Table<ModelProfile> rowKey="id" dataSource={catalog.data.items} scroll={{ x: 850 }} pagination={{ pageSize: 10 }}
         locale={{ emptyText: '暂无模型' }} columns={[
-          { title: '名称', dataIndex: 'name' }, { title: '模型', dataIndex: 'model' },
-          { title: '接口地址', dataIndex: 'base_url', ellipsis: true },
+          { title: '名称', dataIndex: 'name', className: 'table-primary', ellipsis: true },
+          { title: '模型', dataIndex: 'model', ellipsis: true },
+          { title: '接口地址', dataIndex: 'base_url', className: 'table-secondary', ellipsis: true },
           { title: '状态', render: (_, item) => <Tag color={item.enabled ? 'success' : 'default'}>{item.enabled ? '可选用' : '已停用'}</Tag> },
           ...(session?.capabilities.model_pricing ? [{ title: '价格估算', render: (_: unknown, item: ModelProfile) => item.pricing ? `${item.pricing.currency} · 已设置单价` : '未设置' }] : []),
-          { title: '添加时间', dataIndex: 'created_at', render: dateLabel },
-          { title: '操作', render: (_, item) => <Button disabled={busy} onClick={() => void toggle(item)}>{item.enabled ? '停用' : '启用'}</Button> },
+          { title: '添加时间', dataIndex: 'created_at', className: 'table-secondary', width: 185, render: dateLabel },
+          { title: '操作', width: 80, render: (_, item) => <Button type="text" size="small" disabled={busy} onClick={() => void toggle(item)}>{item.enabled ? '停用' : '启用'}</Button> },
         ]} />
     </>}
     <Modal title="添加模型" open={open} onCancel={close} footer={null} mask={{ closable: false }} closable={!busy} keyboard={!busy}>

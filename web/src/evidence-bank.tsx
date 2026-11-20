@@ -80,7 +80,7 @@ export default function EvidenceBank() {
           { title: '结论', dataIndex: 'text', width: 340 },
           { title: '贡献目标', render: (_, item) => <Link to={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(item.task_id)}`}>{item.objective}</Link> },
           { title: '状态', render: (_, item) => <Tag>{item.enabled ? statuses[item.status] : '已移除'}</Tag> },
-          { title: '采用次数', dataIndex: 'reuse_count' },
+          { title: '采用次数', dataIndex: 'reuse_count', align: 'right' },
           { title: '操作', render: (_, item) => <Button disabled={busy} onClick={() => toggle(item)}>{item.enabled ? '移除' : '恢复'}</Button> },
         ]} expandable={{ expandedRowRender: item => <div>{item.sources.map((source, index) => {
           const href = safeLink(source.url);

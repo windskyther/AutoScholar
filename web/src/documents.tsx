@@ -72,12 +72,12 @@ export default function Documents({ projectId, analysisAction, analysisNotice }:
     {query.isPending ? null : !query.data ? <QueryError error={query.error} retry={() => void query.refetch()} />
       : <Table<PDFDocument> rowKey="id" dataSource={query.data.items} scroll={{ x: 950 }} locale={{ emptyText: <Empty description="暂无 PDF 文档。" /> }}
         columns={[
-          { title: '文档', dataIndex: 'title', ellipsis: true },
+          { title: '文档', dataIndex: 'title', className: 'table-primary', ellipsis: true },
           { title: '状态', dataIndex: 'status', width: 115, render: (value: DocumentStatus) => <DocumentState value={value} /> },
-          { title: '页 / 分块', width: 120, render: (_, item) => `${item.page_count ?? '—'} / ${item.chunk_count}` },
-          { title: '大小', width: 100, render: (_, item) => `${(item.size_bytes / 1024).toFixed(1)} KiB` },
+          { title: '页 / 分块', width: 120, align: 'right', render: (_, item) => `${item.page_count ?? '—'} / ${item.chunk_count}` },
+          { title: '大小', width: 100, align: 'right', render: (_, item) => `${(item.size_bytes / 1024).toFixed(1)} KiB` },
           { title: '错误编号', dataIndex: 'error_code', width: 175, render: (value: string | null) => value || '—' },
-          { title: '更新时间', dataIndex: 'updated_at', width: 185, render: dateLabel },
+          { title: '更新时间', dataIndex: 'updated_at', className: 'table-secondary', width: 185, render: dateLabel },
           { title: '操作', width: 195, render: (_, item) => <Space>
             {item.status === 'failed' && <Button size="small" disabled={busy} onClick={() => {
               modal.confirm({ title: '确认重试文档处理？', content: '后台可能产生 Embedding API 费用。', okText: '确认重试', cancelText: '取消', onOk: () => action(item, 'retry') });

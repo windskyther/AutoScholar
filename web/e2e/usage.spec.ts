@@ -49,8 +49,16 @@ test('usage shows token and call counts without cache or currency details from o
   await expect(page.getByTestId('usage-totals')).toContainText('2,000');
   await expect(page.getByRole('region', { name: '研究阶段用量' })).toContainText('独立复筛');
   await page.getByRole('button', { name: '查看每日明细' }).click();
-  await expect(page.getByRole('columnheader', { name: '已确认 Tokens', exact: true })).toHaveCount(3);
+  const tokenHeaders = page.getByRole('columnheader', { name: '已确认 Tokens', exact: true });
+  await expect(tokenHeaders).toHaveCount(3);
+  for (const header of await tokenHeaders.all()) await expect(header).toHaveCSS('text-align', 'right');
   await expect(page.getByRole('main').getByText(/缓存复用|已报告.*输入|缓存用量|费用估算|CNY|USD|已估算|缺少价格/)).toHaveCount(0);
+  const distribution = page.getByRole('region', { name: '分组用量' });
+  await expect(distribution.locator('.ant-table')).toHaveCSS('border-top-left-radius', '10px');
+  await expect(distribution.getByRole('columnheader', { name: 'API 配置', exact: true })).toHaveCSS('background-color', 'rgb(247, 247, 247)');
+  await page.getByRole('button', { name: '切换到夜间模式' }).click();
+  await expect(distribution.getByRole('columnheader', { name: 'API 配置', exact: true })).toHaveCSS('background-color', 'rgb(39, 40, 44)');
+  await page.screenshot({ path: test.info().outputPath('usage-tables-dark.png'), fullPage: true });
 });
 
 test('usage totals, dimension and API/model/date filters stay read-only and survive refresh', async ({ page }) => {
@@ -81,6 +89,12 @@ test('usage charts and table fit a mobile viewport', async ({ page }) => {
   await page.goto('/usage');
   await expect(page.getByTestId('usage-totals')).toBeVisible();
   await expect(page.getByRole('img', { name: '每日已确认 Token趋势' })).toBeVisible();
+  const tableScrollArea = page.getByRole('region', { name: '分组用量' }).locator('.ant-table-content');
+  expect(await tableScrollArea.evaluate(element => {
+    element.scrollLeft = 100;
+    return element.scrollLeft;
+  })).toBeGreaterThan(0);
+  await tableScrollArea.evaluate(element => { element.scrollLeft = 0; });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: test.info().outputPath('usage-mobile.png'), fullPage: true });
 });

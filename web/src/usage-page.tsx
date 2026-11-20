@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Alert, Collapse, Empty, Segmented, Select, Table } from 'antd';
+import type { TableColumnsType } from 'antd';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useConnection } from './connection';
 import { Metric, PageHeading, QueryError } from './components';
-import type { UsageDay, UsageGroup } from './usage-types';
+import type { UsageCounts, UsageDay, UsageGroup } from './usage-types';
 import { usePageReady } from './page-transition';
 import { SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
 
@@ -11,6 +12,14 @@ const format = (value: number) => value.toLocaleString('zh-CN');
 const short = (value: number) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 const stageLabels: Record<string, string> = { planning: '研究规划', screening: '资料初筛',
   reading: '精读资料', refining: '独立复筛', writing: '综合写作', review: '结论审稿', other: '其他调用' };
+const counts = [
+  { title: '已确认 Tokens', dataIndex: 'total_tokens', align: 'right', render: format },
+  { title: '输入 Tokens', dataIndex: 'input_tokens', align: 'right', render: format },
+  { title: '输出 Tokens', dataIndex: 'output_tokens', align: 'right', render: format },
+  { title: '调用次数', dataIndex: 'calls', align: 'right', render: format },
+  { title: '用量未确认', dataIndex: 'unknown_usage_calls', align: 'right', render: format },
+  { title: '失败响应', dataIndex: 'failed_calls', align: 'right', render: format },
+] satisfies TableColumnsType<UsageCounts>;
 
 function Trend({ daily, metric }: { daily: UsageDay[]; metric: 'total_tokens' | 'calls' }) {
   const maximum = Math.max(1, ...daily.map((day) => day[metric]));
@@ -44,14 +53,6 @@ export default function UsagePage() {
     placeholderData: keepPreviousData, refetchInterval: SNAPSHOT_REFRESH_MS });
   usePageReady(!query.isPending);
   const data = query.data;
-  const columns = [
-    { title: '已确认 Tokens', dataIndex: 'total_tokens', render: format },
-    { title: '输入 Tokens', dataIndex: 'input_tokens', render: format },
-    { title: '输出 Tokens', dataIndex: 'output_tokens', render: format },
-    { title: '调用次数', dataIndex: 'calls', render: format },
-    { title: '用量未确认', dataIndex: 'unknown_usage_calls', render: format },
-    { title: '失败响应', dataIndex: 'failed_calls', render: format },
-  ];
   const maximum = Math.max(1, ...(data?.groups.map((item) => item[metric]) ?? []));
   return <>
     <PageHeading title="用量统计" />
@@ -73,10 +74,10 @@ export default function UsagePage() {
         <Metric label="输出 Tokens" value={data.totals.output_tokens} />
         <Metric label="调用次数" value={data.totals.calls} />
       </div>
-      {!!data.stages?.length && <section className="usage-surface" aria-label="研究阶段用量">
+      {!!data.stages?.length && <section className="usage-table-section" aria-label="研究阶段用量">
         <h2>研究阶段用量</h2>
         <Table<UsageGroup> rowKey="id" size="small" pagination={false} dataSource={data.stages} scroll={{ x: 800 }}
-          columns={[{ title: '阶段', dataIndex: 'id', render: (value: string) => stageLabels[value] ?? '其他调用' }, ...columns]} />
+          columns={[{ title: '阶段', dataIndex: 'id', className: 'table-primary', render: (value: string) => stageLabels[value] ?? '其他调用' }, ...counts]} />
       </section>}
       {data.totals.unknown_usage_calls > 0 && <Alert showIcon type="warning" title={`${format(data.totals.unknown_usage_calls)} 次调用的用量尚未确认`}
         description="Token 合计只包含模型已返回的用量。进行中、中断或未返回用量的调用会单独标记，不会自动重发。" />}
@@ -88,7 +89,7 @@ export default function UsagePage() {
             ]} /></div>
           <Trend daily={data.daily} metric={metric} />
         </section>
-        <section className="usage-surface" aria-label="分组用量">
+        <section className="usage-table-section" aria-label="分组用量">
           <div className="usage-section-heading"><h2>{groupBy === 'api' ? 'API 配置用量分布' : '模型用量分布'}</h2></div>
           <div className="usage-ranking">{data.groups.slice(0, 8).map((item) => <button key={item.id} className="usage-rank-row" type="button"
             aria-label={`筛选${groupBy === 'api' ? ' API 配置' : '模型'} ${item.label}`}
@@ -97,11 +98,12 @@ export default function UsagePage() {
             <strong>{format(item[metric])}</strong>
           </button>)}</div>
           <Table<UsageGroup> rowKey="id" size="small" dataSource={data.groups} scroll={{ x: 800 }} pagination={{ pageSize: 10, showSizeChanger: false }}
-            columns={[{ title: groupBy === 'api' ? 'API 配置' : '模型', dataIndex: 'label', width: 200, ellipsis: true }, ...columns]} />
+            columns={[{ title: groupBy === 'api' ? 'API 配置' : '模型', dataIndex: 'label', className: 'table-primary', width: 200, ellipsis: true }, ...counts]} />
           {data.has_more_groups && <p>展示用量最高的 500 项；上方合计仍包含全部分组。</p>}
         </section>
         <Collapse className="usage-daily" items={[{ key: 'daily', label: '查看每日明细', children: <Table<UsageDay> rowKey="date" size="small"
-          dataSource={data.daily} scroll={{ x: 800 }} pagination={{ pageSize: 10, showSizeChanger: false }} columns={[{ title: '日期（UTC+8）', dataIndex: 'date' }, ...columns]} /> }]} />
+          dataSource={data.daily} scroll={{ x: 800 }} pagination={{ pageSize: 10, showSizeChanger: false }}
+          columns={[{ title: '日期（UTC+8）', dataIndex: 'date', className: 'table-primary' }, ...counts]} /> }]} />
       </>}
       <p className="usage-footnote">更新于 {new Date(query.dataUpdatedAt).toLocaleTimeString('zh-CN')}</p>
     </>}

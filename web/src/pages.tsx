@@ -112,12 +112,12 @@ export function ProjectPage() {
     {tasks.isPending ? null : !tasks.data ? <QueryError error={tasks.error} retry={() => void tasks.refetch()} />
       : <Table<Task> rowKey="task_id" dataSource={tasks.data.items} scroll={{ x: 850 }}
         locale={{ emptyText: <Empty description="没有符合条件的研究任务。" /> }} columns={[
-          { title: '研究目标', dataIndex: 'objective', ellipsis: true, render: (value: string, item) =>
+          { title: '研究目标', dataIndex: 'objective', className: 'table-primary', ellipsis: true, render: (value: string, item) =>
             <Link to={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(item.task_id)}`}>{value}</Link> },
           { title: '模式', dataIndex: 'mode', width: 120 },
           { title: '状态', dataIndex: 'status', width: 140, render: (value: TaskStatus) => <Status value={value} /> },
-          { title: 'Tokens', width: 100, render: (_, item) => (item.metrics.total_tokens ?? 0).toLocaleString('zh-CN') },
-          { title: '更新时间', dataIndex: 'updated_at', width: 210, render: dateLabel },
+          { title: 'Tokens', width: 100, align: 'right', render: (_, item) => (item.metrics.total_tokens ?? 0).toLocaleString('zh-CN') },
+          { title: '更新时间', dataIndex: 'updated_at', className: 'table-secondary', width: 210, render: dateLabel },
           { title: '操作', width: 120, render: (_, item) => <DeleteTask task={item} projectId={projectId} onDeleted={() => setPage(1)} /> },
         ]} pagination={{ current: page, pageSize: 20, total: tasks.data.total, showSizeChanger: false, onChange: setPage }} />}
     <Documents projectId={projectId} analysisAction={documentEntry && <Button type="primary"

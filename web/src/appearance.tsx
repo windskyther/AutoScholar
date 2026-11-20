@@ -54,7 +54,11 @@ export default function Appearance({ children }: { children: ReactNode }) {
     },
     components: {
       Button: { primaryColor: colors.primaryText, primaryShadow: '0 3px 8px rgb(0 0 0 / .06)', fontWeight: 500 },
-      Table: { headerBg: colors.inset, headerColor: colors.ink, rowHoverBg: colors.rowHover, cellPaddingBlock: 18, fontSize: 15 },
+      Table: {
+        headerBg: colors.inset, headerColor: colors.muted, headerSplitColor: 'transparent', headerBorderRadius: 10,
+        borderColor: colors.borderSoft, rowHoverBg: colors.rowHover, fontSize: 14,
+        cellPaddingBlock: 11, cellPaddingBlockSM: 9, cellPaddingInline: 14, cellPaddingInlineSM: 14,
+      },
       Modal: { contentBg: colors.elevated, headerBg: colors.elevated, borderRadiusLG: 24 },
       Segmented: { trackBg: colors.inset, itemSelectedBg: colors.surface },
       Select: {
