@@ -54,6 +54,11 @@ test('usage shows token and call counts without cache or currency details from o
   for (const header of await tokenHeaders.all()) await expect(header).toHaveCSS('text-align', 'right');
   await expect(page.getByRole('main').getByText(/缓存复用|已报告.*输入|缓存用量|费用估算|CNY|USD|已估算|缺少价格/)).toHaveCount(0);
   const distribution = page.getByRole('region', { name: '分组用量' });
+  await expect(distribution.locator('.ant-table-pagination')).toHaveCount(0);
+  const daily = page.locator('.usage-daily');
+  await expect(daily.getByText('1–10 项，共 30 项', { exact: true })).toBeVisible();
+  await daily.getByTitle('下一页', { exact: true }).click();
+  await expect(daily.getByText('11–20 项，共 30 项', { exact: true })).toBeVisible();
   const table = distribution.locator('.ant-table');
   const header = distribution.getByRole('columnheader', { name: 'API 配置', exact: true });
   await expect(table).toHaveCSS('border-top-left-radius', '12px');

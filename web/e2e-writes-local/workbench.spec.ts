@@ -61,13 +61,15 @@ test('real project creation, PDF upload/parse/reindex/delete with fixture vector
   await upload(page, bytes, 'copy.pdf', '重复上传');
   await expect(page.getByText('该 PDF 已存在于此项目。')).toBeVisible();
   await page.keyboard.press('Escape');
-  await row.getByRole('button', { name: '重建索引' }).click();
+  await row.getByRole('button', { name: /^文档操作 / }).click();
+  await page.getByRole('menuitem', { name: '重建索引', exact: true }).click();
   await page.getByRole('button', { name: '确认重建', exact: true }).click();
   await expect(row.getByText('等待处理', { exact: true })).toBeVisible();
   await process(request);
   await expect(row.getByText('已就绪', { exact: true })).toBeVisible({ timeout: 20000 });
   await page.screenshot({ path: 'test-results/phase9c-project.png', fullPage: true });
-  await row.getByRole('button', { name: '删除', exact: true }).click();
+  await row.getByRole('button', { name: /^文档操作 / }).click();
+  await page.getByRole('menuitem', { name: '删除', exact: true }).click();
   await page.getByRole('button', { name: '确认删除', exact: true }).click();
   await expect(row.getByText('等待删除', { exact: true })).toBeVisible();
   await process(request);
@@ -85,7 +87,8 @@ test('actual PDF parse failure is visible and confirmed retry returns the same p
   const row = page.getByRole('row').filter({ hasText: '无文字 PDF' });
   await expect(row.getByText('处理失败')).toBeVisible({ timeout: 20000 });
   await expect(row.getByText('pdf_text_not_extractable')).toBeVisible();
-  await row.getByRole('button', { name: '重试', exact: true }).click();
+  await row.getByRole('button', { name: /^文档操作 / }).click();
+  await page.getByRole('menuitem', { name: '重试', exact: true }).click();
   await page.getByRole('button', { name: '确认重试', exact: true }).click();
   await expect(row.getByText('等待处理', { exact: true })).toBeVisible();
   await process(request);

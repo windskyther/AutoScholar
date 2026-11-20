@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Checkbox, Collapse, Form, Input, Modal, Select, Space, Table } from 'antd';
+import { Alert, Button, Checkbox, Collapse, Form, Input, Modal, Select, Space } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { ApiError, errorMessage, isWriteUncertain } from './api';
@@ -12,6 +12,7 @@ import { Link } from 'react-router-dom';
 import { researchLabels } from './research-entry';
 import type { ResearchKind } from './research-entry';
 import { documentRefreshInterval, SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
+import WorkbenchTable from './workbench-table';
 
 interface Values {
   objective: string; budget: BudgetLimits; sources: ('web' | 'paper')[];
@@ -164,12 +165,12 @@ export default function TaskDialog({ project, initialKind, open, close, complete
       {documentMode === 'selected' && <>
         <p>已选 {selected.length} 项 / 最多 100 项</p>
         {docs.isPending ? null : !docs.data ? <QueryError error={docs.error} retry={() => void docs.refetch()} />
-          : <Table<PDFDocument> rowKey="id" size="small" dataSource={docs.data.items} scroll={{ x: 400 }} columns={[
+          : <WorkbenchTable<PDFDocument> rowKey="id" size="small" dataSource={docs.data.items} scroll={{ x: 400 }} emptyMessage="暂无 PDF 文档。" columns={[
             { title: '文档', dataIndex: 'title' }, { title: '状态', dataIndex: 'status', render: (value) => <DocumentState value={value} /> },
           ]} rowSelection={{ selectedRowKeys: selected, preserveSelectedRowKeys: true,
             getCheckboxProps: (item) => ({ disabled: busy || uncertain || item.status !== 'ready' || (selected.length >= 100 && !selected.includes(item.id)) }),
             onChange: (keys) => setSelected(keys.map(String)) }}
-            pagination={{ current: page, pageSize: 20, total: docs.data.total, showSizeChanger: false, onChange: setPage }} />}
+            pagination={{ current: page, pageSize: 20, total: docs.data.total, onChange: setPage }} />}
       </>}
       <Collapse className="budget-settings" defaultActiveKey={['budget']} items={[{ key: 'budget', label: '预算上限（不超过服务端配置）', children:
         <div className="budget-grid">{fields.filter((field) => !['training_runs', 'sandbox_runs', 'code_repairs'].includes(field.key)).map((field) => <Form.Item key={field.key} name={['budget', field.key]} label={field.label}

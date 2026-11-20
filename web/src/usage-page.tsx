@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Collapse, Empty, Segmented, Select, Table } from 'antd';
+import { Alert, Collapse, Empty, Segmented, Select } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useConnection } from './connection';
@@ -7,6 +7,7 @@ import { Metric, PageHeading, QueryError } from './components';
 import type { UsageCounts, UsageDay, UsageGroup } from './usage-types';
 import { usePageReady } from './page-transition';
 import { SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
+import WorkbenchTable from './workbench-table';
 
 const format = (value: number) => value.toLocaleString('zh-CN');
 const short = (value: number) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
@@ -76,7 +77,7 @@ export default function UsagePage() {
       </div>
       {!!data.stages?.length && <section className="usage-table-section" aria-label="研究阶段用量">
         <h2>研究阶段用量</h2>
-        <Table<UsageGroup> rowKey="id" size="small" pagination={false} dataSource={data.stages} scroll={{ x: 800 }}
+        <WorkbenchTable<UsageGroup> rowKey="id" size="small" pagination={false} dataSource={data.stages} scroll={{ x: 800 }}
           columns={[{ title: '阶段', dataIndex: 'id', className: 'table-primary', render: (value: string) => stageLabels[value] ?? '其他调用' }, ...counts]} />
       </section>}
       {data.totals.unknown_usage_calls > 0 && <Alert showIcon type="warning" title={`${format(data.totals.unknown_usage_calls)} 次调用的用量尚未确认`}
@@ -97,12 +98,12 @@ export default function UsagePage() {
             <span className="usage-rank-name">{item.label}</span><span className="usage-rank-track"><span style={{ width: `${item[metric] / maximum * 100}%` }} /></span>
             <strong>{format(item[metric])}</strong>
           </button>)}</div>
-          <Table<UsageGroup> rowKey="id" size="small" dataSource={data.groups} scroll={{ x: 800 }} pagination={{ pageSize: 10, showSizeChanger: false }}
+          <WorkbenchTable<UsageGroup> rowKey="id" size="small" dataSource={data.groups} scroll={{ x: 800 }} pagination={{ pageSize: 10 }}
             columns={[{ title: groupBy === 'api' ? 'API 配置' : '模型', dataIndex: 'label', className: 'table-primary', width: 200, ellipsis: true }, ...counts]} />
           {data.has_more_groups && <p>展示用量最高的 500 项；上方合计仍包含全部分组。</p>}
         </section>
-        <Collapse className="usage-daily" items={[{ key: 'daily', label: '查看每日明细', children: <Table<UsageDay> rowKey="date" size="small"
-          dataSource={data.daily} scroll={{ x: 800 }} pagination={{ pageSize: 10, showSizeChanger: false }}
+        <Collapse className="usage-daily" items={[{ key: 'daily', label: '查看每日明细', children: <WorkbenchTable<UsageDay> rowKey="date" size="small"
+          dataSource={data.daily} scroll={{ x: 800 }} pagination={{ pageSize: 10 }}
           columns={[{ title: '日期（UTC+8）', dataIndex: 'date', className: 'table-primary' }, ...counts]} /> }]} />
       </>}
       <p className="usage-footnote">更新于 {new Date(query.dataUpdatedAt).toLocaleTimeString('zh-CN')}</p>

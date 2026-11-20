@@ -22,6 +22,7 @@ test('optional prices are saved with a model without contacting any provider', a
     throw new Error('Unexpected request ' + path);
   });
   await page.goto('/models');
+  await expect(page.locator('.table-empty').getByText('暂无模型', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '添加模型', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('配置名称', { exact: true }).fill('计价阅读模型');
@@ -39,5 +40,6 @@ test('optional prices are saved with a model without contacting any provider', a
   await expect(page.getByText('CNY · 已设置单价')).toBeVisible();
   const row = page.getByRole('row').filter({ hasText: '计价阅读模型' });
   await expect(row.getByRole('cell', { name: '计价阅读模型' })).toHaveCSS('font-weight', '600');
+  await expect(row.getByText('可选用', { exact: true })).toHaveAttribute('data-tone', 'success');
   await expect(row.getByRole('button', { name: '停用', exact: true })).toBeEnabled();
 });

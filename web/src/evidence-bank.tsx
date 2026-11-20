@@ -1,14 +1,15 @@
 import { useRef, useState } from 'react';
-import { Alert, Breadcrumb, Button, Collapse, Empty, Form, Input, Modal, Select, Space, Table, Tag } from 'antd';
+import { Alert, Breadcrumb, Button, Collapse, Form, Input, Modal, Select, Space, Tag } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { errorMessage } from './api';
 import { useConnection } from './connection';
-import { dateLabel, PageHeading, QueryError } from './components';
+import { dateLabel, PageHeading, QueryError, StatusBadge } from './components';
 import { usePageReady } from './page-transition';
 import NumberSlider from './number-slider';
 import type { BankClaim, EvidencePolicy } from './evidence-types';
 import { SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
+import WorkbenchTable from './workbench-table';
 
 const statuses = { ready: '已审查', pending: '待复核', withdrawn: '来源不可用' };
 const access: Record<string, string> = { summary_only: '摘要', extracted_text: '正文片段', document_excerpt: '项目文档片段' };
@@ -61,7 +62,7 @@ export default function EvidenceBank() {
     {contextHolder}
     <Breadcrumb items={[{ title: <Link to="/projects">项目</Link> }, { title: <Link to={`/projects/${encodeURIComponent(projectId)}`}>{project.data.name}</Link> }, { title: '证据库' }]} />
     <PageHeading title="项目证据库" subtitle={project.data.name} />
-    <Space className="filters" wrap>
+    <Space className="table-toolbar" role="group" aria-label="项目证据筛选" size={10} wrap>
       <Input.Search aria-label="搜索项目证据" placeholder="搜索论点或研究目标" maxLength={200} allowClear onSearch={v => { setQuery(v.trim()); setPage(1); }} />
       <Select aria-label="证据状态" value={status} style={{ width: 150 }} onChange={v => { setStatus(v); setPage(1); }} options={[
         { value: 'all', label: '全部状态' }, ...Object.entries(statuses).map(([value, label]) => ({ value, label: value === 'withdrawn' ? '已移除' : label })),
@@ -75,11 +76,12 @@ export default function EvidenceBank() {
     {notice && <Alert type="info" title={notice} />}
     {bank.isPending ? null : !bank.data ? <QueryError error={bank.error} retry={() => void bank.refetch()} /> : <>
       <p>匹配 {bank.data.total} 条结论</p>
-      <Table<BankClaim> rowKey="id" dataSource={bank.data.items} size="small" scroll={{ x: 850 }}
-        locale={{ emptyText: <Empty description="暂无匹配成果" /> }} columns={[
+      <WorkbenchTable<BankClaim> rowKey="id" dataSource={bank.data.items} size="small" scroll={{ x: 850 }}
+        emptyMessage="暂无匹配成果" columns={[
           { title: '结论', dataIndex: 'text', width: 340 },
           { title: '贡献目标', render: (_, item) => <Link to={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(item.task_id)}`}>{item.objective}</Link> },
-          { title: '状态', render: (_, item) => <Tag>{item.enabled ? statuses[item.status] : '已移除'}</Tag> },
+          { title: '状态', render: (_, item) => <StatusBadge tone={item.enabled && item.status === 'ready' ? 'success' : item.enabled && item.status === 'pending' ? 'warning' : 'neutral'}>
+            {item.enabled ? statuses[item.status] : '已移除'}</StatusBadge> },
           { title: '采用次数', dataIndex: 'reuse_count', align: 'right' },
           { title: '操作', render: (_, item) => <Button disabled={busy} onClick={() => toggle(item)}>{item.enabled ? '移除' : '恢复'}</Button> },
         ]} expandable={{ expandedRowRender: item => <div>{item.sources.map((source, index) => {
@@ -89,7 +91,7 @@ export default function EvidenceBank() {
             <p>发表日期：{source.published_at ?? '未确认'} · 取得时间：{source.fetched_at ? dateLabel(source.fetched_at) : '未记录'}</p>
             {source.recheck_due && <Tag color="orange">需要重新核验</Tag>}
             <blockquote>{source.quote}</blockquote></article>;
-        })}</div> }} pagination={{ current: page, pageSize: 20, total: bank.data.total, showSizeChanger: false, onChange: setPage }} />
+        })}</div> }} pagination={{ current: page, pageSize: 20, total: bank.data.total, onChange: setPage }} />
     </>}
     <Collapse items={[{ key: 'policy', label: '资料复核期限', children: <Policy projectId={projectId} /> }]} />
   </>;

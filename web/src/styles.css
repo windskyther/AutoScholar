@@ -3,6 +3,7 @@
   --border: #d9d9d9; --border-soft: #e8e8e8; --link: #0066cc; --danger: #bc2638;
   --table-frame: #c3cfeb; --table-frame-highlight: #91a7e3;
   --table-shadow: 0 1px 2px rgb(44 65 116 / .05), 0 5px 16px rgb(44 65 116 / .06);
+  --status-success: #236345; --status-info: #315d9e; --status-warning: #785719; --status-danger: #9d3046;
   --window: rgb(255 255 255 / .96); --glass-tint: rgb(250 250 253 / .72);
   --glass-border: rgb(215 215 220 / .65); --dock-hover: rgb(238 238 242 / .65);
   --window-shadow: 0 28px 90px rgb(0 0 0 / .10), 0 2px 12px rgb(0 0 0 / .04);
@@ -21,6 +22,7 @@
   --border: #55565f; --border-soft: #34353d; --link: #8cbdff; --danger: #ff8791;
   --table-frame: #3e506e; --table-frame-highlight: #6377a6;
   --table-shadow: 0 1px 2px rgb(0 0 0 / .22), 0 5px 16px rgb(5 10 20 / .28);
+  --status-success: #a5d7bb; --status-info: #a7c5fa; --status-warning: #f1d398; --status-danger: #f3a9b8;
   --window: rgb(38 39 43 / .96); --glass-tint: rgb(34 35 41 / .83);
   --glass-border: rgb(118 120 133 / .44); --dock-hover: rgb(255 255 255 / .09);
   --window-shadow: 0 28px 90px rgb(0 0 0 / .32), 0 2px 12px rgb(0 0 0 / .24);
@@ -145,7 +147,26 @@ p { color: var(--muted); line-height: 1.65; }
 .ant-table-tbody .table-primary > a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--border); }
 .ant-table-tbody .table-primary > a:hover { text-decoration-color: currentColor; }
 .ant-table-wrapper .ant-table-tbody .ant-tag { margin-inline-end: 0; border-color: color-mix(in srgb, currentColor 28%, transparent); border-radius: 6px; font-size: 12px; line-height: 20px; }
-.ant-table-wrapper .ant-table-pagination.ant-pagination { margin: 12px 0 0; }
+.table-toolbar { display: flex; flex-wrap: wrap; margin-block-end: 14px; }
+.table-toolbar > .ant-space-item { max-width: 100%; }
+.table-toolbar .ant-input-search { max-width: 100%; }
+.status-badge {
+  display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; white-space: nowrap;
+  font-size: 12px; font-weight: 550; line-height: 18px; color: var(--muted);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 27%, transparent);
+}
+.status-badge[data-tone='success'] { color: var(--status-success); }
+.status-badge[data-tone='info'] { color: var(--status-info); }
+.status-badge[data-tone='warning'] { color: var(--status-warning); }
+.status-badge[data-tone='danger'] { color: var(--status-danger); }
+.table-empty { min-block-size: 114px; display: grid; place-content: center; justify-items: center; gap: 9px; color: var(--muted); }
+.table-empty-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; border: 1px solid var(--table-frame); color: var(--status-info); background: color-mix(in srgb, currentColor 8%, transparent); font-size: 18px; }
+.ant-table-wrapper .ant-btn.table-action-trigger { width: 36px; height: 36px; border-radius: 8px; font-size: 19px; }
+.table-action-menu .ant-dropdown-menu { min-width: 136px; border: 1px solid var(--table-frame); border-radius: 10px; box-shadow: var(--table-shadow); }
+.table-action-menu .ant-dropdown-menu .ant-dropdown-menu-item { min-height: 36px; border-radius: 6px; }
+.ant-table-wrapper .ant-table-pagination.ant-pagination { margin: 12px 0 0; gap: 4px; }
+.ant-table-pagination .ant-pagination-total-text { margin-inline-end: auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 .ant-table-pagination .ant-pagination-item { border-radius: 6px; }
 .ant-table-pagination .ant-pagination-item-active { border-color: var(--border); background: var(--surface); }
 .ant-table-pagination .ant-pagination-item-active a { color: var(--ink); }
@@ -268,6 +289,7 @@ input[type='file'] { max-width: 100%; }
   .theme-toggle { background: ButtonFace; color: ButtonText; border-color: ButtonText; }
   .research-card { border-color: CanvasText; }
   .ant-table-wrapper .ant-table { border-color: CanvasText; box-shadow: none; }
+  .status-badge { border-color: CanvasText; }
 }
 @media (max-width: 1000px) {
   .workspace-header, .app-content { width: calc(100% - 48px); }

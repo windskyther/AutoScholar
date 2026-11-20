@@ -326,10 +326,21 @@ test('validates PDF uploads locally, then shows asynchronous queued state', asyn
 test('PDF deletion requires explicit confirmation and queues exactly one request', async ({ page }) => {
   const calls = await fixture(page); await enterProject(page);
   const row = page.getByRole('row').filter({ hasText: '可用 PDF' });
-  await row.getByRole('button', { name: '删除', exact: true }).click();
+  const actions = row.getByRole('button', { name: '文档操作 可用 PDF' });
+  const deletion = page.getByRole('menuitem', { name: '删除', exact: true });
+  await actions.press('Enter');
+  await expect(deletion).toBeVisible();
+  await expect(actions).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Escape');
+  await expect(deletion).toHaveCount(0);
+  await expect(actions).toHaveAttribute('aria-expanded', 'false');
+  await expect(actions).toBeFocused();
+  await actions.click();
+  await deletion.click();
   await page.getByRole('button', { name: '取消', exact: true }).click();
   expect(calls.filter((item) => item.method === 'DELETE')).toHaveLength(0);
-  await row.getByRole('button', { name: '删除', exact: true }).click();
+  await actions.click();
+  await deletion.click();
   await page.getByRole('button', { name: '确认删除', exact: true }).click();
   await expect(page.getByText('等待删除', { exact: true })).toBeVisible();
   expect(calls.filter((item) => item.method === 'DELETE')).toHaveLength(1);
@@ -337,10 +348,12 @@ test('PDF deletion requires explicit confirmation and queues exactly one request
 
 test('PDF retries and reindexing are confirmed and do not launch a task', async ({ page }) => {
   const calls = await fixture(page); await enterProject(page);
-  await page.getByRole('row').filter({ hasText: '失败 PDF' }).getByRole('button', { name: '重试', exact: true }).click();
+  await page.getByRole('button', { name: '文档操作 失败 PDF' }).click();
+  await page.getByRole('menuitem', { name: '重试', exact: true }).click();
   await page.getByRole('button', { name: '确认重试', exact: true }).click();
   await expect(page.getByRole('row').filter({ hasText: '失败 PDF' }).getByText('等待处理')).toBeVisible();
-  await page.getByRole('row').filter({ hasText: '可用 PDF' }).getByRole('button', { name: '重建索引' }).click();
+  await page.getByRole('button', { name: '文档操作 可用 PDF' }).click();
+  await page.getByRole('menuitem', { name: '重建索引', exact: true }).click();
   await page.getByRole('button', { name: '确认重建', exact: true }).click();
   await expect(page.getByRole('row').filter({ hasText: '可用 PDF' }).getByText('等待处理')).toBeVisible();
   expect(calls.filter((item) => item.method === 'POST')).toHaveLength(2);

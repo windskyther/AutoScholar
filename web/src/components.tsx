@@ -1,4 +1,5 @@
-import { Alert, Button, Space, Tag } from 'antd';
+import { Alert, Button, Space } from 'antd';
+import type { ReactNode } from 'react';
 import { errorMessage } from './api';
 import type { TaskStatus } from './types';
 
@@ -8,10 +9,17 @@ export const statusLabels: Record<TaskStatus, string> = {
   awaiting_approval: '等待审批', cancel_requested: '取消请求中', cancelled: '已取消',
   recovery_required: '需要人工检查',
 };
+type StatusTone = 'neutral' | 'success' | 'info' | 'warning' | 'danger';
+const taskStatusTones: Partial<Record<TaskStatus, StatusTone>> = {
+  succeeded: 'success', running: 'info', partial: 'warning', awaiting_approval: 'warning',
+  failed: 'danger', budget_exceeded: 'danger', recovery_required: 'danger',
+};
+
+export function StatusBadge({ tone = 'neutral', children }: { tone?: StatusTone; children: ReactNode }) {
+  return <span className="status-badge" data-tone={tone}>{children}</span>;
+}
 export function Status({ value }: { value: TaskStatus }) {
-  const color = value === 'succeeded' ? 'success' : value === 'running' ? 'processing'
-    : ['failed', 'budget_exceeded', 'recovery_required'].includes(value) ? 'error' : 'default';
-  return <Tag color={color}>{statusLabels[value] ?? value}</Tag>;
+  return <StatusBadge tone={taskStatusTones[value]}>{statusLabels[value] ?? value}</StatusBadge>;
 }
 export function QueryError({ error, retry }: { error: unknown; retry: () => void }) {
   return <Alert type="error" showIcon title={errorMessage(error)}

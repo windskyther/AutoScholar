@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react';
-import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tag } from 'antd';
+import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConnection } from './connection';
 import { errorMessage, isWriteUncertain } from './api';
-import { dateLabel, PageHeading, QueryError } from './components';
+import { dateLabel, PageHeading, QueryError, StatusBadge } from './components';
 import type { ModelProfile, ModelProfileInput } from './model-types';
 import { usePageReady } from './page-transition';
 import { SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
+import WorkbenchTable from './workbench-table';
 
 interface Values extends ModelProfileInput { pricing_enabled?: boolean }
 
@@ -55,15 +56,15 @@ export default function ModelsPage() {
   }
   return <>
     <PageHeading title="模型管理" />
-    <div className="filters"><Button type="primary" onClick={() => { setError(null); setOpen(true); }}>添加模型</Button></div>
+    <div className="table-toolbar"><Button type="primary" onClick={() => { setError(null); setOpen(true); }}>添加模型</Button></div>
     {error !== null && !open && <Alert type="error" title={errorMessage(error)} />}
     {catalog.isPending ? null : !catalog.data ? <QueryError error={catalog.error} retry={() => void catalog.refetch()} /> : <>
-      <Table<ModelProfile> rowKey="id" dataSource={catalog.data.items} scroll={{ x: 850 }} pagination={{ pageSize: 10 }}
-        locale={{ emptyText: '暂无模型' }} columns={[
+      <WorkbenchTable<ModelProfile> rowKey="id" dataSource={catalog.data.items} scroll={{ x: 850 }} pagination={{ pageSize: 10 }}
+        emptyMessage="暂无模型" columns={[
           { title: '名称', dataIndex: 'name', className: 'table-primary', ellipsis: true },
           { title: '模型', dataIndex: 'model', ellipsis: true },
           { title: '接口地址', dataIndex: 'base_url', className: 'table-secondary', ellipsis: true },
-          { title: '状态', render: (_, item) => <Tag color={item.enabled ? 'success' : 'default'}>{item.enabled ? '可选用' : '已停用'}</Tag> },
+          { title: '状态', render: (_, item) => <StatusBadge tone={item.enabled ? 'success' : 'neutral'}>{item.enabled ? '可选用' : '已停用'}</StatusBadge> },
           ...(session?.capabilities.model_pricing ? [{ title: '价格估算', render: (_: unknown, item: ModelProfile) => item.pricing ? `${item.pricing.currency} · 已设置单价` : '未设置' }] : []),
           { title: '添加时间', dataIndex: 'created_at', className: 'table-secondary', width: 185, render: dateLabel },
           { title: '操作', width: 80, render: (_, item) => <Button type="text" size="small" disabled={busy} onClick={() => void toggle(item)}>{item.enabled ? '停用' : '启用'}</Button> },

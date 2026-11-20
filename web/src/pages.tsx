@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Breadcrumb, Button, Descriptions, Empty, Input, Select, Space, Table, Tag } from 'antd';
+import { Alert, Breadcrumb, Button, Descriptions, Empty, Input, Select, Space, Tag } from 'antd';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError } from './api';
@@ -17,6 +17,7 @@ import ExportMarkdown from './export-markdown';
 import { usePageReady } from './page-transition';
 import { readResearchEntry } from './research-entry';
 import { ACTIVE_TASK_REFRESH_MS, DOCUMENT_PROCESSING_REFRESH_MS, isActiveTask, SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
+import WorkbenchTable from './workbench-table';
 
 function failureLabel(code: string | null | undefined): string {
   const labels: Record<string, string> = {
@@ -102,7 +103,7 @@ export function ProjectPage() {
       disabled={!canCreate} onClick={() => openProject(project.data)}>创建研究任务</Button></Space></div>
     {!session?.capabilities.llm_configured && !session?.capabilities.model_management && <Alert type="warning" title="研究服务尚未配置，暂时无法创建任务。" />}
     {!session?.capabilities.budget_limits && <Alert type="warning" title="暂时无法读取任务配置，请稍后刷新。" />}
-    <Space className="filters" wrap>
+    <Space className="table-toolbar" role="group" aria-label="研究任务筛选" size={10} wrap>
       <Input.Search placeholder="搜索研究目标" aria-label="搜索研究目标" allowClear maxLength={200}
         onSearch={(value) => { setSearch(value.trim()); setPage(1); }} style={{ width: 280 }} />
       <Select<TaskStatus> placeholder="全部状态" aria-label="任务状态" allowClear style={{ width: 170 }} value={status}
@@ -110,8 +111,8 @@ export function ProjectPage() {
         onChange={(value) => { setStatus(value); setPage(1); }} />
     </Space>
     {tasks.isPending ? null : !tasks.data ? <QueryError error={tasks.error} retry={() => void tasks.refetch()} />
-      : <Table<Task> rowKey="task_id" dataSource={tasks.data.items} scroll={{ x: 850 }}
-        locale={{ emptyText: <Empty description="没有符合条件的研究任务。" /> }} columns={[
+      : <WorkbenchTable<Task> rowKey="task_id" dataSource={tasks.data.items} scroll={{ x: 850 }}
+        emptyMessage="没有符合条件的研究任务。" columns={[
           { title: '研究目标', dataIndex: 'objective', className: 'table-primary', ellipsis: true, render: (value: string, item) =>
             <Link to={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(item.task_id)}`}>{value}</Link> },
           { title: '模式', dataIndex: 'mode', width: 120 },
@@ -119,7 +120,7 @@ export function ProjectPage() {
           { title: 'Tokens', width: 100, align: 'right', render: (_, item) => (item.metrics.total_tokens ?? 0).toLocaleString('zh-CN') },
           { title: '更新时间', dataIndex: 'updated_at', className: 'table-secondary', width: 210, render: dateLabel },
           { title: '操作', width: 120, render: (_, item) => <DeleteTask task={item} projectId={projectId} onDeleted={() => setPage(1)} /> },
-        ]} pagination={{ current: page, pageSize: 20, total: tasks.data.total, showSizeChanger: false, onChange: setPage }} />}
+        ]} pagination={{ current: page, pageSize: 20, total: tasks.data.total, onChange: setPage }} />}
     <Documents projectId={projectId} analysisAction={documentEntry && <Button type="primary"
       disabled={!canCreate || pending || !documents.isSuccess || !documents.data.ready} onClick={openSelectedResearch}>继续文档分析</Button>}
       analysisNotice={documentEntry && (documents.isError ? <QueryError error={documents.error} retry={() => void documents.refetch()} />
@@ -192,13 +193,13 @@ export function TaskPage() {
         }).join('、') || '无'}</span></li>)}
     </ol> : <Empty description="尚未生成结构化计划。" />}
     <h2>子任务与历史尝试</h2>
-    <Table<Task> rowKey="task_id" dataSource={data.children.items} scroll={{ x: 700 }} size="small" columns={[
+    <WorkbenchTable<Task> rowKey="task_id" dataSource={data.children.items} scroll={{ x: 700 }} size="small" columns={[
       { title: '执行记录', render: (_, _item, index) => `第 ${(page - 1) * 20 + index + 1} 项` },
       { title: '模式', dataIndex: 'mode', width: 120 },
       { title: '状态', dataIndex: 'status', width: 140, render: (value: TaskStatus) => <Status value={value} /> },
       { title: '原因', dataIndex: 'error_code', render: (value: string | null) => failureLabel(value) },
       { title: '创建时间', dataIndex: 'created_at', width: 210, render: dateLabel },
-    ]} pagination={{ current: page, pageSize: 20, total: data.children.total, showSizeChanger: false, onChange: setPage }} />
+    ]} pagination={{ current: page, pageSize: 20, total: data.children.total, onChange: setPage }} />
     <div className="section-heading"><h2>任务输出</h2><ExportMarkdown key={`export:${taskId}`} taskId={taskId!}
       objective={data.task.objective} available={!!data.answer} /></div>
     {data.answer_truncated && <Alert type="warning" title="输出超过大小上限，下方仅展示部分内容。" />}

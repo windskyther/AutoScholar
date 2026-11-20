@@ -1,16 +1,42 @@
 import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Alert, Button, Empty, Form, Input, Modal, Space, Table, Tag } from 'antd';
+import { DeleteOutlined, EllipsisOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Alert, Button, Dropdown, Form, Input, Modal, Space } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { errorMessage, isWriteUncertain } from './api';
 import { useConnection } from './connection';
-import { dateLabel, QueryError } from './components';
+import { dateLabel, QueryError, StatusBadge } from './components';
 import type { DocumentStatus, PDFDocument } from './types';
 import { documentRefreshInterval } from './snapshot-refresh';
+import WorkbenchTable from './workbench-table';
 
 const labels: Record<DocumentStatus, string> = { queued: '等待处理', processing: '处理中', ready: '已就绪', failed: '处理失败', deleting: '等待删除' };
 export function DocumentState({ value }: { value: DocumentStatus }) {
-  return <Tag color={value === 'ready' ? 'success' : value === 'failed' ? 'error' : 'default'}>{labels[value]}</Tag>;
+  const tone = value === 'ready' ? 'success' : value === 'failed' ? 'danger' : value === 'processing' ? 'info' : 'neutral';
+  return <StatusBadge tone={tone}>{labels[value]}</StatusBadge>;
+}
+
+const documentActions = {
+  retry: { label: '重试', title: '确认重试文档处理？', okText: '确认重试', warning: '后台可能产生 Embedding API 费用。' },
+  reindex: { label: '重建索引', title: '确认重建此 PDF 的索引？', okText: '确认重建', warning: '后台可能调用已配置的付费 Embedding API，并在处理期间暂时不能检索此文档。' },
+  delete: { label: '删除', title: '确认删除此 PDF？', okText: '确认删除', warning: '将异步删除该文档及其索引，不能在工作台撤销。' },
+};
+type DocumentAction = keyof typeof documentActions;
+
+function DocumentMenu({ title, processAction, disabled, onAction }: {
+  title: string; processAction: 'retry' | 'reindex'; disabled: boolean; onAction: (kind: DocumentAction) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return <Dropdown placement="bottomRight" trigger={['click']} autoFocus disabled={disabled} open={open} onOpenChange={setOpen}
+    classNames={{ root: 'table-action-menu' }} menu={{ items: [
+      { key: processAction, label: documentActions[processAction].label, icon: <ReloadOutlined aria-hidden="true" />, onClick: () => onAction(processAction) },
+      { type: 'divider' },
+      { key: 'delete', label: documentActions.delete.label, icon: <DeleteOutlined aria-hidden="true" />, danger: true, onClick: () => onAction('delete') },
+    ] }}>
+    <Button className="table-action-trigger" type="text" size="small" disabled={disabled}
+      aria-haspopup="menu" aria-expanded={open} aria-label={`文档操作 ${title}`} title="文档操作"
+      icon={<EllipsisOutlined aria-hidden="true" />} />
+  </Dropdown>;
 }
 
 export default function Documents({ projectId, analysisAction, analysisNotice }: {
@@ -43,7 +69,7 @@ export default function Documents({ projectId, analysisAction, analysisNotice }:
     } catch (failure) { setError(failure); if (isWriteUncertain(failure)) refresh(); }
     finally { inFlight.current = false; setBusy(false); }
   }
-  async function action(document: PDFDocument, kind: 'retry' | 'reindex' | 'delete') {
+  async function action(document: PDFDocument, kind: DocumentAction) {
     if (!api || inFlight.current) return;
     inFlight.current = true; setBusy(true); setError(null); setNotice('');
     try {
@@ -53,10 +79,10 @@ export default function Documents({ projectId, analysisAction, analysisNotice }:
     } catch (failure) { setError(failure); refresh(); }
     finally { inFlight.current = false; setBusy(false); }
   }
-  function confirm(document: PDFDocument, kind: 'reindex' | 'delete') {
-    modal.confirm({ title: kind === 'delete' ? '确认删除此 PDF？' : '确认重建此 PDF 的索引？',
-      content: <><p>{document.title}</p><p>{kind === 'delete' ? '将异步删除该文档及其索引，不能在工作台撤销。' : '后台可能调用已配置的付费 Embedding API，并在处理期间暂时不能检索此文档。'}</p></>,
-      okText: kind === 'delete' ? '确认删除' : '确认重建', cancelText: '取消', okButtonProps: { danger: kind === 'delete' },
+  function confirm(document: PDFDocument, kind: DocumentAction) {
+    const { title, warning, okText } = documentActions[kind];
+    modal.confirm({ title, content: <><p>{document.title}</p><p>{warning}</p></>,
+      okText, cancelText: '取消', okButtonProps: { danger: kind === 'delete' },
       onOk: () => action(document, kind) });
   }
   return <section id="project-pdfs" className="document-section">
@@ -70,7 +96,7 @@ export default function Documents({ projectId, analysisAction, analysisNotice }:
     {error !== null && !open && <Alert type="error" showIcon title={errorMessage(error)}
       description={isWriteUncertain(error) ? '结果未确认，请等待文档列表更新后核查。' : undefined} />}
     {query.isPending ? null : !query.data ? <QueryError error={query.error} retry={() => void query.refetch()} />
-      : <Table<PDFDocument> rowKey="id" dataSource={query.data.items} scroll={{ x: 950 }} locale={{ emptyText: <Empty description="暂无 PDF 文档。" /> }}
+      : <WorkbenchTable<PDFDocument> rowKey="id" dataSource={query.data.items} scroll={{ x: 900 }} emptyMessage="暂无 PDF 文档。"
         columns={[
           { title: '文档', dataIndex: 'title', className: 'table-primary', ellipsis: true },
           { title: '状态', dataIndex: 'status', width: 115, render: (value: DocumentStatus) => <DocumentState value={value} /> },
@@ -78,14 +104,12 @@ export default function Documents({ projectId, analysisAction, analysisNotice }:
           { title: '大小', width: 100, align: 'right', render: (_, item) => `${(item.size_bytes / 1024).toFixed(1)} KiB` },
           { title: '错误编号', dataIndex: 'error_code', width: 175, render: (value: string | null) => value || '—' },
           { title: '更新时间', dataIndex: 'updated_at', className: 'table-secondary', width: 185, render: dateLabel },
-          { title: '操作', width: 195, render: (_, item) => <Space>
-            {item.status === 'failed' && <Button size="small" disabled={busy} onClick={() => {
-              modal.confirm({ title: '确认重试文档处理？', content: '后台可能产生 Embedding API 费用。', okText: '确认重试', cancelText: '取消', onOk: () => action(item, 'retry') });
-            }}>重试</Button>}
-            {item.status === 'ready' && <Button size="small" disabled={busy} onClick={() => confirm(item, 'reindex')}>重建索引</Button>}
-            {['ready', 'failed'].includes(item.status) && <Button size="small" danger disabled={busy} onClick={() => confirm(item, 'delete')}>删除</Button>}
-          </Space> },
-        ]} pagination={{ current: page, pageSize: 20, total: query.data.total, showSizeChanger: false, onChange: setPage }} />}
+          { title: '操作', width: 80, align: 'right', render: (_, item) => {
+            if (item.status !== 'ready' && item.status !== 'failed') return null;
+            return <DocumentMenu title={item.title} processAction={item.status === 'ready' ? 'reindex' : 'retry'}
+              disabled={busy} onAction={(kind) => confirm(item, kind)} />;
+          } },
+        ]} pagination={{ current: page, pageSize: 20, total: query.data.total, onChange: setPage }} />}
     <Modal title="上传 PDF" open={open} mask={{ closable: false }} closable={!busy} keyboard={!busy}
       onCancel={() => { if (!busy) { setOpen(false); setError(null); } }} footer={null}>
       <Alert type="warning" showIcon title="文件会发送到本地 API 并交给后台索引"
