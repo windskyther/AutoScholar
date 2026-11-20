@@ -47,7 +47,8 @@ test('top glass dock replaces the sidebar, preserves navigation and renders proj
   await expect(page.locator('.project-card')).toHaveCount(3);
   await expect(page.locator('.glass-surface')).toHaveAttribute('data-refraction', 'svg');
   const position = await dock.boundingBox();
-  expect(position && Math.abs(position.x + position.width / 2 - 720)).toBeLessThan(2);
+  const viewportCenter = await page.evaluate(() => document.body.clientWidth / 2);
+  expect(position && Math.abs(position.x + position.width / 2 - viewportCenter)).toBeLessThan(2);
   expect(position?.y).toBeLessThan(40);
   // A non-uniform test backdrop makes refraction measurable on the white workspace.
   await page.locator('.app-scene').evaluate(element => {

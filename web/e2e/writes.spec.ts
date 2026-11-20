@@ -83,6 +83,47 @@ async function draftTask(page: Page) {
   await page.getByLabel('研究目标', { exact: true }).fill('公开的 MNIST 验收目标');
 }
 
+test('dialog scroll locks keep workspace positions stable on short and long pages', async ({ playwright, baseURL }) => {
+  const browser = await playwright.chromium.launch({ ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--disable-features=OverlayScrollbar'] });
+  try {
+    const page = await browser.newPage({ baseURL, reducedMotion: 'reduce', viewport: { width: 1440, height: 1000 } });
+    await fixture(page);
+    await page.addStyleTag({ content: 'html::-webkit-scrollbar { width: 16px; }' });
+    const positions = () => page.evaluate(() => Object.fromEntries(
+      ['.workspace-brand', '.workspace-dock', '.theme-toggle', '.app-content'].map(selector => {
+        const { x, width } = window.document.querySelector(selector)!.getBoundingClientRect();
+        return [selector, { x, width }];
+      }),
+    ));
+    async function verifyDialog(buttonName: string, tall: boolean) {
+      const button = page.getByRole('button', { name: buttonName, exact: true });
+      await expect(button).toBeVisible();
+      expect(await page.evaluate(() => window.innerWidth - window.document.documentElement.clientWidth)).toBe(16);
+      expect(await page.evaluate(() => window.document.scrollingElement!.scrollHeight > window.innerHeight)).toBe(tall);
+      const before = await positions();
+      await button.click();
+      const dialog = page.getByRole('dialog');
+      await expect(dialog).toBeVisible();
+      await expect(page.locator('body')).toHaveCSS('overflow-y', 'hidden');
+      await expect.poll(positions).toEqual(before);
+      await page.keyboard.press('Escape');
+      await expect(dialog).toBeHidden();
+      await expect(page.locator('body')).toHaveCSS('overflow-y', 'scroll');
+      await expect.poll(positions).toEqual(before);
+    }
+
+    await verifyDialog('新建项目', false);
+    await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '模型管理' }).click();
+    await verifyDialog('添加模型', false);
+    await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '项目与任务' }).click();
+    await enterProject(page);
+    await page.setViewportSize({ width: 1440, height: 520 });
+    await verifyDialog('创建研究任务', true);
+  } finally {
+    await browser.close();
+  }
+});
+
 for (const mode of ['light', 'dark'] as const) {
   test(`research task dropdown selection follows the menu outline in ${mode} mode`, async ({ page }) => {
     const calls = await fixture(page, { researchWorkflows: true, researchQuality: true });

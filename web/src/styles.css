@@ -15,6 +15,7 @@
   --text-page: clamp(2rem, 3.2vw, 2.625rem); --text-section: 1.5rem; --text-body: 1.0625rem;
   --navigation-duration: 900ms; --navigation-easing: cubic-bezier(.22, .61, .36, 1);
   font-family: var(--font-ui);
+  scrollbar-gutter: stable;
   scroll-padding-top: 140px;
 }
 :root[data-theme='dark'] {
@@ -32,9 +33,13 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; color: var(--ink); background: var(--page); font-family: inherit; font-size: var(--text-body); -webkit-font-smoothing: antialiased; }
+body { margin: 0; color: var(--ink); background: var(--page); font-family: inherit; font-size: var(--text-body); -webkit-font-smoothing: antialiased; }
 /* Keep the native viewport scrollbar while allowing modal scroll locks to override it. */
-body:where(:has(.with-page-scrollbar)) { min-width: 0; overflow-y: scroll; }
+body:where(:has(.with-page-scrollbar)) { overflow-y: scroll; }
+@supports (scrollbar-gutter: stable) {
+  /* The viewport gutter already accounts for the scrollbar width when a dialog locks the body. */
+  :root > body { width: auto; }
+}
 a { color: var(--link); text-underline-offset: 3px; }
 button, input, select, textarea { font: inherit; }
 h1 { color: var(--ink); font-size: var(--text-page); font-weight: 600; line-height: 1.16; margin: 0 0 16px; letter-spacing: -.025em; overflow-wrap: anywhere; }

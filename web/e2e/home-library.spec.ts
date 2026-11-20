@@ -35,12 +35,12 @@ test('the white home and direct research links fit a narrow screen with reduced 
   await expect(page.locator('.research-card')).toHaveCount(6);
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   await expect(page.locator('.page-transition')).toHaveCSS('animation-name', 'none');
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth === document.body.clientWidth)).toBe(true);
   await page.screenshot({ path: test.info().outputPath('home-mobile.png'), fullPage: true });
   await page.getByRole('link', { name: '研究方案', exact: true }).click();
   await expect(page).toHaveURL(/\/projects\?research=research_proposal$/);
   await expect(page.getByRole('heading', { name: '研究方案 · 选择项目', exact: true })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth === document.body.clientWidth)).toBe(true);
 });
 
 test('larger reading text reflows the home and keeps direct links usable', async ({ page }) => {
@@ -49,7 +49,7 @@ test('larger reading text reflows the home and keeps direct links usable', async
   await page.goto('/');
   await expect(page.locator('.research-card')).toHaveCount(6);
   await page.addStyleTag({ content: ':root { font-size: 200%; }' });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth === document.body.clientWidth)).toBe(true);
   for (const card of await page.locator('.research-card').all()) {
     expect(await card.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   }
