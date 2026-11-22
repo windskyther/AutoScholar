@@ -114,8 +114,18 @@ export function ProjectPage() {
     {tasks.isPending ? null : !tasks.data ? <QueryError error={tasks.error} retry={() => void tasks.refetch()} />
       : <WorkbenchTable<Task> rowKey="task_id" dataSource={tasks.data.items} scroll={{ x: 850 }}
         emptyMessage="没有符合条件的研究任务。" columns={[
-          { title: '研究目标', dataIndex: 'objective', className: 'table-primary', ellipsis: true, render: (value: string, item) =>
-            <Link to={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(item.task_id)}`}>{value}</Link> },
+          { title: '研究目标', dataIndex: 'objective', className: 'table-primary', ellipsis: true, render: (value: string, item) => {
+            const path = `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(item.task_id)}`;
+            return <>
+              <Link className="table-task-objective" to={path} title={value}>{value}</Link>
+              {session?.capabilities.task_links && <div className="table-task-actions">
+                <Button type="link" size="small" onClick={() => void navigate(path, { state: { taskAction: 'reference' } })}>关联任务</Button>
+                {item.mode === 'autonomous' && <Button type="link" size="small"
+                  disabled={isActiveTask(item.status) || !canCreate || pending}
+                  onClick={() => void navigate(path, { state: { taskAction: 'append' } })}>追加任务</Button>}
+              </div>}
+            </>;
+          } },
           { title: '模式', dataIndex: 'mode', width: 120 },
           { title: '状态', dataIndex: 'status', width: 140, render: (value: TaskStatus) => <Status value={value} /> },
           { title: 'Tokens', width: 100, align: 'right', render: (_, item) => (item.metrics.total_tokens ?? 0).toLocaleString('zh-CN') },

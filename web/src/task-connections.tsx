@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Modal, Space } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { errorMessage } from './api';
 import { QueryError, Status } from './components';
 import { useConnection } from './connection';
@@ -17,6 +17,9 @@ const pageSize = 10;
 export default function TaskConnections({ projectId, task }: { projectId: string; task: Task }) {
   const { api, session } = useConnection();
   const { openProject, pending } = useSubmission();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const handledAction = useRef<string | null>(null);
   const cache = useQueryClient();
   const [page, setPage] = useState(1);
   const [draft, setDraft] = useState<LinkedTask[] | null>(null);
@@ -37,21 +40,37 @@ export default function TaskConnections({ projectId, task }: { projectId: string
       await cache.invalidateQueries({ queryKey: key });
     },
   });
-  if (!query.data) {
-    return query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} /> : null;
-  }
   const links = query.data;
   const canCreate = (session?.capabilities.llm_configured || session?.capabilities.model_management) &&
     session.capabilities.budget_limits;
+  const resetSave = save.reset;
+  const editReferences = useCallback(() => {
+    if (!links) return;
+    resetSave();
+    setDraft(links.references);
+  }, [links, resetSave]);
+  const append = useCallback(() => {
+    if (!links?.can_append || !canCreate || pending) return;
+    openProject({ id: projectId, name: links.project_name }, links.workflow_kind ?? 'research',
+      { previous: task, references: links.references, modelProfileId: links.model_profile_id });
+  }, [links, canCreate, pending, openProject, projectId, task]);
+  useEffect(() => {
+    const action: unknown = location.state?.taskAction;
+    if (!links || handledAction.current === location.key || (action !== 'reference' && action !== 'append')) return;
+    handledAction.current = location.key;
+    if (action === 'reference') editReferences();
+    else append();
+    void navigate(location.pathname + location.search + location.hash, { replace: true, state: null });
+  }, [links, location, navigate, editReferences, append]);
+  if (!links) {
+    return query.isError ? <QueryError error={query.error} retry={() => void query.refetch()} /> : null;
+  }
   const taskLink = (item: LinkedTask) => <Link
     to={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(item.task_id)}`}>{item.objective}</Link>;
   return <section className="task-connections" aria-label="任务关联与追加">
     <div className="section-heading"><h2>任务关联与追加</h2><Space>
-      <Button onClick={() => { save.reset(); setDraft(links.references); }}>编辑关联</Button>
-      {links.can_append && <Button type="primary" disabled={!canCreate || pending} onClick={() => openProject(
-        { id: projectId, name: links.project_name }, links.workflow_kind ?? 'research',
-        { previous: task, references: links.references, modelProfileId: links.model_profile_id },
-      )}>追加任务</Button>}
+      <Button onClick={editReferences}>编辑关联</Button>
+      {links.can_append && <Button type="primary" disabled={!canCreate || pending} onClick={append}>追加任务</Button>}
     </Space></div>
     {links.previous && <p>上一轮 · {taskLink(links.previous)}</p>}
     {links.references.length > 0 && <><h3>关联任务</h3><ul>

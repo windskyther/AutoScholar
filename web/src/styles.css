@@ -151,6 +151,9 @@ p { color: var(--muted); line-height: 1.65; }
 .ant-table-wrapper .ant-table-tbody .table-secondary { color: var(--muted); }
 .ant-table-tbody .table-primary > a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--border); }
 .ant-table-tbody .table-primary > a:hover { text-decoration-color: currentColor; }
+.table-task-objective { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-task-actions { display: flex; flex-wrap: wrap; gap: 0 12px; margin-top: 4px; }
+.table-task-actions .ant-btn { padding-inline: 0; }
 .ant-table-wrapper .ant-table-tbody .ant-tag { margin-inline-end: 0; border-color: color-mix(in srgb, currentColor 28%, transparent); border-radius: 6px; font-size: 12px; line-height: 20px; }
 .table-toolbar { display: flex; flex-wrap: wrap; margin-block-end: 14px; }
 .table-toolbar > .ant-space-item { max-width: 100%; }

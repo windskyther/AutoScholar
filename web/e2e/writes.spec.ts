@@ -108,11 +108,11 @@ async function draftTask(page: Page) {
   await page.getByLabel('研究目标', { exact: true }).fill('公开的 MNIST 验收目标');
 }
 
-test('associated reports are optional and carried into a confirmed follow-up', async ({ page }) => {
+test('project row actions edit references and carry them into a confirmed follow-up', async ({ page }) => {
   const calls = await fixture(page, { taskLinks: true });
   await enterProject(page);
-  await page.getByRole('link', { name: originalTask.objective }).click();
-  await page.getByRole('button', { name: '编辑关联' }).click();
+  const taskRow = page.getByRole('row').filter({ hasText: originalTask.objective });
+  await taskRow.getByRole('button', { name: '关联任务', exact: true }).click();
   const editor = page.getByRole('dialog', { name: '编辑关联任务' });
   await editor.getByRole('combobox', { name: '关联任务' }).click();
   await page.locator('.ant-select-dropdown:visible').getByText(sourceTask.objective, { exact: true }).click();
@@ -120,7 +120,8 @@ test('associated reports are optional and carried into a confirmed follow-up', a
   await expect(page.getByRole('link', { name: sourceTask.objective })).toBeVisible();
   expect(calls.some(item => item.path === '/api/workbench/agent/tasks')).toBe(false);
 
-  await page.getByRole('button', { name: '追加任务' }).click();
+  await page.getByRole('link', { name: '项目任务', exact: true }).click();
+  await taskRow.getByRole('button', { name: '追加任务', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: /追加研究任务/ });
   await expect(dialog.getByText(sourceTask.objective, { exact: true })).toBeVisible();
   await dialog.getByLabel('追加指令', { exact: true }).fill('补充比较不同数据集的规模');
