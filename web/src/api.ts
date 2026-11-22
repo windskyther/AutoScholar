@@ -1,5 +1,5 @@
-import type { ApprovalDecision, ApprovalPage, ControlAction, ControlReceipt, ControlState, EventPage, ExpectedState, Overview, Page, PDFDocument, Project, Session, StreamMessage, SubmissionReceipt, Task, TaskStatus, TaskSubmission } from './types';
-import { isApproval, isControlReceipt, isControlState, isDocument, isEventPage, isExpectedState, isOverview, isPage, isProject, isReceipt, isSession, isSpecification, isTask, isTaskStatus, isWorkflowEvent } from './guards';
+import type { ApprovalDecision, ApprovalPage, ControlAction, ControlReceipt, ControlState, EventPage, ExpectedState, LinkedTask, Overview, Page, PDFDocument, Project, Session, StreamMessage, SubmissionReceipt, Task, TaskLinks, TaskStatus, TaskSubmission } from './types';
+import { isApproval, isControlReceipt, isControlState, isDocument, isEventPage, isExpectedState, isLinkedTask, isOverview, isPage, isProject, isReceipt, isSession, isSpecification, isTask, isTaskLinks, isTaskStatus, isWorkflowEvent } from './guards';
 import { consumeSSE, StreamProtocolError } from './sse';
 import type { ArtifactPreview, ArtifactResource, EvidenceResource, ExperimentResource, ResourcePage } from './types';
 import { isArtifact, isEvidence, isExperiment, isPreview } from './resource-guards';
@@ -43,6 +43,8 @@ const messages: Record<string, string> = {
   project_has_active_documents: '项目中的文档仍在处理中，请稍后再删除。',
   task_has_active_operations: '任务或关联子任务尚未完全停止，请等待取消完成后再删除。',
   task_output_unavailable: '任务尚未产生可导出的输出。',
+  task_reference_unavailable: '关联任务必须是同一项目中已有输出且已结束的任务，请重新选择。',
+  task_continuation_unavailable: '上一轮任务必须已经结束，且仍在当前项目中。',
   response_too_large: '响应超过安全大小上限。',
   request_validation_error: '输入或查询参数不合法。',
   write_result_unknown: '请求结果未确认，请先核查；不会自动重试。',
@@ -299,6 +301,18 @@ export class ApiClient {
   }
   overview(id: string, page: number, signal?: AbortSignal): Promise<Overview> {
     return this.checked(`/tasks/${encodeURIComponent(id)}/overview?limit=20&offset=${(page - 1) * 20}`, isOverview, signal);
+  }
+  referenceTasks(projectId: string, search: string, signal?: AbortSignal): Promise<LinkedTask[]> {
+    const params = new URLSearchParams(search ? { q: search } : {});
+    return this.checked(`/projects/${encodeURIComponent(projectId)}/reference-tasks?${params}`,
+      (value): value is LinkedTask[] => Array.isArray(value) && value.length <= 40 && value.every(isLinkedTask), signal);
+  }
+  taskLinks(id: string, page: number, signal?: AbortSignal): Promise<TaskLinks> {
+    return this.checked(`/tasks/${encodeURIComponent(id)}/links?limit=10&offset=${(page - 1) * 10}`, isTaskLinks, signal);
+  }
+  saveTaskLinks(id: string, ids: string[]): Promise<LinkedTask[]> {
+    return this.write(`/tasks/${encodeURIComponent(id)}/links`,
+      (value): value is LinkedTask[] => Array.isArray(value) && value.length <= 5 && value.every(isLinkedTask), { task_ids: ids });
   }
   quality(id: string, signal?: AbortSignal): Promise<QualityAudit> {
     return this.checked(`/tasks/${encodeURIComponent(id)}/quality`, isQualityAudit, signal);

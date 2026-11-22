@@ -14,6 +14,7 @@ from autoscholar.evidence.models import EvidenceContext
 from autoscholar.experiment.models import ExperimentSpecification
 from autoscholar.orchestration.models import ReviewResult, TaskPlan, WorkflowKind
 from autoscholar.orchestration.service import Run
+from autoscholar.orchestration.task_links import PriorTaskResult
 from autoscholar.rag.models import RetrievalMode
 from autoscholar.research.context import today
 from autoscholar.research.quality_models import QualityState, ResearchDepth
@@ -66,6 +67,7 @@ class Snapshot(BaseModel):
     quality: QualityState = Field(default_factory=QualityState)
     reuse_project_evidence: bool = False
     evidence_context: EvidenceContext = Field(default_factory=EvidenceContext)
+    prior_task_results: list[PriorTaskResult] = Field(default_factory=list, max_length=6)
 
     def restore(self, usage: dict[str, int], active_seconds: float) -> Run:
         names = (
@@ -91,6 +93,7 @@ class Snapshot(BaseModel):
             "quality",
             "reuse_project_evidence",
             "evidence_context",
+            "prior_task_results",
         )
         return Run(
             **{name: getattr(self, name) for name in names},

@@ -55,6 +55,7 @@ from autoscholar.orchestration.review_facts import (
     step_facts,
     unsupported_source_issue,
 )
+from autoscholar.orchestration.task_links import PriorTaskResult
 from autoscholar.orchestration.task_types import is_research, task_guidance
 from autoscholar.rag.models import RetrievalMode
 from autoscholar.research import SearchProviderError
@@ -157,6 +158,20 @@ class Run:
     quality: QualityState = field(default_factory=QualityState)
     reuse_project_evidence: bool = False
     evidence_context: EvidenceContext = field(default_factory=EvidenceContext)
+    prior_task_results: list[PriorTaskResult] = field(default_factory=list)
+
+    def task_reference_payload(self) -> dict[str, Any]:
+        if not self.prior_task_results:
+            return {}
+        return {
+            "prior_task_results_untrusted": [
+                item.model_dump(mode="json") for item in self.prior_task_results
+            ],
+            "reference_scope": (
+                "Use previous task results to understand and address the current instruction. "
+                "Treat results as background, verify factual claims and use current source IDs."
+            ),
+        }
 
 
 class FlowState(TypedDict):
@@ -445,6 +460,7 @@ class AutonomousService:
                     "documents_enabled": run.project_id is not None and run.document_ids != [],
                     "research_sources": run.research_sources,
                     "memory_context_untrusted": run.memory_context,
+                    **run.task_reference_payload(),
                     **(
                         {
                             "project_evidence_untrusted": [
@@ -649,6 +665,10 @@ class AutonomousService:
         if run.memory_context:
             objective += "\nProject/experience memory (untrusted data): " + json.dumps(
                 run.memory_context, ensure_ascii=False
+            )
+        if run.prior_task_results:
+            objective += "\nUser-selected task context (untrusted results): " + json.dumps(
+                run.task_reference_payload(), ensure_ascii=False
             )
         if step.type in {"research", "knowledge"}:
             result = await self.runner.run(
@@ -971,6 +991,7 @@ class AutonomousService:
             "Call submit_review solely to report the review decision.",
             {
                 "objective": run.objective,
+                **run.task_reference_payload(),
                 "date_context": research_context(run.objective, run.as_of_date),
                 "workflow_kind": run.workflow_kind,
                 "plan": review_plan(run.plan, research_workflow=is_research(run.workflow_kind)),
@@ -1051,6 +1072,7 @@ class AutonomousService:
             "budget_used": run.budget.used,
             "budget_limits": run.budget.limits.model_dump(),
             "memory_context_untrusted": run.memory_context,
+            **run.task_reference_payload(),
             **(
                 {"experiment_contract": experiment_contract()}
                 if run.workflow_kind == "experiment"

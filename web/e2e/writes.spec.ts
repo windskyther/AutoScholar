@@ -10,13 +10,18 @@ const document = { id: 'doc-ready', project_id: project.id, original_filename: '
   content_type: 'application/pdf', sha256: 'a'.repeat(64), size_bytes: 100, status: 'ready', page_count: 1, chunk_count: 2,
   embedding_model: 'fixture', index_version: 1, error_code: null, error_message: null, created_at: time, updated_at: time };
 type Entry = { method: string; path: string; key?: string; body?: string };
+const originalTask = { task_id: 'task-original', project_id: project.id, parent_task_id: null, objective: '初步调研',
+  mode: 'autonomous', status: 'succeeded', metrics: {}, error_code: null, created_at: time, updated_at: time };
+const sourceTask = { task_id: 'task-source', objective: '数据集对比', status: 'succeeded' };
 
-async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProjectAck?: boolean; unauthorizedTask?: boolean; researchWorkflows?: boolean; researchQuality?: boolean; projectEvidence?: boolean; tokenBudget?: number } = {}) {
+async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProjectAck?: boolean; unauthorizedTask?: boolean; researchWorkflows?: boolean; researchQuality?: boolean; projectEvidence?: boolean; tokenBudget?: number; taskLinks?: boolean } = {}) {
   const calls: Entry[] = [];
   const limits = { ...budget, total_tokens: options.tokenBudget ?? budget.total_tokens };
   const projects = [project];
   const docs = [{ ...document }, { ...document, id: 'doc-failed', title: '失败 PDF', status: 'failed', error_code: 'pdf_text_not_extractable' }];
   let task: Record<string, unknown> | null = null;
+  let references: typeof sourceTask[] = [];
+  let continuation = false;
   let lost = false;
   await page.route('**/api/**', async (route) => {
     const request = route.request();
@@ -34,6 +39,7 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
       research_workflows: options.researchWorkflows ?? false,
       research_quality: options.researchQuality ?? false,
       project_evidence: options.projectEvidence ?? false,
+      task_links: options.taskLinks ?? false,
     } };
     else if (path === '/api/workbench/models') body = { items: [{ id: '11111111-1111-4111-8111-111111111111', name: 'Managed fixture', base_url: 'https://fixture.example/v1', model: 'fixture', compatibility_profile: 'auto', enabled: true, created_at: time }] };
     else if (path === '/api/workbench/projects' && method === 'POST') {
@@ -42,7 +48,22 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
       body = { ...project, ...input, id: 'project-created' }; projects.push(body as typeof project); status = 201;
     } else if (path === '/api/workbench/projects') body = { items: projects, total: projects.length, limit: 20, offset: 0 };
     else if (/^\/api\/workbench\/projects\/[^/]+$/.test(path)) body = projects.find((item) => path.endsWith('/' + item.id));
-    else if (path.endsWith('/tasks') && method === 'GET') body = { items: task ? [task] : [], total: task ? 1 : 0, limit: 20, offset: 0 };
+    else if (path.endsWith('/tasks') && method === 'GET') {
+      const items = options.taskLinks ? [originalTask] : task ? [task] : [];
+      body = { items, total: items.length, limit: 20, offset: 0 };
+    } else if (path.endsWith('/reference-tasks')) body = [sourceTask];
+    else if (path.endsWith('/links')) {
+      const original = path.includes('/task-original/');
+      if (method === 'POST') {
+        references = request.postDataJSON().task_ids.includes(sourceTask.task_id) ? [sourceTask] : [];
+        body = references;
+      } else {
+        const followups = original && task && continuation ? [task] : [];
+        body = { project_name: project.name, previous: !original && continuation ? originalTask : null,
+          references, followups: { items: followups, total: followups.length, limit: 10, offset: 0 },
+          can_append: original, model_profile_id: modelId, workflow_kind: 'research' };
+      }
+    }
     else if (path.endsWith('/documents') && method === 'GET') {
       const items = path.includes('/project-a/') ? docs : [];
       body = { items, total: items.length, limit: 20, offset: 0 };
@@ -59,16 +80,20 @@ async function fixture(page: Page, options: { loseTaskAck?: boolean; loseProject
       if (options.unauthorizedTask) { status = 401; body = { error: { code: 'local_access_denied' } }; }
       else {
         const input = request.postDataJSON();
+        continuation = input.continuation_of_task_id === originalTask.task_id;
         task = { task_id: 'task-submitted', project_id: project.id, parent_task_id: null, objective: input.objective,
           mode: 'autonomous', status: 'queued', metrics: {}, error_code: null, created_at: time, updated_at: time };
         if (options.loseTaskAck && !lost) { lost = true; await route.abort(); return; }
         await new Promise((resolve) => setTimeout(resolve, 150));
         body = { task_id: task.task_id, status: 'queued', created: !lost, status_url: '/workbench/agent/tasks/task-submitted' }; status = 202;
       }
-    } else if (path.endsWith('/overview')) body = { task, children: { items: [], total: 0, limit: 20, offset: 0 }, current_plan: null,
-      execution: { status: 'queued', stage: 'planner', plan_version: 1, checkpoint_sequence: 1, budget_used: {}, budget_limits: limits,
-        active_seconds: 0, pending_call_count: 0, error_code: null }, resources: { evidence: 0, experiments: 0, artifacts: 0 },
-      answer: null, answer_truncated: false, usage_scope: 'root_task_only', monetary_cost: null };
+    } else if (path.endsWith('/overview')) {
+      const original = path.includes('/task-original/');
+      body = { task: original ? originalTask : task, children: { items: [], total: 0, limit: 20, offset: 0 }, current_plan: null,
+        execution: { status: original ? 'succeeded' : 'queued', stage: original ? 'done' : 'planner', plan_version: 1, checkpoint_sequence: 1, budget_used: {}, budget_limits: limits,
+          active_seconds: 0, pending_call_count: 0, error_code: null }, resources: { evidence: 0, experiments: 0, artifacts: 0 },
+        answer: original ? '初步报告正文' : null, answer_truncated: false, usage_scope: 'root_task_only', monetary_cost: null };
+    }
     else throw new Error('Unexpected fixture route: ' + method + ' ' + path);
     await route.fulfill({ status, contentType: 'application/json; charset=utf-8', body: JSON.stringify(body) });
   });
@@ -82,6 +107,35 @@ async function draftTask(page: Page) {
   await page.getByRole('button', { name: '创建研究任务' }).click();
   await page.getByLabel('研究目标', { exact: true }).fill('公开的 MNIST 验收目标');
 }
+
+test('associated reports are optional and carried into a confirmed follow-up', async ({ page }) => {
+  const calls = await fixture(page, { taskLinks: true });
+  await enterProject(page);
+  await page.getByRole('link', { name: originalTask.objective }).click();
+  await page.getByRole('button', { name: '编辑关联' }).click();
+  const editor = page.getByRole('dialog', { name: '编辑关联任务' });
+  await editor.getByRole('combobox', { name: '关联任务' }).click();
+  await page.locator('.ant-select-dropdown:visible').getByText(sourceTask.objective, { exact: true }).click();
+  await editor.getByRole('button', { name: '保存' }).click();
+  await expect(page.getByRole('link', { name: sourceTask.objective })).toBeVisible();
+  expect(calls.some(item => item.path === '/api/workbench/agent/tasks')).toBe(false);
+
+  await page.getByRole('button', { name: '追加任务' }).click();
+  const dialog = page.getByRole('dialog', { name: /追加研究任务/ });
+  await expect(dialog.getByText(sourceTask.objective, { exact: true })).toBeVisible();
+  await dialog.getByLabel('追加指令', { exact: true }).fill('补充比较不同数据集的规模');
+  await dialog.getByRole('checkbox', { name: /我确认提交后自动执行/ }).check();
+  await dialog.getByRole('button', { name: '确认提交并自动执行' }).click();
+  await expect(page).toHaveURL(/\/tasks\/task-submitted$/);
+  expect(JSON.parse(calls.find(item => item.path === '/api/workbench/agent/tasks')!.body!)).toMatchObject({
+    objective: '补充比较不同数据集的规模',
+    continuation_of_task_id: originalTask.task_id,
+    reference_task_ids: [sourceTask.task_id],
+  });
+  await page.getByRole('link', { name: originalTask.objective }).click();
+  await expect(page.getByRole('link', { name: '补充比较不同数据集的规模' })).toBeVisible();
+  await expect(page.getByText('初步报告正文')).toBeVisible();
+});
 
 test('dialog scroll locks keep workspace positions stable on short and long pages', async ({ playwright, baseURL }) => {
   const browser = await playwright.chromium.launch({ ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--disable-features=OverlayScrollbar'] });

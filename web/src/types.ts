@@ -25,6 +25,19 @@ export interface TaskSubmission {
   model_profile_id?: string | null;
   research_depth?: 'quick' | 'standard' | 'deep';
   reuse_project_evidence?: boolean;
+  continuation_of_task_id?: string;
+  reference_task_ids?: string[];
+}
+
+export type LinkedTask = Pick<Task, 'task_id' | 'objective' | 'status'>;
+export interface TaskLinks {
+  project_name: string;
+  previous: LinkedTask | null;
+  references: LinkedTask[];
+  followups: Page<LinkedTask>;
+  can_append: boolean;
+  model_profile_id: string | null;
+  workflow_kind: NonNullable<TaskSubmission['workflow_kind']> | null;
 }
 export interface SubmissionReceipt { task_id: string; status: TaskStatus; created: boolean; status_url: string }
 export interface Session {
@@ -40,6 +53,7 @@ export interface Session {
     research_quality?: boolean;
     project_evidence?: boolean;
     model_pricing?: boolean;
+    task_links?: boolean;
   };
 }
 export interface Task {

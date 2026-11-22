@@ -10,6 +10,7 @@ from starlette.concurrency import run_in_threadpool
 from autoscholar import __version__
 from autoscholar.agent.records import ArtifactRecord, ResolvedAgentMode, TaskStatus
 from autoscholar.agent.repository import AgentTaskRepository
+from autoscholar.api import workbench_task_links as task_links
 from autoscholar.api.routes.agent import router as agent_router
 from autoscholar.api.routes.evidence import router as evidence_router
 from autoscholar.api.routes.health import router as health_router
@@ -86,6 +87,7 @@ async def session(request: Request) -> WorkbenchSessionResponse:
             "research_quality": True,
             "project_evidence": getattr(request.app.state, "evidence_library", None) is not None,
             "task_deletion": True,
+            "task_links": True,
             "markdown_export": True,
             "document_max_bytes": settings.document_max_bytes,
             "document_max_pages": settings.document_max_pages,
@@ -209,6 +211,32 @@ async def overview(
     offset: int = Query(default=0, ge=0),
 ) -> TaskOverviewResponse:
     return await store(request).overview(task_id, limit=limit, offset=offset)
+
+
+@router.get("/projects/{project_id}/reference-tasks", response_model=list[task_links.LinkedTask])
+async def reference_tasks(
+    project_id: str,
+    request: Request,
+    q: str | None = Query(default=None, min_length=1, max_length=200),
+) -> list[task_links.LinkedTask]:
+    return await task_links.candidates(store(request), project_id, q)
+
+
+@router.get("/tasks/{task_id}/links", response_model=task_links.TaskLinks)
+async def linked_tasks(
+    task_id: str,
+    request: Request,
+    limit: int = Query(default=10, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+) -> task_links.TaskLinks:
+    return await task_links.view(store(request), task_id, limit, offset)
+
+
+@router.post("/tasks/{task_id}/links", response_model=list[task_links.LinkedTask])
+async def update_task_links(
+    task_id: str, payload: task_links.TaskReferencesRequest, request: Request
+) -> list[task_links.LinkedTask]:
+    return await task_links.save_references(store(request), task_id, payload.task_ids)
 
 
 @router.delete("/projects/{project_id}/tasks/{task_id}", status_code=204)

@@ -1,4 +1,4 @@
-import type { Approval, BudgetLimits, ControlReceipt, ControlState, EventPage, ExpectedState, ExperimentSpecification, Overview, Page, PDFDocument, Project, Session, SubmissionReceipt, Task, WorkflowEvent } from './types';
+import type { Approval, BudgetLimits, ControlReceipt, ControlState, EventPage, ExpectedState, ExperimentSpecification, LinkedTask, Overview, Page, PDFDocument, Project, Session, SubmissionReceipt, Task, TaskLinks, WorkflowEvent } from './types';
 
 type RecordValue = Record<string, unknown>;
 function record(value: unknown): value is RecordValue {
@@ -55,6 +55,7 @@ export function isSession(value: unknown): value is Session {
     && (caps.research_quality === undefined || typeof caps.research_quality === 'boolean')
     && (caps.project_evidence === undefined || typeof caps.project_evidence === 'boolean')
     && (caps.model_pricing === undefined || typeof caps.model_pricing === 'boolean')
+    && (caps.task_links === undefined || typeof caps.task_links === 'boolean')
     && (caps.task_deletion === undefined || typeof caps.task_deletion === 'boolean')
     && (caps.markdown_export === undefined || typeof caps.markdown_export === 'boolean')
     && (caps.model_management === undefined || typeof caps.model_management === 'boolean')
@@ -63,6 +64,17 @@ export function isSession(value: unknown): value is Session {
 export function isBudget(value: unknown): value is BudgetLimits {
   return record(value) && ['steps', 'replans', 'model_calls', 'tool_calls', 'search_queries', 'code_repairs',
     'training_runs', 'sandbox_runs', 'total_tokens', 'wall_seconds'].every((key) => integer(value[key]));
+}
+export function isLinkedTask(value: unknown): value is LinkedTask {
+  return record(value) && string(value.task_id) && string(value.objective) && isTaskStatus(value.status);
+}
+export function isTaskLinks(value: unknown): value is TaskLinks {
+  return record(value) && string(value.project_name)
+    && (value.previous === null || isLinkedTask(value.previous))
+    && Array.isArray(value.references) && value.references.length <= 5 && value.references.every(isLinkedTask)
+    && isPage(value.followups, isLinkedTask) && typeof value.can_append === 'boolean'
+    && nullableString(value.model_profile_id)
+    && (value.workflow_kind === null || ['research', 'literature_review', 'comparison', 'research_proposal', 'document_analysis'].includes(String(value.workflow_kind)));
 }
 export function isDocument(value: unknown): value is PDFDocument {
   return record(value) && ['id', 'project_id', 'original_filename', 'title', 'content_type', 'sha256',

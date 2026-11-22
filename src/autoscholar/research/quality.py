@@ -193,6 +193,7 @@ class ResearchQuality:
                 "date_context": research_context(run.objective, run.as_of_date),
                 "task_type": run.workflow_kind,
                 "requirements": task_guidance(run.workflow_kind),
+                **run.task_reference_payload(),
                 "materials": [
                     source.model_dump(mode="json", exclude={"read_attempted", "bank_claim_ids"})
                     for source in state.materials

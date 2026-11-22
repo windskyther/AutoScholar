@@ -67,6 +67,19 @@ class AgentTaskRow(Base):
     )
 
 
+class TaskLinkRow(Base):
+    __tablename__ = "task_links"
+
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_tasks.id", ondelete="CASCADE"), primary_key=True
+    )
+    source_task_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_tasks.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16))
+    position: Mapped[int] = mapped_column(Integer)
+
+
 class ToolCallRow(Base):
     __tablename__ = "tool_calls"
 

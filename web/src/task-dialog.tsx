@@ -6,13 +6,15 @@ import { ApiError, errorMessage, isWriteUncertain } from './api';
 import { useConnection } from './connection';
 import { QueryError } from './components';
 import { DocumentState } from './documents';
-import type { BudgetLimits, PDFDocument, Project, TaskSubmission } from './types';
+import type { BudgetLimits, LinkedTask, PDFDocument, Project, TaskSubmission } from './types';
+import type { ContinuationDraft } from './task-submission';
 import NumberSlider from './number-slider';
 import { Link } from 'react-router-dom';
 import { researchLabels } from './research-entry';
 import type { ResearchKind } from './research-entry';
 import { documentRefreshInterval, SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
 import WorkbenchTable from './workbench-table';
+import TaskReferencePicker from './task-reference-picker';
 
 interface Values {
   objective: string; budget: BudgetLimits; sources: ('web' | 'paper')[];
@@ -20,6 +22,7 @@ interface Values {
   model_profile_id: string;
   research_depth: 'quick' | 'standard' | 'deep';
   reuse_project_evidence: boolean;
+  reference_tasks: LinkedTask[];
   documentMode: 'all' | 'none' | 'selected'; retrieval: TaskSubmission['retrieval_mode']; consent: boolean;
 }
 const fields: { key: keyof BudgetLimits; label: string; min: number; max: number }[] = [
@@ -39,8 +42,8 @@ const objectiveHints: Partial<Record<ResearchKind, string>> = {
   literature_review: '主题与时间范围', comparison: '比较对象与维度', research_proposal: '研究目标与约束',
 };
 
-export default function TaskDialog({ project, initialKind, open, close, complete, pendingChanged }: {
-  project: Project; initialKind: ResearchKind; open: boolean;
+export default function TaskDialog({ project, initialKind, continuation, open, close, complete, pendingChanged }: {
+  project: Pick<Project, 'id' | 'name'>; initialKind: ResearchKind; continuation?: ContinuationDraft; open: boolean;
   close: () => void; complete: () => void; pendingChanged: (value: boolean) => void;
 }) {
   const { api, session } = useConnection();
@@ -65,10 +68,11 @@ export default function TaskDialog({ project, initialKind, open, close, complete
   const modelReady = !!chosenModel;
   useEffect(() => {
     if (models.data && !form.getFieldValue('model_profile_id')) {
-      const first = models.data.items.find((item) => item.enabled);
+      const enabled = models.data.items.filter(item => item.enabled);
+      const first = enabled.find(item => item.id === continuation?.modelProfileId) ?? enabled[0];
       if (first) form.setFieldValue('model_profile_id', first.id);
     }
-  }, [models.data, session?.capabilities.llm_configured, form]);
+  }, [models.data, continuation?.modelProfileId, form]);
   const docs = useQuery({ queryKey: ['documents', project.id, page], queryFn: ({ signal }) => api!.documents(project.id, page, signal),
     enabled: open && documentMode === 'selected', refetchInterval: ({ state }) => documentRefreshInterval(state.data) });
   useEffect(() => {
@@ -84,6 +88,7 @@ export default function TaskDialog({ project, initialKind, open, close, complete
       const result = await api.submitTask(draft.current.payload, draft.current.key);
       if (!api.connected) return;
       void cache.invalidateQueries({ queryKey: ['tasks', project.id] });
+      if (continuation) void cache.invalidateQueries({ queryKey: ['task-links', continuation.previous.task_id] });
       complete(); navigate(`/projects/${encodeURIComponent(project.id)}/tasks/${encodeURIComponent(result.task_id)}`);
     } catch (failure) {
       setError(failure);
@@ -104,12 +109,14 @@ export default function TaskDialog({ project, initialKind, open, close, complete
       model_profile_id: values.model_profile_id,
       ...(session?.capabilities.research_quality ? { research_depth: values.research_depth } : {}),
       ...(session?.capabilities.project_evidence ? { reuse_project_evidence: values.reuse_project_evidence } : {}),
+      ...(continuation ? { continuation_of_task_id: continuation.previous.task_id } : {}),
+      ...(values.reference_tasks?.length ? { reference_task_ids: values.reference_tasks.map(item => item.task_id) } : {}),
       document_ids: values.documentMode === 'all' ? null : values.documentMode === 'none' ? [] : selected,
       retrieval_mode: values.retrieval, research_sources: values.sources, budget: values.budget,
     }) };
     await send();
   }
-  return <Modal title={`提交研究任务 · ${project.name}`} open={open} width={820} mask={{ closable: false }}
+  return <Modal title={`${continuation ? '追加研究任务' : '提交研究任务'} · ${project.name}`} open={open} width={820} mask={{ closable: false }}
     keyboard={!busy} closable={!busy} onCancel={() => { if (!busy) close(); }} footer={null}>
     <Form form={form} layout="vertical" disabled={busy || uncertain} onFinish={(values) => void submit(values)} initialValues={{
       budget: ceiling, sources: initialKind === 'literature_review' || !session?.capabilities.web_search_configured ? ['paper'] : ['web'],
@@ -117,6 +124,7 @@ export default function TaskDialog({ project, initialKind, open, close, complete
       model_profile_id: '',
       research_depth: 'standard',
       reuse_project_evidence: true,
+      reference_tasks: continuation?.references ?? [],
     }}>
       <>
         <Form.Item name="model_profile_id" label="使用模型" extra={models.isPending ? '正在读取模型…' : undefined}
@@ -142,9 +150,13 @@ export default function TaskDialog({ project, initialKind, open, close, complete
           if (value === 'literature_review') form.setFieldValue('sources', ['paper']);
         }} />
       </Form.Item>
-      <Form.Item name="objective" label="研究目标" rules={[{ required: true, whitespace: true, max: 10000, message: '填写 1–10000 字符的研究目标' }]}>
-        <Input.TextArea rows={3} maxLength={10000} showCount placeholder={objectiveHints[workflowKind]} />
+      {continuation && <p>上一轮：{continuation.previous.objective}</p>}
+      <Form.Item name="objective" label={continuation ? '追加指令' : '研究目标'} rules={[{ required: true, whitespace: true, max: 10000, message: '请填写 1–10000 字符' }]}>
+        <Input.TextArea rows={3} maxLength={10000} showCount placeholder={continuation ? '说明需要补充或调整的内容' : objectiveHints[workflowKind]} />
       </Form.Item>
+      {session?.capabilities.task_links && <Form.Item name="reference_tasks" label="关联任务（可选）">
+        <TaskReferencePicker projectId={project.id} exclude={continuation ? [continuation.previous.task_id] : []} disabled={busy || uncertain} />
+      </Form.Item>}
       {session?.capabilities.project_evidence && <Form.Item name="reuse_project_evidence" valuePropName="checked">
         <Checkbox>复用本项目已有证据</Checkbox>
       </Form.Item>}

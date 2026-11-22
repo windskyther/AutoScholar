@@ -53,6 +53,8 @@ class DurableService:
         specification = request.pop("experiment_specification", None)
         depth = request.pop("research_depth", None)
         reuse = request.pop("reuse_project_evidence", None)
+        continuation_id = request.pop("continuation_of_task_id", None)
+        reference_ids = request.pop("reference_task_ids", [])
         snapshot = Snapshot(
             **request,
             task_id=str(uuid4()),
@@ -84,8 +86,16 @@ class DurableService:
             canonical.pop("research_depth", None)
         if canonical.get("reuse_project_evidence") is None:
             canonical.pop("reuse_project_evidence", None)
+        for name in ("continuation_of_task_id", "reference_task_ids"):
+            if not canonical.get(name):
+                canonical.pop(name, None)
         return await self.repository.enqueue(
-            snapshot, key, digest(canonical), require_managed=require_managed
+            snapshot,
+            key,
+            digest(canonical),
+            require_managed=require_managed,
+            continuation_id=continuation_id,
+            reference_ids=reference_ids,
         )
 
     async def tick(self, task_id: str | None = None) -> bool:

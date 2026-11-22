@@ -14,6 +14,7 @@ from autoscholar.agent.database_models import (
     ArtifactRow,
     EvidenceRow,
     ExperimentRow,
+    TaskLinkRow,
     TaskPlanRow,
 )
 from autoscholar.agent.records import ResolvedAgentMode, TaskStatus
@@ -45,6 +46,7 @@ from autoscholar.orchestration.durable_models import (
     WorkflowJobRow,
 )
 from autoscholar.orchestration.durable_repository import utc
+from autoscholar.orchestration.task_links import task_deleted
 from autoscholar.rag.database_models import ProjectRow
 from autoscholar.tool_platform.operation_models import CoreToolCallRow
 
@@ -56,14 +58,7 @@ class WorkbenchRepository:
     @staticmethod
     def deleted(task_id: Any) -> Any:
         # A durable removal event hides a goal without erasing execution receipts.
-        return (
-            select(WorkflowEventRow.id)
-            .where(
-                WorkflowEventRow.task_id == task_id,
-                WorkflowEventRow.kind == "task_deleted",
-            )
-            .exists()
-        )
+        return task_deleted(task_id)
 
     async def delete_task(self, project_id: str, task_id: str) -> None:
         terminal = {"succeeded", "partial", "failed", "budget_exceeded", "cancelled"}
@@ -371,6 +366,13 @@ class WorkbenchRepository:
                 AgentTaskRow.project_id == project_id,
                 AgentTaskRow.parent_task_id.is_(None),
                 ~self.deleted(AgentTaskRow.id),
+                ~select(TaskLinkRow.task_id)
+                .where(
+                    TaskLinkRow.task_id == AgentTaskRow.id,
+                    TaskLinkRow.kind == "continuation",
+                    ~task_deleted(TaskLinkRow.source_task_id),
+                )
+                .exists(),
             ]
             if status is not None:
                 conditions.append(AgentTaskRow.status == status)

@@ -20,6 +20,7 @@ from autoscholar.orchestration.durable_models import (
     WorkflowEventRow,
     WorkflowJobRow,
 )
+from autoscholar.orchestration.task_links import prepare_submission_links
 from autoscholar.orchestration.task_types import is_research
 from autoscholar.rag.database_models import DocumentRow, ProjectRow
 
@@ -142,7 +143,14 @@ class DurableRepository:
         )
 
     async def enqueue(
-        self, snapshot: Snapshot, key: str, request_hash: str, *, require_managed: bool = False
+        self,
+        snapshot: Snapshot,
+        key: str,
+        request_hash: str,
+        *,
+        require_managed: bool = False,
+        continuation_id: str | None = None,
+        reference_ids: list[str] | None = None,
     ) -> tuple[str, bool]:
         async with self.sessions() as session:
             existing = await session.scalar(
@@ -242,6 +250,9 @@ class DurableRepository:
                     code="documents_selection_required",
                     message="Project documents are required",
                 )
+            links, snapshot.prior_task_results = await prepare_submission_links(
+                session, snapshot.project_id, snapshot.task_id, reference_ids or [], continuation_id
+            )
             session.add(
                 AgentTaskRow(
                     id=snapshot.task_id,
@@ -255,6 +266,7 @@ class DurableRepository:
                 )
             )
             await session.flush()
+            session.add_all(links)
             row = WorkflowJobRow(
                 task_id=snapshot.task_id,
                 idempotency_key=key,

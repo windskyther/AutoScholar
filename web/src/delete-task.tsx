@@ -4,9 +4,9 @@ import { DeleteOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { ApiError, errorMessage, isWriteUncertain } from './api';
 import { useConnection } from './connection';
-import type { Task } from './types';
+import type { LinkedTask } from './types';
 
-export default function DeleteTask({ task, projectId, onDeleted }: { task: Task; projectId: string; onDeleted: () => void }) {
+export default function DeleteTask({ task, projectId, onDeleted }: { task: LinkedTask; projectId: string; onDeleted: () => void }) {
   const { api, session } = useConnection(); const cache = useQueryClient();
   const [open, setOpen] = useState(false); const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null); const [uncertain, setUncertain] = useState(false);
@@ -17,7 +17,11 @@ export default function DeleteTask({ task, projectId, onDeleted }: { task: Task;
     await cache.cancelQueries({ predicate: (query) => query.queryKey.includes(task.task_id) });
     cache.removeQueries({ predicate: (query) => query.queryKey.includes(task.task_id) });
     setOpen(false); onDeleted();
-    await cache.invalidateQueries({ queryKey: ['tasks', projectId] });
+    await Promise.all([
+      cache.invalidateQueries({ queryKey: ['tasks', projectId] }),
+      cache.invalidateQueries({ queryKey: ['task-links'] }),
+      cache.invalidateQueries({ queryKey: ['task-reference-options', projectId] }),
+    ]);
   }
   async function remove() {
     if (!api || inFlight.current || uncertain) return;

@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import update
 
-from autoscholar.agent.database_models import EvidenceRow
+from autoscholar.agent.database_models import AgentTaskRow, EvidenceRow
 from autoscholar.agent.runner import AgentRunner
 from autoscholar.api.routes.agent import AgentRunRequest
 from autoscholar.api.workbench_repository import WorkbenchRepository
@@ -110,6 +110,56 @@ async def test_research_survives_restart_without_code_or_training(tmp_path: Path
         assert child and not any(t.tool_name == "knowledge_search" for t in child.tool_calls)
         assert child.evidence[0].claim not in child.evidence[0].excerpt
         assert len(provider.calls) == 6
+    finally:
+        await engine.dispose()
+
+
+async def test_followup_context_reaches_research_model_calls(tmp_path: Path) -> None:
+    provider = ScriptedProvider(research_script())
+    service, engine = await research_service(tmp_path, provider)
+    durable = DurableService(service)
+    try:
+        async with service.tasks.session_factory.begin() as session:
+            session.add_all(
+                AgentTaskRow(
+                    id=task_id,
+                    objective=task_id,
+                    answer=answer,
+                    project_id="research-project",
+                    status="succeeded",
+                    mode="autonomous",
+                )
+                for task_id, answer in (
+                    ("previous", "Previous report excerpt"),
+                    ("selected", "Selected report excerpt"),
+                    ("unselected", "Unselected report excerpt"),
+                )
+            )
+        task_id, _ = await durable.submit(
+            {
+                "objective": OBJECTIVE,
+                "workflow_kind": "research",
+                "project_id": "research-project",
+                "continuation_of_task_id": "previous",
+                "reference_task_ids": ["selected"],
+            },
+            "followup-context",
+        )
+        assert await drain(DurableService(service), task_id) == "succeeded"
+        planner = json.loads(provider.calls[0]["messages"][1].content)
+        assert planner["objective"] == OBJECTIVE
+        assert [item["task_id"] for item in planner["prior_task_results_untrusted"]] == [
+            "previous",
+            "selected",
+        ]
+        executor = provider.calls[1]["messages"][1].content
+        assert "Previous report excerpt" in executor and "Selected report excerpt" in executor
+        assert all(
+            "Unselected report excerpt" not in message.content
+            for call in provider.calls
+            for message in call["messages"]
+            if isinstance(getattr(message, "content", None), str)
+        )
     finally:
         await engine.dispose()
 

@@ -18,6 +18,7 @@ import { usePageReady } from './page-transition';
 import { readResearchEntry } from './research-entry';
 import { ACTIVE_TASK_REFRESH_MS, DOCUMENT_PROCESSING_REFRESH_MS, isActiveTask, SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
 import WorkbenchTable from './workbench-table';
+import TaskConnections from './task-connections';
 
 function failureLabel(code: string | null | undefined): string {
   const labels: Record<string, string> = {
@@ -165,6 +166,7 @@ export function TaskPage() {
       title={`${failureLabel(data.execution.cause_error_code ?? data.execution.error_code)}，任务已停止`}
       description="请求可能已经到达外部服务，实际结果和用量需要核对。系统不会自动重发；请先检查已有记录，避免重复提交。" />}
     {session?.capabilities.task_controls && <Controls key={`controls:${taskId}`} taskId={taskId!} projectId={projectId!} />}
+    {session?.capabilities.task_links && <TaskConnections key={taskId} projectId={projectId!} task={data.task} />}
     <div className="metrics-grid">
       <Metric label="模型调用" value={usage.model_calls ?? 0} limit={limits?.model_calls} />
       <Metric label="总 Tokens" value={usage.total_tokens ?? 0} limit={limits?.total_tokens} />

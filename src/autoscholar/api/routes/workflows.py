@@ -9,6 +9,7 @@ from autoscholar.api.routes.agent import AgentRunRequest
 from autoscholar.core.errors import AppError
 from autoscholar.orchestration.approvals import ApprovalDecision
 from autoscholar.orchestration.durable import DurableService
+from autoscholar.orchestration.task_links import ReferenceIds, TaskId
 
 router = APIRouter(prefix="/agent/tasks", tags=["workflows"])
 
@@ -16,6 +17,11 @@ router = APIRouter(prefix="/agent/tasks", tags=["workflows"])
 class RecoveryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     checkpoint_sequence: int = Field(ge=1)
+
+
+class DurableTaskRequest(AgentRunRequest):
+    continuation_of_task_id: TaskId | None = None
+    reference_task_ids: ReferenceIds = Field(default_factory=list)
 
 
 def service(request: Request) -> DurableService:
@@ -28,7 +34,7 @@ def service(request: Request) -> DurableService:
 
 @router.post("", status_code=202)
 async def submit(
-    payload: AgentRunRequest,
+    payload: DurableTaskRequest,
     request: Request,
     idempotency_key: Annotated[
         str, Header(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")

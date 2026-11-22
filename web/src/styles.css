@@ -220,6 +220,12 @@ p { color: var(--muted); line-height: 1.65; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 30px 0 18px; flex-wrap: wrap; }
 .section-heading h2 { margin: 0; }
 .section-heading .ant-space { flex-wrap: wrap; }
+.task-connections { margin-bottom: 20px; overflow-wrap: anywhere; }
+.task-connections h3 { margin: 16px 0 8px; }
+.task-connections ul { padding-left: 20px; }
+.task-reference-option { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.task-reference-option > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.task-reference-option > small { flex-shrink: 0; color: var(--muted); }
 .document-section { margin-top: 42px; border-top: 1px solid var(--border-soft); }
 .budget-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
 .budget-settings { margin-bottom: 24px; }
