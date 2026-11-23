@@ -1,0 +1,296 @@
+import json
+from collections.abc import Callable
+from typing import Any, cast
+
+import httpx
+from jsonschema import Draft202012Validator, ValidationError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    AuthenticationError,
+    RateLimitError,
+)
+from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
+from referencing import Registry
+from referencing.exceptions import Unresolvable
+
+from autoscholar.core.config import Settings
+from autoscholar.core.rejections import LocalRequestRejected
+from autoscholar.llm.compatibility import adapt_deepseek_request, deepseek_schema, resolve_profile
+from autoscholar.llm.errors import (
+    LLMResponseError,
+    LLMUnavailableError,
+    LLMUpstreamError,
+)
+from autoscholar.llm.models import (
+    ChatMessage,
+    ConversationMessage,
+    LLMResult,
+    ToolCall,
+    ToolChoice,
+    ToolDefinition,
+    ToolResultMessage,
+)
+from autoscholar.llm.tool_arguments import ToolArgumentsError, decode_tool_arguments
+from autoscholar.llm.usage_parser import parse_usage
+
+
+class OpenAICompatibleProvider:
+    """OpenAI-compatible provider backed by the async official SDK."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+        request_validator: Callable[[dict[str, Any], int], object] | None = None,
+    ) -> None:
+        if not settings.llm_api_key or not settings.llm_model:
+            raise ValueError("LLM API key and model are required")
+
+        self._model = settings.llm_model
+        self._compatibility_profile = resolve_profile(
+            settings.llm_compatibility_profile, settings.llm_base_url
+        )
+        self._request_validator = request_validator
+        self._client = AsyncOpenAI(
+            api_key=settings.llm_api_key.get_secret_value(),
+            base_url=settings.llm_base_url,
+            timeout=settings.llm_timeout_seconds,
+            max_retries=0,
+            http_client=http_client,
+        )
+
+    @property
+    def configured(self) -> bool:
+        return True
+
+    def _request_payload(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> dict[str, Any]:
+        request_messages = [self._serialize_message(message) for message in messages]
+        request_tools = [self._serialize_tool(tool) for tool in tools] if tools else None
+        request_tool_choice: Any = tool_choice
+        if tool_choice not in {"none", "auto", "required"}:
+            request_tool_choice = {"type": "function", "function": {"name": tool_choice}}
+        request: dict[str, Any] = {"model": self._model, "messages": request_messages}
+        if request_tools:
+            request.update(
+                tools=request_tools,
+                tool_choice=request_tool_choice,
+                parallel_tool_calls=False,
+            )
+        if self._compatibility_profile == "deepseek":
+            return adapt_deepseek_request(request)
+        return request
+
+    async def preflight(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+        reserve_bytes: int = 0,
+    ) -> None:
+        request = self._request_payload(messages, tools=tools, tool_choice=tool_choice)
+        if self._request_validator is not None:
+            self._request_validator(request, reserve_bytes)
+
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        await self.preflight(messages, tools=tools, tool_choice=tool_choice)
+        request = self._request_payload(messages, tools=tools, tool_choice=tool_choice)
+        # Preflight validates the final wire body. The SDK accepts vendor fields via extra_body.
+        thinking = request.pop("thinking", None)
+        if thinking is not None:
+            request["extra_body"] = {"thinking": thinking}
+        try:
+            response = await self._client.chat.completions.create(**request)
+        except AuthenticationError as exc:
+            raise LLMUpstreamError(
+                code="llm_authentication_failed",
+                message="The language model provider rejected its credentials",
+            ) from exc
+        except RateLimitError as exc:
+            raise LLMUnavailableError(
+                code="llm_rate_limited",
+                message="The language model provider is rate limited",
+            ) from exc
+        except APITimeoutError as exc:
+            raise LLMUnavailableError(
+                code="llm_timeout",
+                message="The language model provider timed out",
+            ) from exc
+        except APIConnectionError as exc:
+            # The SDK wraps transport admission errors as connection errors. Only this
+            # explicit pre-dispatch proof may be unwrapped; ordinary network errors stay unknown.
+            if isinstance(exc.__cause__, LocalRequestRejected):
+                raise exc.__cause__ from None
+            raise LLMUnavailableError(
+                code="llm_unavailable",
+                message="The language model provider is unavailable",
+            ) from exc
+        except APIStatusError as exc:
+            raise LLMUpstreamError(message="The language model provider returned an error") from exc
+
+        usage = None
+        if response.usage is not None:
+            usage = parse_usage(response.usage)
+        message = response.choices[0].message if response.choices else None
+        finish_reason = response.choices[0].finish_reason if response.choices else None
+        content = message.content if message is not None else None
+        raw_message: Any = message
+        reasoning_content = (
+            getattr(raw_message, "reasoning_content", None) if message is not None else None
+        )
+        if reasoning_content is not None and not isinstance(reasoning_content, str):
+            reasoning_content = None
+        tool_calls: list[ToolCall] = []
+        if message is not None and message.tool_calls:
+            if finish_reason == "length":
+                raise LLMResponseError(
+                    code="llm_response_truncated",
+                    message="The language model tool response was truncated; no tool was executed",
+                    usage=usage,
+                    retryable=False,
+                    model=response.model or self._model,
+                    finish_reason=finish_reason,
+                    validation_reason="output_truncated",
+                )
+            for typed_call in message.tool_calls:
+                raw_call: Any = typed_call
+                try:
+                    arguments = decode_tool_arguments(raw_call.function.arguments)
+                except ToolArgumentsError as exc:
+                    raise LLMResponseError(
+                        code="llm_invalid_tool_call",
+                        message="The language model returned invalid tool arguments",
+                        usage=usage,
+                        retryable=finish_reason != "length",
+                        model=response.model or self._model,
+                        finish_reason=finish_reason,
+                        validation_reason=exc.reason,
+                    ) from exc
+                tool_calls.append(
+                    ToolCall(
+                        id=raw_call.id,
+                        name=raw_call.function.name,
+                        arguments=arguments,
+                    )
+                )
+
+        # Validate the whole completion before exposing any executable calls. Projecting wire
+        # schema constraints does not relax the original local schema or Snapshot write guards.
+        if self._compatibility_profile == "deepseek":
+            for tool in tools or []:
+                if not tool.strict or deepseek_schema(tool.parameters) == tool.parameters:
+                    continue
+                validator = Draft202012Validator(tool.parameters, registry=Registry())
+                for call in tool_calls:
+                    if call.name != tool.name:
+                        continue
+                    try:
+                        validator.validate(call.arguments)
+                    except (ValidationError, Unresolvable) as exc:
+                        # Schema paths contain our field names, never the rejected values.
+                        feedback = (
+                            f"{exc.validator} at schema /"
+                            + "/".join(str(part) for part in exc.absolute_schema_path)
+                            if isinstance(exc, ValidationError)
+                            else "unresolvable local schema reference"
+                        )
+                        raise LLMResponseError(
+                            code="llm_invalid_tool_call",
+                            message=(
+                                "The model returned arguments outside the original tool schema "
+                                f"for {tool.name}: " + feedback
+                            ),
+                            usage=usage,
+                            model=response.model or self._model,
+                            finish_reason=finish_reason,
+                            validation_reason="tool_schema_violation",
+                            validation_feedback=feedback,
+                            tool_name=tool.name,
+                        ) from exc
+
+        if not content and not tool_calls:
+            raise LLMResponseError(
+                code="llm_empty_response",
+                message="The language model provider returned no text or tool calls",
+                usage=usage,
+                retryable=finish_reason != "length",
+                model=response.model or self._model,
+                finish_reason=finish_reason,
+            )
+
+        return LLMResult(
+            text=content or "",
+            model=response.model or self._model,
+            usage=usage,
+            tool_calls=tuple(tool_calls),
+            reasoning_content=reasoning_content,
+        )
+
+    @staticmethod
+    def _serialize_message(message: ConversationMessage) -> ChatCompletionMessageParam:
+        if isinstance(message, ChatMessage):
+            return cast(
+                ChatCompletionMessageParam,
+                {"role": message.role, "content": message.content},
+            )
+        if isinstance(message, ToolResultMessage):
+            return cast(
+                ChatCompletionMessageParam,
+                {
+                    "role": "tool",
+                    "tool_call_id": message.tool_call_id,
+                    "content": message.content,
+                },
+            )
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            "content": message.content or None,
+            "tool_calls": [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                    },
+                }
+                for call in message.tool_calls
+            ],
+        }
+        if message.reasoning_content is not None:
+            assistant_message["reasoning_content"] = message.reasoning_content
+        return cast(ChatCompletionMessageParam, assistant_message)
+
+    @staticmethod
+    def _serialize_tool(tool: ToolDefinition) -> ChatCompletionToolParam:
+        return cast(
+            ChatCompletionToolParam,
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                    "strict": tool.strict,
+                },
+            },
+        )
+
+    async def close(self) -> None:
+        await self._client.close()

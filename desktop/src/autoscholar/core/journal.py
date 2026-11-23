@@ -1,0 +1,46 @@
+"""Optional durable accounting around external operations, scoped to one worker task."""
+
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from uuid import uuid4
+
+from autoscholar.core.audit import current_security_audit
+from autoscholar.core.rejections import LocalRequestRejected
+
+JournalHook = Callable[[str, str, bool], Awaitable[None]]
+current_journal: ContextVar[JournalHook | None] = ContextVar("workflow_journal", default=None)
+
+
+async def persist_budget() -> None:
+    hook = current_journal.get()
+    if hook is not None:
+        await hook("", "budget", False)
+
+
+async def record_local_llm_rejection() -> None:
+    hook = current_journal.get()
+    if hook is not None:
+        await hook("", "llm_local_rejected", False)
+
+
+@asynccontextmanager
+async def external_operation(kind: str, *, operation_id: str | None = None) -> AsyncIterator[None]:
+    hook = current_journal.get()
+    operation_id = operation_id or str(uuid4())
+    audit = current_security_audit.get()
+    if audit is not None:
+        await audit(operation_id, kind, True)
+    if hook is not None:
+        await hook(operation_id, kind, True)
+    try:
+        yield
+    except LocalRequestRejected:
+        if hook is not None and kind == "llm":
+            await hook(operation_id, "llm_local_rejected", False)
+        raise
+    # An interrupted/failed request stays pending: its result cannot be assumed absent.
+    if hook is not None:
+        await hook(operation_id, kind, False)
+    if audit is not None:
+        await audit(operation_id, kind, False)

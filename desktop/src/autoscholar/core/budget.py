@@ -1,0 +1,187 @@
+"""Request-local budgets shared by all autonomous child services."""
+
+from __future__ import annotations
+
+import time
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from autoscholar.core.journal import external_operation, record_local_llm_rejection
+from autoscholar.core.rejections import LocalRequestRejected
+
+if TYPE_CHECKING:
+    from autoscholar.llm.base import LLMProvider
+    from autoscholar.llm.models import (
+        ConversationMessage,
+        LLMResult,
+        TokenUsage,
+        ToolChoice,
+        ToolDefinition,
+    )
+
+
+class BudgetLimits(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    steps: int = Field(default=20, ge=1, le=100)
+    replans: int = Field(default=3, ge=0, le=10)
+    model_calls: int = Field(default=60, ge=1, le=300)
+    tool_calls: int = Field(default=50, ge=1, le=500)
+    search_queries: int = Field(default=20, ge=1, le=100)
+    code_repairs: int = Field(default=3, ge=0, le=10)
+    training_runs: int = Field(default=4, ge=1, le=20)
+    sandbox_runs: int = Field(default=40, ge=1, le=200)
+    total_tokens: int = Field(default=500000, ge=1, le=1000000)
+    wall_seconds: int = Field(default=1800, ge=1, le=7200)
+
+    def bounded_by(self, ceiling: BudgetLimits) -> BudgetLimits:
+        return BudgetLimits(
+            **{key: min(value, getattr(ceiling, key)) for key, value in self.model_dump().items()}
+        )
+
+
+class BudgetExceeded(RuntimeError):
+    code = "autonomous_budget_exceeded"
+
+    def __init__(self, resource: str) -> None:
+        self.message = f"Autonomous budget exhausted: {resource}"
+        super().__init__(self.message)
+
+
+@dataclass
+class Budget:
+    limits: BudgetLimits
+    used: dict[str, int] = field(default_factory=dict)
+    started: float = field(default_factory=time.monotonic)
+
+    def check(self) -> None:
+        if time.monotonic() - self.started >= self.limits.wall_seconds:
+            raise BudgetExceeded("wall_seconds")
+        if self.used.get("total_tokens", 0) >= self.limits.total_tokens:
+            raise BudgetExceeded("total_tokens")
+
+    def consume(self, resource: str, amount: int = 1) -> None:
+        self.check()
+        current = self.used.get(resource, 0)
+        if current + amount > int(getattr(self.limits, resource)):
+            raise BudgetExceeded(resource)
+        self.used[resource] = current + amount
+
+
+current_budget: ContextVar[Budget | None] = ContextVar("autonomous_budget", default=None)
+current_parent: ContextVar[str | None] = ContextVar("autonomous_parent", default=None)
+
+
+def consume(resource: str, amount: int = 1) -> None:
+    budget = current_budget.get()
+    if budget is not None:
+        budget.consume(resource, amount)
+
+
+class BudgetedLLM:
+    def __init__(self, provider: LLMProvider) -> None:
+        self.provider = provider
+
+    @property
+    def configured(self) -> bool:
+        return self.provider.configured
+
+    async def preflight(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+        reserve_bytes: int = 0,
+    ) -> None:
+        from autoscholar.llm.preflight import preflight_request
+
+        await preflight_request(
+            self.provider,
+            messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            reserve_bytes=reserve_bytes,
+        )
+
+    async def generate(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: ToolChoice = "none",
+    ) -> LLMResult:
+        # Config imports BudgetLimits before the provider package can be initialized.
+        from autoscholar.evidence.models import current_evidence_guard
+        from autoscholar.llm.errors import LLMResponseError
+
+        guard = current_evidence_guard.get()
+        if guard is not None:
+            await guard()
+
+        # A locally stopped wrapper cannot dispatch: do not create a phantom call/journal.
+        check_available = getattr(self.provider, "check_available", None)
+        if callable(check_available):
+            check_available()
+        try:
+            await self.preflight(messages, tools=tools, tool_choice=tool_choice)
+        except LocalRequestRejected:
+            await record_local_llm_rejection()
+            raise
+        consume("model_calls")
+        protocol_error: LLMResponseError | None = None
+        result: LLMResult | None = None
+        async with external_operation("llm"):
+            try:
+                result = await self.provider.generate(
+                    messages, tools=tools, tool_choice=tool_choice
+                )
+                usage = result.usage
+            except LocalRequestRejected:
+                # A late local guard (e.g. policy changed after preview) also proves no send.
+                budget = current_budget.get()
+                if budget is not None:
+                    budget.used["model_calls"] = max(0, budget.used.get("model_calls", 0) - 1)
+                raise
+            except LLMResponseError as exc:
+                protocol_error = exc
+                usage = exc.usage
+            # Persist known usage before completing the journal entry, including overruns.
+            try:
+                self._account(usage)
+            except BudgetExceeded:
+                if usage is None:
+                    raise
+            finally:
+                # Account the actual response before awaiting optional analytics I/O.
+                # Interrupted analytics must not discard known workflow token usage.
+                record_usage = getattr(self.provider, "record_usage", None)
+                if callable(record_usage):
+                    await record_usage()
+        budget = current_budget.get()
+        if budget is not None:
+            budget.check()
+        if guard is not None:
+            await guard()
+        if protocol_error is not None:
+            raise protocol_error
+        assert result is not None
+        return result
+
+    @staticmethod
+    def _account(usage: TokenUsage | None) -> None:
+        budget = current_budget.get()
+        if budget is not None:
+            if usage is None:
+                # Never permit unmetered repeated calls when a provider omits usage.
+                budget.used["total_tokens"] = budget.limits.total_tokens
+                raise BudgetExceeded("provider_usage_missing")
+            for key in ("input_tokens", "output_tokens", "total_tokens"):
+                budget.used[key] = budget.used.get(key, 0) + max(0, getattr(usage, key))
+            budget.check()
+
+    async def close(self) -> None:
+        await self.provider.close()

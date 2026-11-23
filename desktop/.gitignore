@@ -1,3 +1,48 @@
-/target/
-/runtime/
-/gen/
+# Local design source (must never be pushed)
+AutoScholar_总体设计文档_V1.0.md
+/主页参考demo/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Python
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.python-version.local
+
+# Frontend dependencies, builds and browser test output
+node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
+*.tsbuildinfo
+
+# Tests and tooling
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Runtime data
+*.log
+logs/
+artifacts/
+outputs/
+data/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+/AutoScholar-Setup-x64.exe

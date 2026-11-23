@@ -24,12 +24,18 @@ browser/test-results/
 browser/playwright-report/
 *.tsbuildinfo
 
+# Build products left by the previous checkout layout.
+/desktop/target/
+/desktop/runtime/
+/desktop/gen/
+
 # Tests and tooling
 .coverage
 coverage.xml
 htmlcov/
 .mypy_cache/
 .pytest_cache/
+.pytest-tmp/
 .ruff_cache/
 
 # Runtime data

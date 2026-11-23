@@ -1,0 +1,16 @@
+{
+  "schema_version":1,
+  "suite_id":"public-coding-v1",
+  "scripts":{
+    "sum":{"prompt":"实现 sum_values(values)，返回数值列表之和并编写测试。","initial_files":{"solution.py":"def sum_values(values):\n    return sum(values)\n","test_solution.py":"from solution import sum_values\n\ndef test_sum():\n    assert sum_values([1, 2, 3]) == 6\n"}},
+    "mean":{"prompt":"实现 mean(values)，空列表抛出 ValueError。","initial_files":{"solution.py":"def mean(values):\n    if not values:\n        raise ValueError('empty')\n    return sum(values) / len(values)\n","test_solution.py":"from solution import mean\n\ndef test_mean():\n    assert mean([2, 4]) == 3\n"}},
+    "clamp":{"prompt":"实现 clamp(value, low, high)，并拒绝倒置边界。","initial_files":{"solution.py":"def clamp(value, low, high):\n    if low > high:\n        raise ValueError('bounds')\n    return min(high, max(low, value))\n","test_solution.py":"from solution import clamp\n\ndef test_clamp():\n    assert clamp(20, 0, 10) == 10\n"}},
+    "dot":{"prompt":"实现 dot(left, right)，长度不一致抛出 ValueError。","initial_files":{"solution.py":"def dot(left, right):\n    if len(left) != len(right):\n        raise ValueError('length')\n    return sum(a * b for a, b in zip(left, right, strict=True))\n","test_solution.py":"from solution import dot\n\ndef test_dot():\n    assert dot([1, 2], [3, 4]) == 11\n"}},
+    "factorial":{"prompt":"实现 factorial(n)，拒绝负数和非整数。","initial_files":{"solution.py":"def factorial(n):\n    if type(n) is not int or n < 0:\n        raise ValueError('integer')\n    value = 1\n    for item in range(2, n + 1):\n        value *= item\n    return value\n","test_solution.py":"from solution import factorial\n\ndef test_factorial():\n    assert factorial(5) == 120\n"}},
+    "whitespace":{"prompt":"实现 normalize(text)，压缩多余空白字符。","initial_files":{"solution.py":"def normalize(text):\n    return ' '.join(text.split())\n","test_solution.py":"from solution import normalize\n\ndef test_normalize():\n    assert normalize('a  b') == 'a b'\n"}},
+    "syntax-repair":{"prompt":"修复 sum_values 的语法错误并通过独立检查。","initial_files":{"solution.py":"def sum_values(values)\n    return sum(values)\n","test_solution.py":"from solution import sum_values\n\ndef test_sum():\n    assert sum_values([1, 2]) == 3\n"},"repaired_files":{"solution.py":"def sum_values(values):\n    return sum(values)\n"}},
+    "logic-repair":{"prompt":"修复 sum_values 的错误结果并通过独立检查。","initial_files":{"solution.py":"def sum_values(values):\n    return 0\n","test_solution.py":"from solution import sum_values\n\ndef test_sum():\n    assert sum_values([1, 2]) == 3\n"},"repaired_files":{"solution.py":"def sum_values(values):\n    return sum(values)\n"}},
+    "repair-exhausted":{"prompt":"验证无法修复的语法错误不会被宣告成功。","initial_files":{"solution.py":"def sum_values(values)\n    return sum(values)\n","test_solution.py":"from solution import sum_values\n\ndef test_sum():\n    assert sum_values([1, 2]) == 3\n"}},
+    "deceptive-tests":{"prompt":"验证恒定返回零却只测试零的 sum_values 不通过独立验收。","initial_files":{"solution.py":"def sum_values(values):\n    return 0\n","test_solution.py":"from solution import sum_values\n\ndef test_sum():\n    assert sum_values([]) == 0\n"}}
+  }
+}

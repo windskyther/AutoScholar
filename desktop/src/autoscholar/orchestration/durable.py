@@ -1,0 +1,455 @@
+"""One leased, checkpointed workflow unit at a time, using Phase 6 execution services."""
+
+import asyncio
+import time
+from typing import Any
+from uuid import uuid4
+
+from pydantic import ValidationError
+
+from autoscholar.core.audit import AuditEvent, AuditSink
+from autoscholar.core.budget import BudgetExceeded, BudgetLimits, current_budget
+from autoscholar.core.errors import AppError
+from autoscholar.core.journal import current_journal, persist_budget
+from autoscholar.evidence.library import EvidenceLibrary
+from autoscholar.evidence.models import EvidenceContext, current_evidence, current_evidence_guard
+from autoscholar.experiment.models import ExperimentSpecification
+from autoscholar.llm.profiles import current_model_profile
+from autoscholar.orchestration.approvals import ApprovalService, cost_units
+from autoscholar.orchestration.checkpoints import Snapshot, Stage, digest
+from autoscholar.orchestration.durable_repository import DurableRepository, LeaseLost, conflict
+from autoscholar.orchestration.memory import MemoryService
+from autoscholar.orchestration.models import ReviewResult, TaskPlan
+from autoscholar.orchestration.service import AutonomousService, FlowState, Run, source_digest
+from autoscholar.orchestration.task_types import is_research
+from autoscholar.tool_platform.context import WorkflowClaim, current_workflow_claim
+
+
+class DurableService:
+    def __init__(
+        self,
+        service: AutonomousService,
+        *,
+        lease_seconds: int = 30,
+        approval_threshold: int = 20000,
+        audit: AuditSink | None = None,
+    ) -> None:
+        self.service = service
+        self.repository = DurableRepository(service.tasks.session_factory)
+        self.approvals = ApprovalService(self.repository)
+        self.memory = MemoryService(self.repository)
+        self.lease_seconds = lease_seconds
+        self.approval_threshold = approval_threshold
+        self.owner = str(uuid4())
+        self.audit = audit
+        self.evidence = EvidenceLibrary(self.repository.sessions)
+
+    async def submit(
+        self, payload: dict[str, Any], key: str, *, require_managed: bool = False
+    ) -> tuple[str, bool]:
+        request = dict(payload)
+        request.pop("mode", None)
+        requested_budget = request.pop("budget", None)
+        specification = request.pop("experiment_specification", None)
+        depth = request.pop("research_depth", None)
+        reuse = request.pop("reuse_project_evidence", None)
+        continuation_id = request.pop("continuation_of_task_id", None)
+        reference_ids = request.pop("reference_task_ids", [])
+        snapshot = Snapshot(
+            **request,
+            task_id=str(uuid4()),
+            limits=BudgetLimits.model_validate(requested_budget or {}).bounded_by(
+                self.service.limits
+            ),
+            specification=ExperimentSpecification.model_validate(specification or {}),
+            approval_threshold=self.approval_threshold,
+            reuse_project_evidence=reuse
+            if reuse is not None
+            else bool(
+                require_managed
+                and request.get("project_id")
+                and is_research(request.get("workflow_kind", ""))
+            ),
+            research_depth=depth
+            or (
+                "standard"
+                if require_managed and is_research(request.get("workflow_kind", ""))
+                else "quick"
+            ),
+        )
+        canonical = dict(payload)
+        if snapshot.reuse_project_evidence and snapshot.project_id:
+            snapshot.stage = "evidence"
+        if canonical.get("model_profile_id") is None:
+            canonical.pop("model_profile_id", None)
+        if canonical.get("research_depth") is None:
+            canonical.pop("research_depth", None)
+        if canonical.get("reuse_project_evidence") is None:
+            canonical.pop("reuse_project_evidence", None)
+        for name in ("continuation_of_task_id", "reference_task_ids"):
+            if not canonical.get(name):
+                canonical.pop(name, None)
+        return await self.repository.enqueue(
+            snapshot,
+            key,
+            digest(canonical),
+            require_managed=require_managed,
+            continuation_id=continuation_id,
+            reference_ids=reference_ids,
+        )
+
+    async def tick(self, task_id: str | None = None) -> bool:
+        claimed = await self.repository.claim(self.owner, self.lease_seconds, task_id)
+        if claimed is None:
+            return False
+        task_id, generation = claimed
+        execution = asyncio.create_task(self._execute(task_id, generation))
+        heartbeat: asyncio.Task[str] | None = None
+        try:
+            while not execution.done():
+                done, _ = await asyncio.wait({execution}, timeout=self.lease_seconds / 3)
+                if done:
+                    break
+                # Cancellation of a DB operation can itself block on connection cleanup.
+                # Supervise independently so execution stops before that cleanup finishes.
+                heartbeat = asyncio.create_task(
+                    self.repository.heartbeat(
+                        task_id,
+                        self.owner,
+                        generation,
+                        self.lease_seconds,
+                    )
+                )
+                ready, _ = await asyncio.wait({heartbeat}, timeout=self.lease_seconds / 3)
+                if not ready:
+                    raise TimeoutError("Workflow heartbeat deadline exceeded")
+                status = heartbeat.result()
+                if status == "cancel_requested":
+                    execution.cancel()
+            await execution
+        except LeaseLost:
+            pass
+        finally:
+            # This also covers DB connection failures, heartbeat timeouts and shutdown.
+            # Never return to the worker loop with a detached execution still running.
+            pending = [execution, *([heartbeat] if heartbeat is not None else [])]
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+        return True
+
+    async def reconcile(self, task_id: str, checkpoint_sequence: int) -> dict[str, Any]:
+        from autoscholar.tool_platform.registry import InvocationRegistry
+
+        snapshot, job = await self.repository.snapshot(task_id)
+        if job.checkpoint_sequence != checkpoint_sequence:
+            raise conflict("workflow_state_conflict", "Recovery checkpoint changed")
+        pending = await self.repository.reconcile_calls(
+            task_id, checkpoint_sequence=checkpoint_sequence
+        )
+        status = "recovery_required"
+        if not pending:
+            run = snapshot.restore(job.usage, job.active_seconds)
+            try:
+                await self._reconcile(snapshot, run, job.active)
+                self._verify_sources(run)
+            except AppError:
+                # A file receipt cannot reconstruct a missing coding/model turn.
+                pass
+            else:
+                status = await self.repository.queue_reconciled(task_id, checkpoint_sequence)
+        return {
+            "task_id": task_id,
+            "status": status,
+            "pending_calls": pending,
+            "operations": await InvocationRegistry(self.repository.sessions).inspect(task_id),
+        }
+
+    async def _execute(self, task_id: str, generation: int) -> None:
+        try:
+            snapshot, job = await self.repository.snapshot(task_id)
+        except (AppError, ValidationError):
+            await self.repository.quarantine(task_id, self.owner, generation)
+            return
+        run = snapshot.restore(job.usage, job.active_seconds)
+        run.budget.limits = run.budget.limits.bounded_by(self.service.limits)
+
+        async def journal(call_id: str, kind: str, starting: bool) -> None:
+            if self.audit is not None and starting:
+                await self.audit.write(
+                    AuditEvent(
+                        id=str(uuid4()),
+                        request_id=self.owner,
+                        actor="workflow_worker",
+                        category="worker",
+                        method="EXECUTE",
+                        phase="tool_dispatch",
+                        outcome="pending",
+                        task_id=task_id,
+                        operation_id=call_id,
+                        action="external_tool",
+                        usage=dict(run.budget.used),
+                    )
+                )
+            await self.repository.journal(
+                task_id,
+                self.owner,
+                generation,
+                call_id,
+                kind,
+                starting,
+                run.budget.used,
+                time.monotonic() - run.budget.started,
+            )
+
+        budget_token = current_budget.set(run.budget)
+        journal_token = current_journal.set(journal)
+        claim_token = current_workflow_claim.set(WorkflowClaim(task_id, self.owner, generation))
+        stage = snapshot.stage
+        model_token = current_model_profile.set(snapshot.model_profile_id)
+        evidence_token = current_evidence.set(run.evidence_context)
+
+        async def check_evidence() -> None:
+            await self.evidence.validate(run.evidence_context, run.document_ids)
+
+        guard_token = current_evidence_guard.set(
+            check_evidence if run.evidence_context.claims else None
+        )
+        status, code = "queued", None
+        try:
+            if job.status == "cancel_requested":
+                status = "cancelled"
+            elif job.pending_calls:
+                pending = await self.repository.reconcile_calls(
+                    task_id, owner=self.owner, generation=generation
+                )
+                if pending:
+                    status, code = "recovery_required", "external_result_uncertain"
+                else:
+                    stage = await self._reconcile(snapshot, run, job.active)
+            elif job.active:
+                stage = await self._reconcile(snapshot, run, job.active)
+            elif job.status == "pause_requested":
+                status = "paused"
+            else:
+                self._verify_sources(run)
+                await check_evidence()
+                run.budget.check()
+                active: dict[str, Any] = {"stage": stage, "version": run.version}
+                if stage == "executor":
+                    assert run.plan is not None
+                    ready = next(
+                        (
+                            step
+                            for step in run.plan.steps
+                            if step.id not in run.results
+                            and set(step.dependencies) <= run.results.keys()
+                        ),
+                        None,
+                    )
+                    if ready is not None:
+                        active["step_id"] = ready.id
+                        if (
+                            ready.type == "experiment"
+                            and all(
+                                run.results[key]["status"] == "succeeded"
+                                for key in ready.dependencies
+                            )
+                            and cost_units(run.specification)
+                            >= min(snapshot.approval_threshold, self.approval_threshold)
+                        ):
+                            allowed = await self.approvals.gate(run, ready, self.owner, generation)
+                            if not allowed:
+                                await self.repository.save(
+                                    task_id,
+                                    self.owner,
+                                    generation,
+                                    snapshot.capture(run, stage),
+                                    run.budget.used,
+                                    time.monotonic() - run.budget.started,
+                                    status="awaiting_approval",
+                                )
+                                return
+                            active["operation_sha256"] = digest(
+                                self.approvals.operation(run, ready)
+                            )
+                state = await self.repository.begin(task_id, self.owner, generation, active)
+                if state != "running":
+                    status = "cancelled" if state == "cancel_requested" else "paused"
+                else:
+                    remaining = run.budget.limits.wall_seconds - (
+                        time.monotonic() - run.budget.started
+                    )
+                    async with asyncio.timeout(max(0, remaining)):
+                        stage = await self._unit(run, stage)
+                    if stage == "done":
+                        await check_evidence()
+                        status = "succeeded"
+        except (BudgetExceeded, TimeoutError):
+            status, code = "budget_exceeded", "autonomous_budget_exceeded"
+        except asyncio.CancelledError:
+            # Graceful shutdown still records an interrupted unit. A user cancellation wins in save.
+            status, code = "recovery_required", "workflow_interrupted"
+        except LeaseLost:
+            raise
+        except Exception as exc:
+            if getattr(exc, "code", "") == "approval_required":
+                status = "awaiting_approval"
+            elif getattr(exc, "code", "") in {"operation_uncertain", "checkpoint_integrity_failed"}:
+                status = "recovery_required"
+            else:
+                status = "failed"
+            code = str(getattr(exc, "code", "workflow_execution_failed"))
+        finally:
+            current_model_profile.reset(model_token)
+            current_evidence_guard.reset(guard_token)
+            current_evidence.reset(evidence_token)
+            current_workflow_claim.reset(claim_token)
+            current_journal.reset(journal_token)
+            current_budget.reset(budget_token)
+        if status in {"failed", "budget_exceeded"} and run.quality.sections and not run.answer:
+            run.answer = self.service.quality.render(run, accepted=False)
+        await self.repository.save(
+            task_id,
+            self.owner,
+            generation,
+            snapshot.capture(run, stage),
+            run.budget.used,
+            time.monotonic() - run.budget.started,
+            status=status,
+            error_code=code,
+        )
+        if status == "succeeded":
+            await self.memory.learn(run)
+
+    def _verify_sources(self, run: Run) -> None:
+        for step_id, source in run.sources.items():
+            result = run.results.get(step_id, {})
+            if source_digest(source) != result.get("source_sha256") or source != (
+                self.service.workspace.source_snapshot(result["child_task_id"])
+            ):
+                raise conflict("checkpoint_integrity_failed", "Source changed since checkpoint")
+
+    async def _unit(self, run: Run, stage: Stage) -> Stage:
+        state: FlowState = {"run": run}
+        if stage == "evidence":
+            if run.project_id:
+                try:
+                    run.evidence_context = await self.evidence.select(
+                        run.project_id,
+                        run.objective,
+                        document_ids=run.document_ids,
+                        source_types=list(run.research_sources),
+                        document_only=run.workflow_kind == "document_analysis",
+                        exclude_task_id=run.task_id,
+                    )
+                    await self.evidence.record_selection(
+                        run.task_id, run.evidence_context, replace_uncheckpointed=True
+                    )
+                except AppError:
+                    raise
+                except Exception:
+                    run.evidence_context = EvidenceContext(
+                        project_id=run.project_id, note="evidence_store_unavailable"
+                    )
+            return "planner"
+        if stage in {"planner", "replanner"}:
+            run.memory_context = await self.memory.context(run)
+            if run.memory_context:
+                async with self.repository.sessions() as session:
+                    await self.repository.event(
+                        session,
+                        run.task_id,
+                        "memory_retrieved",
+                        project_version=run.memory_context["project"]["version"],
+                        memory_ids=[item["id"] for item in run.memory_context["experiences"]],
+                    )
+                    await session.commit()
+        if stage == "planner":
+            await self.service._planner(state)
+            return "executor"
+        if stage == "executor":
+            assert run.plan is not None
+            ready = next(
+                (
+                    step
+                    for step in run.plan.steps
+                    if step.id not in run.results and set(step.dependencies) <= run.results.keys()
+                ),
+                None,
+            )
+            if ready is not None:
+                run.budget.consume("steps")
+                await persist_budget()
+                await self.service._step(run, ready)
+            if len(run.results) == len(run.plan.steps):
+                return (
+                    "quality" if self.service._after_execution(state) == "quality" else "reviewer"
+                )
+            return "executor"
+        if stage == "quality":
+            await self.service._quality(state)
+            return "reviewer" if run.quality.phase == "done" else "quality"
+        if stage == "reviewer":
+            await self.service._reviewer(state)
+            assert run.review is not None
+            return "writer" if run.review.status == "PASS" else "replanner"
+        if stage == "replanner":
+            await self.service._replanner(state)
+            return "executor"
+        if stage == "writer":
+            if await self.service._rules(run):
+                raise conflict(
+                    "checkpoint_integrity_failed", "Final artifacts changed after review"
+                )
+            await self.service._writer(state)
+            return "done"
+        return "done"
+
+    async def _reconcile(self, snapshot: Snapshot, run: Run, active: dict[str, Any]) -> Stage:
+        if active.get("stage") == "evidence":
+            # Selection has no external calls; receipts are idempotent. Re-select
+            # only when no frozen selection has ever been checkpointed.
+            return "planner" if run.evidence_context.snapshot_hash else "evidence"
+        if active.get("stage") == "executor":
+            steps = await self.service.workflows.history(run.task_id, "steps")
+            matches = [
+                item
+                for item in steps
+                if item["plan_version"] == run.version and item["step_id"] == active.get("step_id")
+            ]
+            if len(matches) == 1 and matches[0]["status"] in {"succeeded", "failed"}:
+                item = matches[0]
+                outcome = item["result"]
+                if outcome.get("error_code") == "autonomous_budget_or_cancelled":
+                    raise conflict("operation_uncertain", "Interrupted child requires inspection")
+                run.results[item["step_id"]] = outcome
+                if outcome.get("source_sha256") and "experiment_id" not in outcome:
+                    source = self.service.workspace.source_snapshot(item["child_task_id"])
+                    if source_digest(source) != outcome["source_sha256"]:
+                        raise conflict("checkpoint_integrity_failed", "Recovered source changed")
+                    run.sources[item["step_id"]] = source
+                task = await self.service.tasks.get_task(run.task_id)
+                run.traces = (
+                    max((call.sequence for call in task.tool_calls), default=0) if task else 0
+                )
+                return "executor"
+        if active.get("stage") == "planner":
+            plans = await self.service.workflows.history(run.task_id, "plans")
+            matches = [item for item in plans if item["version"] == run.version]
+            if len(matches) == 1:
+                run.plan = TaskPlan.model_validate(matches[0]["payload"])
+                self.service._validate_plan(run, run.plan)
+                return "executor"
+        if active.get("stage") == "reviewer":
+            reviews = await self.service.workflows.history(run.task_id, "reviews")
+            matches = [item for item in reviews if item["plan_version"] == run.version]
+            if len(matches) == 1:
+                run.review = ReviewResult.model_validate(matches[0]["payload"])
+                return "writer" if run.review.status == "PASS" else "replanner"
+        if active.get("stage") == "writer":
+            return "writer"
+        raise conflict(
+            "operation_uncertain", "No durable completion record; automatic replay stopped"
+        )

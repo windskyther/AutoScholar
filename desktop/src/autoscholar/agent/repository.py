@@ -1,0 +1,470 @@
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from typing import Any, Literal, cast
+from uuid import uuid4
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
+
+from autoscholar.agent.database_models import (
+    AgentTaskRow,
+    ArtifactRow,
+    EvidenceRow,
+    ExperimentRow,
+    ToolCallRow,
+)
+from autoscholar.agent.records import (
+    AgentTaskRecord,
+    ArtifactRecord,
+    ArtifactType,
+    CitationRecord,
+    EvidenceRecord,
+    ExperimentRecord,
+    ExperimentStatus,
+    ResearchSource,
+    ResearchWarningRecord,
+    ResolvedAgentMode,
+    TaskStatus,
+    ToolCallStatus,
+    ToolTraceRecord,
+)
+from autoscholar.core.budget import current_parent
+from autoscholar.core.errors import AppError
+from autoscholar.rag.database_models import ProjectRow
+
+
+class AgentTaskRepository:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = session_factory
+
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession]:
+        return self._sessions
+
+    async def create_task(
+        self,
+        *,
+        task_id: str,
+        objective: str,
+        project_id: str | None = None,
+        research_sources: list[ResearchSource] | None = None,
+        mode: ResolvedAgentMode = "compute",
+    ) -> AgentTaskRecord:
+        async with self._sessions() as session:
+            parent_id = current_parent.get()
+            parent_project = (
+                await session.scalar(
+                    select(AgentTaskRow.project_id).where(AgentTaskRow.id == parent_id)
+                )
+                if parent_id is not None
+                else None
+            )
+            for guarded_project in sorted(
+                {p for p in (project_id, parent_project) if p is not None}
+            ):
+                project = await session.scalar(
+                    select(ProjectRow).where(ProjectRow.id == guarded_project).with_for_update()
+                )
+                if project is not None and project.deleted_at is not None:
+                    raise AppError(
+                        status_code=404, code="project_not_found", message="Project was not found"
+                    )
+            row = AgentTaskRow(
+                id=task_id,
+                project_id=project_id,
+                status="running",
+                mode=mode,
+                parent_task_id=parent_id,
+                objective=objective,
+                plan=[],
+                metrics={},
+                research_sources=list(research_sources or ["web", "paper"]),
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._task_record(row, ())
+
+    async def update_task(
+        self,
+        task_id: str,
+        *,
+        status: TaskStatus,
+        plan: list[str],
+        answer: str | None,
+        metrics: dict[str, int],
+        error_code: str | None = None,
+        error_message: str | None = None,
+        mode: ResolvedAgentMode = "compute",
+        citations: list[CitationRecord] | None = None,
+        warnings: list[ResearchWarningRecord] | None = None,
+    ) -> AgentTaskRecord:
+        async with self._sessions() as session:
+            row = await session.get(AgentTaskRow, task_id)
+            if row is None:
+                raise LookupError(f"Unknown agent task: {task_id}")
+            row.status = status
+            row.plan = plan
+            row.answer = answer
+            row.metrics = metrics
+            row.error_code = error_code
+            row.error_message = error_message
+            row.mode = mode
+            row.citations = [
+                {"claim": item.claim, "evidence_ids": list(item.evidence_ids)}
+                for item in (citations or [])
+            ]
+            row.warnings = [
+                {"code": item.code, "message": item.message, "provider": item.provider}
+                for item in (warnings or [])
+            ]
+            await session.commit()
+        record = await self.get_task(task_id)
+        if record is None:  # pragma: no cover - protected by the transaction above
+            raise LookupError(f"Unknown agent task: {task_id}")
+        return record
+
+    async def add_tool_call(
+        self,
+        *,
+        task_id: str,
+        sequence: int,
+        call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        output: str,
+        status: ToolCallStatus,
+        duration_ms: float,
+        error_code: str | None = None,
+    ) -> ToolTraceRecord:
+        async with self._sessions() as session:
+            row = ToolCallRow(
+                id=str(uuid4()),
+                task_id=task_id,
+                sequence=sequence,
+                call_id=call_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                output=output,
+                status=status,
+                error_code=error_code,
+                duration_ms=duration_ms,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._tool_record(row)
+
+    async def get_task(self, task_id: str) -> AgentTaskRecord | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(AgentTaskRow)
+                .where(AgentTaskRow.id == task_id)
+                .options(
+                    selectinload(AgentTaskRow.tool_calls),
+                    selectinload(AgentTaskRow.evidence),
+                )
+            )
+            row = result.scalar_one_or_none()
+            if row is None:
+                return None
+            return self._task_record(row, row.tool_calls, row.evidence)
+
+    async def add_evidence(
+        self,
+        *,
+        task_id: str,
+        citation_key: str,
+        source_type: str,
+        provider: str,
+        title: str,
+        url: str,
+        authors: tuple[str, ...],
+        year: int | None,
+        external_id: str | None,
+        query: str,
+        topic: str,
+        claim: str,
+        excerpt: str,
+        relevance: float,
+        document_id: str | None = None,
+        chunk_id: str | None = None,
+        page: int | None = None,
+        section: str | None = None,
+    ) -> EvidenceRecord:
+        async with self._sessions() as session:
+            row = EvidenceRow(
+                id=str(uuid4()),
+                task_id=task_id,
+                citation_key=citation_key,
+                source_type=source_type,
+                provider=provider,
+                title=title,
+                url=url,
+                authors=list(authors),
+                year=year,
+                external_id=external_id,
+                query=query,
+                topic=topic,
+                claim=claim,
+                excerpt=excerpt,
+                relevance=relevance,
+                document_id=document_id,
+                chunk_id=chunk_id,
+                page=page,
+                section=section,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._evidence_record(row)
+
+    async def list_evidence(
+        self, task_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[EvidenceRecord], int]:
+        async with self._sessions() as session:
+            total_rows = await session.execute(
+                select(EvidenceRow.id).where(EvidenceRow.task_id == task_id)
+            )
+            total = len(total_rows.scalars().all())
+            result = await session.execute(
+                select(EvidenceRow)
+                .where(EvidenceRow.task_id == task_id)
+                .order_by(func.length(EvidenceRow.citation_key), EvidenceRow.citation_key)
+                .limit(limit)
+                .offset(offset)
+            )
+            return [self._evidence_record(row) for row in result.scalars().all()], total
+
+    async def create_experiment(
+        self,
+        *,
+        task_id: str,
+        name: str,
+        specification: dict[str, Any],
+        dataset_id: str | None = None,
+        dataset_sha256: str | None = None,
+    ) -> ExperimentRecord:
+        async with self._sessions() as session:
+            row = ExperimentRow(
+                id=str(uuid4()),
+                task_id=task_id,
+                name=name,
+                status="pending",
+                specification=specification,
+                metrics={},
+                dataset_id=dataset_id,
+                dataset_sha256=dataset_sha256,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._experiment_record(row)
+
+    async def update_experiment(
+        self,
+        experiment_id: str,
+        *,
+        status: ExperimentStatus,
+        metrics: dict[str, Any] | None = None,
+        source_sha256: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> ExperimentRecord:
+        async with self._sessions() as session:
+            row = await session.get(ExperimentRow, experiment_id)
+            if row is None:
+                raise LookupError(f"Unknown experiment: {experiment_id}")
+            now = datetime.now(UTC)
+            row.status = status
+            if metrics is not None:
+                row.metrics = metrics
+            if source_sha256 is not None:
+                row.source_sha256 = source_sha256
+            row.error_code = error_code
+            row.error_message = error_message
+            if status == "running" and row.started_at is None:
+                row.started_at = now
+            if status in {"succeeded", "failed"}:
+                row.finished_at = now
+            await session.commit()
+            await session.refresh(row)
+            return self._experiment_record(row)
+
+    async def get_experiment(self, experiment_id: str) -> ExperimentRecord | None:
+        async with self._sessions() as session:
+            row = await session.get(ExperimentRow, experiment_id)
+            return self._experiment_record(row) if row is not None else None
+
+    async def list_experiments(self, task_id: str) -> list[ExperimentRecord]:
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(ExperimentRow)
+                .where(ExperimentRow.task_id == task_id)
+                .order_by(ExperimentRow.created_at, ExperimentRow.id)
+            )
+            return [self._experiment_record(row) for row in result.scalars().all()]
+
+    async def add_artifact(
+        self,
+        *,
+        task_id: str,
+        experiment_id: str,
+        artifact_type: ArtifactType,
+        path: str,
+        media_type: str,
+        size_bytes: int,
+        sha256: str,
+    ) -> ArtifactRecord:
+        async with self._sessions() as session:
+            experiment = await session.get(ExperimentRow, experiment_id)
+            if experiment is None or experiment.task_id != task_id:
+                raise LookupError("Experiment does not belong to this task")
+            row = ArtifactRow(
+                id=str(uuid4()),
+                task_id=task_id,
+                experiment_id=experiment_id,
+                type=artifact_type,
+                path=path,
+                media_type=media_type,
+                size_bytes=size_bytes,
+                sha256=sha256,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._artifact_record(row)
+
+    async def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
+        async with self._sessions() as session:
+            row = await session.get(ArtifactRow, artifact_id)
+            return self._artifact_record(row) if row is not None else None
+
+    async def list_artifacts(
+        self, task_id: str, *, experiment_id: str | None = None
+    ) -> list[ArtifactRecord]:
+        async with self._sessions() as session:
+            statement = select(ArtifactRow).where(ArtifactRow.task_id == task_id)
+            if experiment_id is not None:
+                statement = statement.where(ArtifactRow.experiment_id == experiment_id)
+            result = await session.execute(
+                statement.order_by(ArtifactRow.created_at, ArtifactRow.id)
+            )
+            return [self._artifact_record(row) for row in result.scalars().all()]
+
+    @classmethod
+    def _task_record(
+        cls,
+        row: AgentTaskRow,
+        tool_calls: Sequence[ToolCallRow],
+        evidence: Sequence[EvidenceRow] = (),
+    ) -> AgentTaskRecord:
+        return AgentTaskRecord(
+            id=row.id,
+            status=cast(TaskStatus, row.status),
+            objective=row.objective,
+            plan=list(row.plan),
+            answer=row.answer,
+            metrics=dict(row.metrics),
+            error_code=row.error_code,
+            error_message=row.error_message,
+            mode=cast(ResolvedAgentMode, row.mode),
+            citations=[
+                CitationRecord(
+                    claim=str(item["claim"]),
+                    evidence_ids=tuple(str(value) for value in item.get("evidence_ids", [])),
+                )
+                for item in row.citations
+            ],
+            warnings=[
+                ResearchWarningRecord(
+                    code=str(item["code"]),
+                    message=str(item["message"]),
+                    provider=(str(item["provider"]) if item.get("provider") else None),
+                )
+                for item in row.warnings
+            ],
+            evidence=[cls._evidence_record(item) for item in evidence],
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            tool_calls=[cls._tool_record(call) for call in tool_calls],
+            project_id=row.project_id,
+            parent_task_id=row.parent_task_id,
+            research_sources=[cast(ResearchSource, item) for item in row.research_sources],
+        )
+
+    @staticmethod
+    def _evidence_record(row: EvidenceRow) -> EvidenceRecord:
+        return EvidenceRecord(
+            id=row.id,
+            task_id=row.task_id,
+            citation_key=row.citation_key,
+            source_type=cast(Literal["web", "paper", "document"], row.source_type),
+            provider=row.provider,
+            title=row.title,
+            url=row.url,
+            authors=tuple(row.authors),
+            year=row.year,
+            external_id=row.external_id,
+            query=row.query,
+            topic=row.topic,
+            claim=row.claim,
+            excerpt=row.excerpt,
+            relevance=row.relevance,
+            created_at=row.created_at,
+            document_id=row.document_id,
+            chunk_id=row.chunk_id,
+            page=row.page,
+            section=row.section,
+        )
+
+    @staticmethod
+    def _tool_record(row: ToolCallRow) -> ToolTraceRecord:
+        return ToolTraceRecord(
+            id=row.id,
+            task_id=row.task_id,
+            sequence=row.sequence,
+            call_id=row.call_id,
+            tool_name=row.tool_name,
+            arguments=dict(row.arguments),
+            output=row.output,
+            status=cast(ToolCallStatus, row.status),
+            error_code=row.error_code,
+            duration_ms=row.duration_ms,
+            created_at=row.created_at,
+        )
+
+    @staticmethod
+    def _experiment_record(row: ExperimentRow) -> ExperimentRecord:
+        return ExperimentRecord(
+            id=row.id,
+            task_id=row.task_id,
+            name=row.name,
+            status=cast(ExperimentStatus, row.status),
+            specification=dict(row.specification),
+            source_sha256=row.source_sha256,
+            dataset_id=row.dataset_id,
+            dataset_sha256=row.dataset_sha256,
+            metrics=dict(row.metrics),
+            error_code=row.error_code,
+            error_message=row.error_message,
+            started_at=row.started_at,
+            finished_at=row.finished_at,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    @staticmethod
+    def _artifact_record(row: ArtifactRow) -> ArtifactRecord:
+        return ArtifactRecord(
+            id=row.id,
+            task_id=row.task_id,
+            experiment_id=row.experiment_id,
+            type=cast(ArtifactType, row.type),
+            path=row.path,
+            media_type=row.media_type,
+            size_bytes=row.size_bytes,
+            sha256=row.sha256,
+            created_at=row.created_at,
+        )

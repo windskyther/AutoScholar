@@ -1,0 +1,516 @@
+import type { ApprovalDecision, ApprovalPage, ControlAction, ControlReceipt, ControlState, EventPage, ExpectedState, LinkedTask, Overview, Page, PDFDocument, Project, Session, StreamMessage, SubmissionReceipt, Task, TaskLinks, TaskStatus, TaskSubmission } from './types';
+import { isApproval, isControlReceipt, isControlState, isDocument, isEventPage, isExpectedState, isLinkedTask, isOverview, isPage, isProject, isReceipt, isSession, isSpecification, isTask, isTaskLinks, isTaskStatus, isWorkflowEvent } from './guards';
+import { consumeSSE, StreamProtocolError } from './sse';
+import type { ArtifactPreview, ArtifactResource, EvidenceResource, ExperimentResource, ResourcePage } from './types';
+import { isArtifact, isEvidence, isExperiment, isPreview } from './resource-guards';
+import { isModelCatalog, isModelProfile } from './model-types';
+import type { ModelCatalog, ModelProfile, ModelProfileInput } from './model-types';
+import { isUsageSummary } from './usage-types';
+import type { UsageSummary } from './usage-types';
+import { isBankClaim, isEvidencePolicy, isHistoryImport, isReuse } from './evidence-types';
+import type { BankPage, EvidencePolicy, HistoryImport, ReuseSummary } from './evidence-types';
+import { isQualityAudit } from './quality-types';
+import type { QualityAudit } from './quality-types';
+
+function workbenchFetch(path: string, options: RequestInit): Promise<Response> {
+  const token = typeof window === 'undefined' ? undefined :
+    (window as Window & { __autoscholarSession?: string }).__autoscholarSession;
+  if (!token) return fetch(path, options);
+  const headers = new Headers(options.headers);
+  headers.set('X-AutoScholar-Session', token);
+  return fetch(path, { ...options, headers });
+}
+
+export class ApiError extends Error {
+  constructor(public code: string, public status = 0, public requestId: string | null = null) {
+    super(code);
+    this.name = 'ApiError';
+  }
+}
+
+export async function desktopModelCache(method: 'GET' | 'DELETE', signal?: AbortSignal): Promise<number> {
+  const response = await workbenchFetch('/api/desktop/model-cache', { method, signal });
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new ApiError(error?.detail === 'model_cache_busy' ? 'model_cache_busy' : 'model_cache_unavailable', response.status);
+  }
+  return (await response.json()).bytes;
+}
+
+const messages: Record<string, string> = {
+  model_profile_not_found: '模型配置不存在，请刷新模型列表。',
+  model_profile_unavailable: '所选模型已停用或不存在，请重新选择。',
+  model_selection_required: '请先在模型管理中添加并选择模型。',
+  task_type_removed: '旧实验任务类型已移除，请选择当前支持的任务类型。',
+  documents_selection_required: '项目文档分析至少需要一份已就绪的项目 PDF。',
+  model_profile_conflict: '该配置编号已用于其他内容，请核对模型列表。',
+  model_profile_limit: '最多保存 100 组模型配置。',
+  model_key_unavailable: '模型密钥无法读取，请检查本地加密配置或重新添加模型。',
+  model_usage_unavailable: '用量记录暂不可用，请确认后台存储服务正常后重试。',
+  local_access_denied: '本机访问请求被拒绝，请通过本地工作台地址访问。',
+  project_not_found: '项目不存在。',
+  project_evidence_not_found: '这条项目证据不存在。',
+  project_evidence_unavailable: '项目证据库暂不可用，请稍后刷新。',
+  project_evidence_revoked: '证据或原始来源已改变，请刷新后核对。',
+  project_evidence_expired: '资料已超过复核期限，请重新提交研究以核验来源。',
+  workbench_task_not_found: '根任务不存在，或链接指向了子任务。',
+  workbench_store_unavailable: '任务存储暂不可用。',
+  network_unavailable: '无法连接服务，请检查服务是否启动。',
+  invalid_response: '暂时无法读取服务返回的数据，请稍后重试。',
+  project_has_active_tasks: '项目中还有未结束或待核对的任务，请先处理后再删除。',
+  project_has_active_documents: '项目中的文档仍在处理中，请稍后再删除。',
+  task_has_active_operations: '任务或关联子任务尚未完全停止，请等待取消完成后再删除。',
+  task_output_unavailable: '任务尚未产生可导出的输出。',
+  task_reference_unavailable: '关联任务必须是同一项目中已有输出且已结束的任务，请重新选择。',
+  task_continuation_unavailable: '上一轮任务必须已经结束，且仍在当前项目中。',
+  response_too_large: '响应超过安全大小上限。',
+  request_validation_error: '输入或查询参数不合法。',
+  write_result_unknown: '请求结果未确认，请先核查；不会自动重试。',
+  duplicate_document: '该 PDF 已存在于此项目。',
+  invalid_pdf: '文件内容不是 PDF。',
+  unsupported_document_type: '只支持 PDF 文件。',
+  document_too_large: 'PDF 超过允许的大小。',
+  document_not_found: '文档不存在，或不属于当前项目。',
+  document_not_failed: '文档状态已改变，只有失败文档能重试。',
+  document_not_ready: '文档状态已改变，只有就绪文档能重建索引。',
+  selected_documents_unavailable: '所选文档必须已就绪并属于当前项目，请刷新后重新选择。',
+  idempotency_conflict: '提交编号已对应另一份请求，请核查原任务。',
+  workflow_unavailable: '服务端持久化任务服务暂不可用。',
+  event_cursor_invalid: '事件游标失效，请重新加载记录后再连接。',
+  workbench_stream_unavailable: '事件连接暂不可用，任务不会因此重跑。',
+  event_sequence_gap: '事件序号不连续，请重新加载记录核查。',
+  workbench_state_stale: '任务状态已变化，请刷新并重新确认操作。',
+  workflow_state_conflict: '当前状态不允许此操作，请刷新核查。',
+  approval_stale: '审批参数或计划版本已变化，请核查最新审批。',
+  approval_not_found: '审批不存在，或不属于当前任务。',
+  approval_expired_or_decided: '审批已过期或已处理，请核查最新状态。',
+  approval_already_decided: '审批已处理，不能更改此决定。',
+  workbench_artifact_not_found: '产物不存在，或不属于当前根任务。',
+  artifact_integrity_failed: '产物大小或摘要不一致，已阻止预览和下载。',
+  artifact_manifest_invalid: '产物清单不合法，已阻止下载。',
+  artifact_text_invalid: '产物不是有效 UTF-8 文本。',
+  artifact_preview_unsupported: '此产物不支持文本预览。',
+  artifact_store_not_available: '产物存储暂不可用。',
+};
+export function isWriteUncertain(error: unknown): boolean {
+  return error instanceof ApiError && (error.code === 'write_result_unknown' || error.status >= 500);
+}
+export function errorMessage(error: unknown): string {
+  return error instanceof ApiError ? (messages[error.code] ?? `请求失败（${error.status || '网络'}）。`)
+    : '请求失败，请稍后重试。';
+}
+
+async function readJSON(response: Response): Promise<unknown> {
+  if (!response.headers.get('content-type')?.toLowerCase().includes('application/json')) {
+    throw new ApiError('invalid_response', response.status);
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new ApiError('invalid_response', response.status);
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let size = 0;
+  let text = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 4 * 1024 * 1024) {
+        await reader.cancel();
+        throw new ApiError('response_too_large', response.status);
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return JSON.parse(text);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError('invalid_response', response.status);
+  } finally { reader.releaseLock(); }
+}
+
+export class ApiClient {
+  #active = true;
+  #streams = new Set<AbortController>();
+  constructor(private unauthorized: () => void = () => {}) {}
+  clear(): void { this.#active = false; for (const stream of this.#streams) stream.abort(); this.#streams.clear(); }
+  get connected(): boolean { return this.#active; }
+
+  async get<T>(path: string, signal?: AbortSignal): Promise<T> {
+    return this.request(path, { signal });
+  }
+  private async request<T>(path: string, options: {
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: Record<string, unknown> | FormData;
+    key?: string; signal?: AbortSignal; timeout?: number; empty?: boolean;
+  } = {}): Promise<T> {
+    if (!this.connected) throw new ApiError('local_access_denied', 401);
+    const { method = 'GET', body, key, signal, timeout = 15000, empty = false } = options;
+    if (key !== undefined && !/^[A-Za-z0-9._:-]{1,128}$/.test(key)) throw new ApiError('request_validation_error', 422);
+    const pathname = path.split('?')[0];
+    if (!/^\/(?:[a-zA-Z0-9_?=&%./+-])*$/.test(path) || pathname.startsWith('//')
+      || pathname.includes('..') || /%2f|%5c|%2e/i.test(pathname)) throw new ApiError('invalid_response');
+    let response: Response;
+    try {
+      const deadline = AbortSignal.timeout(timeout);
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      const multipart = body instanceof FormData;
+      if (body && !multipart) headers['Content-Type'] = 'application/json';
+      if (key) headers['Idempotency-Key'] = key;
+      response = await workbenchFetch('/api/workbench' + path, {
+        method, headers, body: body ? (multipart ? body : JSON.stringify(body)) : undefined,
+        cache: 'no-store', credentials: 'omit', redirect: 'error',
+        signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+      });
+    } catch {
+      if (signal?.aborted) throw signal.reason;
+      throw new ApiError(method === 'GET' ? 'network_unavailable' : 'write_result_unknown');
+    }
+    if (response.status === 401 || response.status === 403) {
+      this.clear();
+      this.unauthorized();
+      throw new ApiError('local_access_denied', response.status,
+                         response.headers.get('x-request-id'));
+    }
+    if (!this.connected) throw new ApiError('local_access_denied', 401);
+    if (response.ok && empty) {
+      await response.body?.cancel();
+      return undefined as T;
+    }
+    let payload: unknown;
+    try { payload = await readJSON(response); }
+    catch (error) {
+      if (method !== 'GET' && (response.ok || response.status >= 500)) {
+        throw new ApiError('write_result_unknown', response.status);
+      }
+      throw error;
+    }
+    if (!response.ok) {
+      const code = (payload as { error?: { code?: unknown } })?.error?.code;
+      throw new ApiError(typeof code === 'string' ? code : 'request_failed', response.status,
+                         response.headers.get('x-request-id'));
+    }
+    return payload as T;
+  }
+  async session(signal?: AbortSignal): Promise<Session> {
+    return this.checked('/session', isSession, signal);
+  }
+  models(signal?: AbortSignal): Promise<ModelCatalog> {
+    return this.checked('/models', isModelCatalog, signal);
+  }
+  usage(groupBy: 'api' | 'model', days: 0 | 7 | 30 | 90, apiId?: string, model?: string, signal?: AbortSignal): Promise<UsageSummary> {
+    const query = new URLSearchParams({ group_by: groupBy, days: String(days) });
+    if (apiId) query.set('api_id', apiId);
+    if (model) query.set('model', model);
+    return this.checked('/usage?' + query.toString().replace(/\*/g, '%2A'), isUsageSummary, signal);
+  }
+  createModel(payload: ModelProfileInput): Promise<ModelProfile> {
+    return this.write('/models', isModelProfile, { ...payload });
+  }
+  modelStatus(id: string, enabled: boolean): Promise<ModelProfile> {
+    return this.write(`/models/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}`, isModelProfile);
+  }
+  private async checked<T>(path: string, validate: (value: unknown) => value is T, signal?: AbortSignal): Promise<T> {
+    const value = await this.get<unknown>(path, signal);
+    if (!validate(value)) throw new ApiError('invalid_response');
+    return value;
+  }
+  private async write<T>(path: string, validate: (value: unknown) => value is T,
+                         body?: Record<string, unknown> | FormData, key?: string): Promise<T> {
+    const value = await this.request<unknown>(path, { method: 'POST', body, key, timeout: body instanceof FormData ? 120000 : 15000 });
+    if (!validate(value)) throw new ApiError('write_result_unknown', 200);
+    return value;
+  }
+  createProject(name: string, description: string): Promise<Project> {
+    return this.write('/projects', isProject, { name: name.trim(), description: description.trim() || null });
+  }
+  deleteProject(projectId: string): Promise<void> {
+    return this.request(`/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE', empty: true });
+  }
+  deleteTask(projectId: string, taskId: string): Promise<void> {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`,
+      { method: 'DELETE', empty: true });
+  }
+  async downloadMarkdown(id: string, signal?: AbortSignal): Promise<Blob> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new ApiError('invalid_response');
+    if (!this.connected) throw new ApiError('local_access_denied', 401);
+    const controller = new AbortController(); this.#streams.add(controller);
+    const combined = AbortSignal.any([controller.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]);
+    let response: Response | undefined;
+    try {
+      response = await workbenchFetch(`/api/workbench/tasks/${id}/output/markdown`, {
+        headers: {}, signal: combined,
+        credentials: 'omit', cache: 'no-store', redirect: 'error',
+      });
+      if ([401, 403].includes(response.status)) {
+        this.clear(); this.unauthorized(); throw new ApiError('local_access_denied', response.status);
+      }
+      if (!response.ok) {
+        const payload = await readJSON(response) as { error?: { code?: unknown } };
+        throw new ApiError(typeof payload?.error?.code === 'string' ? payload.error.code : 'request_failed', response.status);
+      }
+      if (response.headers.get('content-type')?.split(';')[0] !== 'text/markdown') throw new ApiError('invalid_response');
+      const reader = response.body?.getReader();
+      if (!reader) throw new ApiError('invalid_response');
+      const chunks: Uint8Array<ArrayBuffer>[] = []; let size = 0;
+      try {
+        while (true) {
+          const chunk = await reader.read(); if (chunk.done) break;
+          size += chunk.value.byteLength;
+          if (size > 8 * 1024 * 1024) throw new ApiError('response_too_large');
+          chunks.push(new Uint8Array(chunk.value));
+        }
+      } finally { await reader.cancel(); reader.releaseLock(); }
+      if (!this.connected) throw new ApiError('local_access_denied', 401);
+      if (combined.aborted) throw combined.reason;
+      return new Blob(chunks, { type: 'text/markdown;charset=utf-8' });
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      if (signal?.aborted) throw signal.reason;
+      throw new ApiError(this.connected ? 'network_unavailable' : 'local_access_denied');
+    } finally { await response?.body?.cancel().catch(() => {}); this.#streams.delete(controller); }
+  }
+  documents(projectId: string, page: number, signal?: AbortSignal): Promise<Page<PDFDocument>> {
+    return this.checked(`/projects/${encodeURIComponent(projectId)}/documents?limit=20&offset=${(page - 1) * 20}`,
+      (value) => isPage(value, (item): item is PDFDocument => isDocument(item) && item.project_id === projectId), signal);
+  }
+  async documentReadiness(projectId: string, signal: AbortSignal) {
+    let processing = false;
+    let total = Infinity;
+    for (let page = 1; ; page++) {
+      const result = await this.documents(projectId, page, signal);
+      if (result.items.some(item => item.status === 'ready')) return { ready: true, processing: false };
+      processing ||= result.items.some(item => item.status === 'queued' || item.status === 'processing');
+      total = Math.min(total, result.total);
+      if (result.items.length === 0 || result.offset + result.limit >= total) return { ready: false, processing };
+    }
+  }
+  async uploadPDF(projectId: string, file: File, title: string, maxBytes: number): Promise<PDFDocument> {
+    if (!file.name.toLowerCase().endsWith('.pdf') || !['', 'application/pdf', 'application/x-pdf', 'application/octet-stream'].includes(file.type)) {
+      throw new ApiError('unsupported_document_type', 415);
+    }
+    if (file.size > Math.min(maxBytes, 52428800)) throw new ApiError('document_too_large', 422);
+    if (new TextDecoder().decode(await file.slice(0, 5).arrayBuffer()) !== '%PDF-') throw new ApiError('invalid_pdf', 422);
+    const data = new FormData();
+    data.append('file', file);
+    if (title.trim()) data.append('title', title.trim());
+    return this.write(`/projects/${encodeURIComponent(projectId)}/documents`, isDocument, data);
+  }
+  documentAction(projectId: string, documentId: string, action: 'retry' | 'reindex'): Promise<PDFDocument> {
+    return this.write(`/projects/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}/${action}`, isDocument);
+  }
+  deleteDocument(projectId: string, documentId: string): Promise<void> {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}`,
+      { method: 'DELETE', empty: true });
+  }
+  submitTask(payload: TaskSubmission, key: string): Promise<SubmissionReceipt> {
+    return this.write('/agent/tasks', isReceipt, { ...payload }, key);
+  }
+  projects(page: number, signal?: AbortSignal): Promise<Page<Project>> {
+    return this.checked(`/projects?limit=20&offset=${(page - 1) * 20}`, (value) => isPage(value, isProject), signal);
+  }
+  project(id: string, signal?: AbortSignal): Promise<Project> {
+    return this.checked('/projects/' + encodeURIComponent(id), isProject, signal);
+  }
+  tasks(projectId: string, page: number, status?: TaskStatus, query?: string,
+        signal?: AbortSignal): Promise<Page<Task>> {
+    const params = new URLSearchParams({ limit: '20', offset: String((page - 1) * 20) });
+    if (status) params.set('status', status);
+    if (query) params.set('q', query);
+    return this.checked(`/projects/${encodeURIComponent(projectId)}/tasks?${params}`, (value) => isPage(value, isTask), signal);
+  }
+  overview(id: string, page: number, signal?: AbortSignal): Promise<Overview> {
+    return this.checked(`/tasks/${encodeURIComponent(id)}/overview?limit=20&offset=${(page - 1) * 20}`, isOverview, signal);
+  }
+  referenceTasks(projectId: string, search: string, signal?: AbortSignal): Promise<LinkedTask[]> {
+    const params = new URLSearchParams(search ? { q: search } : {});
+    return this.checked(`/projects/${encodeURIComponent(projectId)}/reference-tasks?${params}`,
+      (value): value is LinkedTask[] => Array.isArray(value) && value.length <= 40 && value.every(isLinkedTask), signal);
+  }
+  taskLinks(id: string, page: number, signal?: AbortSignal): Promise<TaskLinks> {
+    return this.checked(`/tasks/${encodeURIComponent(id)}/links?limit=10&offset=${(page - 1) * 10}`, isTaskLinks, signal);
+  }
+  saveTaskLinks(id: string, ids: string[]): Promise<LinkedTask[]> {
+    return this.write(`/tasks/${encodeURIComponent(id)}/links`,
+      (value): value is LinkedTask[] => Array.isArray(value) && value.length <= 5 && value.every(isLinkedTask), { task_ids: ids });
+  }
+  quality(id: string, signal?: AbortSignal): Promise<QualityAudit> {
+    return this.checked(`/tasks/${encodeURIComponent(id)}/quality`, isQualityAudit, signal);
+  }
+  private resourcePage<T>(id: string, kind: string, page: number, guard: (value: unknown) => value is T,
+                          signal?: AbortSignal): Promise<ResourcePage<T>> {
+    return this.checked(`/tasks/${encodeURIComponent(id)}/resources/${kind}?limit=20&offset=${(page - 1) * 20}`,
+      (value): value is ResourcePage<T> => isPage(value, guard) && (value as ResourcePage<T>).task_id === id, signal);
+  }
+  projectEvidence(id: string, page: number, q: string, status: string, sourceType?: string, signal?: AbortSignal): Promise<BankPage> {
+    const params = new URLSearchParams({ limit: '20', offset: String((page - 1) * 20), q, status });
+    if (sourceType) params.set('source_type', sourceType);
+    return this.checked(`/projects/${encodeURIComponent(id)}/evidence?${params}`, (v): v is BankPage => isPage(v, isBankClaim), signal);
+  }
+  evidenceState(projectId: string, id: string, enabled: boolean): Promise<{ id: string; enabled: boolean }> {
+    return this.write(`/projects/${encodeURIComponent(projectId)}/evidence/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}`,
+      (v): v is { id: string; enabled: boolean } => !!v && typeof v === 'object' && (v as { id: unknown }).id === id && (v as { enabled: unknown }).enabled === enabled);
+  }
+  evidencePolicy(projectId: string, signal?: AbortSignal): Promise<EvidencePolicy> {
+    return this.checked(`/projects/${encodeURIComponent(projectId)}/evidence/policy`, isEvidencePolicy, signal);
+  }
+  async saveEvidencePolicy(projectId: string, policy: EvidencePolicy): Promise<EvidencePolicy> {
+    const value = await this.request<unknown>(`/projects/${encodeURIComponent(projectId)}/evidence/policy`, { method: 'PUT', body: { ...policy } });
+    if (!isEvidencePolicy(value)) throw new ApiError('write_result_unknown', 200);
+    return value;
+  }
+  importEvidence(projectId: string, after: string | null): Promise<HistoryImport> {
+    return this.write(`/projects/${encodeURIComponent(projectId)}/evidence/backfill`, isHistoryImport, { after, limit: 50 });
+  }
+  evidenceReuse(taskId: string, signal?: AbortSignal): Promise<ReuseSummary> {
+    return this.checked(`/tasks/${encodeURIComponent(taskId)}/evidence-reuse`, isReuse, signal);
+  }
+  evidence(id: string, page: number, signal?: AbortSignal): Promise<ResourcePage<EvidenceResource>> {
+    return this.resourcePage(id, 'evidence', page, isEvidence, signal);
+  }
+  experiments(id: string, page: number, signal?: AbortSignal): Promise<ResourcePage<ExperimentResource>> {
+    return this.resourcePage(id, 'experiments', page, isExperiment, signal);
+  }
+  artifacts(id: string, page: number, signal?: AbortSignal): Promise<ResourcePage<ArtifactResource>> {
+    return this.resourcePage(id, 'artifacts', page, isArtifact, signal);
+  }
+  previewArtifact(id: string, artifact: ArtifactResource, signal?: AbortSignal): Promise<ArtifactPreview> {
+    if (!isArtifact(artifact)) throw new ApiError('artifact_manifest_invalid');
+    return this.checked(`/tasks/${encodeURIComponent(id)}/resources/artifacts/${encodeURIComponent(artifact.id)}/preview`,
+      (value): value is ArtifactPreview => isPreview(value) && value.task_id === id
+        && value.artifact_id === artifact.id && value.sha256 === artifact.sha256, signal);
+  }
+  async downloadArtifact(id: string, artifact: ArtifactResource, signal?: AbortSignal): Promise<Blob> {
+    if (!isArtifact(artifact) || !/^[A-Za-z0-9_-]{1,64}$/.test(id) || !/^[A-Za-z0-9_-]{1,64}$/.test(artifact.id)) {
+      throw new ApiError('artifact_manifest_invalid');
+    }
+    if (!this.connected) throw new ApiError('local_access_denied', 401);
+    const controller = new AbortController(); this.#streams.add(controller);
+    const combined = AbortSignal.any([controller.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]);
+    let response: Response | undefined;
+    try {
+      response = await workbenchFetch(`/api/workbench/tasks/${id}/resources/artifacts/${artifact.id}/content`, {
+        headers: {}, signal: combined,
+        credentials: 'omit', cache: 'no-store', redirect: 'error',
+      });
+      if ([401, 403].includes(response.status)) {
+        this.clear(); this.unauthorized(); throw new ApiError('local_access_denied', response.status);
+      }
+      if (!response.ok) {
+        const payload = await readJSON(response) as { error?: { code?: unknown } };
+        throw new ApiError(typeof payload?.error?.code === 'string' ? payload.error.code : 'request_failed', response.status);
+      }
+      if (response.headers.get('x-content-sha256') !== artifact.sha256
+          || response.headers.get('content-type')?.split(';')[0] !== artifact.media_type.split(';')[0]) {
+        throw new ApiError('artifact_integrity_failed');
+      }
+      const reader = response.body?.getReader();
+      if (!reader) throw new ApiError('invalid_response');
+      const bytes = new Uint8Array(artifact.size_bytes); let size = 0;
+      try {
+        while (true) {
+          const chunk = await reader.read(); if (chunk.done) break;
+          if (size + chunk.value.length > bytes.length) throw new ApiError('artifact_integrity_failed');
+          bytes.set(chunk.value, size); size += chunk.value.length;
+        }
+      } finally { await reader.cancel(); reader.releaseLock(); }
+      const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+        .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+      if (size !== artifact.size_bytes || digest !== artifact.sha256) throw new ApiError('artifact_integrity_failed');
+      if (!this.connected) throw new ApiError('local_access_denied', 401);
+      if (combined.aborted) throw combined.reason;
+      return new Blob([bytes], { type: artifact.media_type });
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      if (signal?.aborted) throw signal.reason;
+      throw new ApiError(this.connected ? 'network_unavailable' : 'local_access_denied');
+    } finally {
+      await response?.body?.cancel().catch(() => {});
+      this.#streams.delete(controller);
+    }
+  }
+  controls(id: string, signal?: AbortSignal): Promise<ControlState> {
+    return this.checked(`/tasks/${encodeURIComponent(id)}/controls`,
+      (value): value is ControlState => isControlState(value) && value.task_id === id, signal);
+  }
+  approvals(id: string, page: number, signal?: AbortSignal): Promise<ApprovalPage> {
+    return this.checked(`/tasks/${encodeURIComponent(id)}/approvals?limit=20&offset=${(page - 1) * 20}`,
+      (value): value is ApprovalPage => isPage(value, isApproval) && (value as ApprovalPage).task_id === id, signal);
+  }
+  async controlTask(id: string, action: ControlAction, expected: ExpectedState): Promise<ControlReceipt> {
+    if (!['pause', 'resume', 'cancel'].includes(action) || !isExpectedState(expected)) throw new ApiError('request_validation_error', 422);
+    const statuses = { pause: ['paused', 'pause_requested'], resume: ['queued'], cancel: ['cancelled', 'cancel_requested'] };
+    return this.write(`/tasks/${encodeURIComponent(id)}/control/${action}`,
+      (value): value is ControlReceipt => isControlReceipt(value) && value.task_id === id && statuses[action].includes(value.status), { expected });
+  }
+  async decideApproval(id: string, approvalId: string, decision: ApprovalDecision): Promise<ControlReceipt> {
+    if (!isExpectedState(decision.expected) || !['approve', 'reject', 'modify'].includes(decision.action)
+      || !/^[0-9a-f]{64}$/.test(decision.operation_sha256) || typeof decision.reason !== 'string' || decision.reason.length > 2000
+      || (decision.action === 'modify' ? !isSpecification(decision.specification) : decision.specification !== undefined)) {
+      throw new ApiError('request_validation_error', 422);
+    }
+    return this.write(`/tasks/${encodeURIComponent(id)}/approvals/${encodeURIComponent(approvalId)}/decision`,
+      (value): value is ControlReceipt => isControlReceipt(value) && value.task_id === id
+        && value.status === (decision.action === 'reject' ? 'awaiting_approval' : 'paused'), { ...decision });
+  }
+  events(id: string, before?: number, signal?: AbortSignal): Promise<EventPage> {
+    if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) throw new ApiError('event_cursor_invalid', 422);
+    return this.checked(`/tasks/${encodeURIComponent(id)}/events?limit=50${before === undefined ? '' : '&before=' + before}`,
+      (value): value is EventPage => isEventPage(value) && value.task_id === id
+        && (before === undefined || value.items.every((item) => item.sequence < before)), signal);
+  }
+  async stream(id: string, after: number, signal: AbortSignal, receive: (message: StreamMessage) => void): Promise<void> {
+    if (!this.connected) throw new ApiError('local_access_denied', 401);
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || !Number.isSafeInteger(after) || after < 0) throw new ApiError('event_cursor_invalid', 422);
+    const controller = new AbortController(); this.#streams.add(controller);
+    const abort = () => controller.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) controller.abort();
+    let timer = setTimeout(abort, 15000);
+    try {
+      const response = await workbenchFetch(`/api/workbench/tasks/${encodeURIComponent(id)}/stream`, {
+        headers: { Accept: 'text/event-stream', 'Last-Event-ID': String(after) },
+        credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
+      });
+      clearTimeout(timer);
+      timer = setTimeout(abort, 35000);
+      if (response.status === 401 || response.status === 403) { this.clear(); this.unauthorized(); throw new ApiError('local_access_denied', response.status); }
+      if (!this.connected || signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (!response.ok) {
+        const payload = await readJSON(response) as { error?: { code?: unknown } };
+        throw new ApiError(typeof payload.error?.code === 'string' ? payload.error.code : 'workbench_stream_unavailable', response.status);
+      }
+      if (response.status !== 200 || response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'text/event-stream') {
+        await response.body?.cancel(); throw new ApiError('invalid_response');
+      }
+      function activity() { clearTimeout(timer); timer = setTimeout(abort, 35000); }
+      activity();
+      let ready = false; let ended = false; let durable = false;
+      await consumeSSE(response, (frame) => {
+        if (!this.connected || signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        const value = JSON.parse(frame.data) as Record<string, unknown>;
+        if (!value || typeof value !== 'object' || Array.isArray(value) || ended) throw new StreamProtocolError('Invalid frame');
+        if (frame.type === 'error' && value.code === 'workbench_stream_unavailable') throw new ApiError('workbench_stream_unavailable', 503);
+        if (value.task_id !== id) throw new StreamProtocolError('Task mismatch');
+        if (ready && frame.type === 'workflow' && isWorkflowEvent(value) && frame.id === String(value.sequence)) {
+          receive({ type: 'workflow', event: value }); return;
+        }
+        if (frame.id !== undefined || !isTaskStatus(value.status)) throw new StreamProtocolError('Invalid control frame');
+        if (!ready && frame.type === 'ready' && typeof value.durable === 'boolean') { ready = true; durable = value.durable; receive({ type: 'ready', status: value.status, durable }); }
+        else if (ready && frame.type === 'end' && ['terminal', 'unsupported', 'rotate'].includes(String(value.reason))) {
+          const terminal = ['succeeded', 'partial', 'failed', 'budget_exceeded', 'cancelled'].includes(value.status);
+          if (value.reason === 'terminal' && (!durable || !terminal)
+            || value.reason === 'unsupported' && durable
+            || value.reason === 'rotate' && (!durable || terminal)) throw new StreamProtocolError('Invalid ending');
+          ended = true;
+          receive({ type: 'end', status: value.status, reason: value.reason as 'terminal' | 'unsupported' | 'rotate' });
+        } else throw new StreamProtocolError('Unknown frame');
+      }, activity);
+    } catch (error) {
+      if (signal.aborted || !this.connected) throw new DOMException('Aborted', 'AbortError');
+      if (error instanceof ApiError) throw error;
+      if (error instanceof StreamProtocolError || error instanceof SyntaxError) {
+        throw new ApiError('invalid_response');
+      }
+      throw new ApiError('network_unavailable');
+    } finally { clearTimeout(timer); signal.removeEventListener('abort', abort); controller.abort(); this.#streams.delete(controller); }
+  }
+}

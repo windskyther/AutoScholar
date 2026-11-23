@@ -1,0 +1,121 @@
+import asyncio
+from typing import Literal
+
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+from autoscholar import __version__
+from autoscholar.coding.sandbox import SandboxExecutor
+from autoscholar.infrastructure.base import ManagedDependency
+
+router = APIRouter(prefix="/health", tags=["health"])
+
+
+class LiveResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+    service: Literal["autoscholar"] = "autoscholar"
+    version: str
+
+
+class DependencyStatus(BaseModel):
+    status: Literal["ok", "error", "not_configured"]
+
+
+class ReadyResponse(BaseModel):
+    status: Literal["ready", "not_ready"]
+    dependencies: dict[str, DependencyStatus]
+    capabilities: dict[str, DependencyStatus]
+
+
+async def _check_dependency(dependency: ManagedDependency) -> DependencyStatus:
+    try:
+        healthy = await dependency.ping()
+    except Exception:
+        return DependencyStatus(status="error")
+    return DependencyStatus(status="ok" if healthy else "error")
+
+
+@router.get("/live", response_model=LiveResponse)
+async def live() -> LiveResponse:
+    return LiveResponse(version=__version__)
+
+
+@router.get(
+    "/ready",
+    response_model=ReadyResponse,
+    responses={503: {"model": ReadyResponse}},
+)
+async def ready(request: Request) -> ReadyResponse | JSONResponse:
+    database: ManagedDependency = request.app.state.database
+    redis: ManagedDependency = request.app.state.redis
+    qdrant: ManagedDependency = request.app.state.qdrant
+    sandbox: SandboxExecutor = request.app.state.sandbox_executor
+    database_status, redis_status, qdrant_status, sandbox_health = await asyncio.gather(
+        _check_dependency(database),
+        _check_dependency(redis),
+        _check_dependency(qdrant),
+        sandbox.health(),
+    )
+    dependencies = {
+        "postgres": database_status,
+        "redis": redis_status,
+        "qdrant": qdrant_status,
+    }
+    llm_status: Literal["ok", "not_configured"] = (
+        "ok" if request.app.state.llm_provider.configured else "not_configured"
+    )
+    profiles = getattr(request.app.state, "model_profiles", None)
+    if profiles is not None and database_status.status == "ok":
+        llm_status = (
+            "ok" if any(item.enabled for item in await profiles.list()) else "not_configured"
+        )
+    research_services = request.app.state.research_services
+    research_capabilities = {
+        f"{service.source_type}_search": DependencyStatus(
+            status="ok" if service.configured else "not_configured"
+        )
+        for service in research_services
+    }
+    mcp_gateway = request.app.state.mcp_research_gateway
+    if mcp_gateway is not None:
+        # Tool outage degrades research, not the Core's liveness or database readiness.
+        mcp_status: Literal["ok", "error"] = "ok" if await mcp_gateway.available() else "error"
+        research_capabilities["mcp_research"] = DependencyStatus(status=mcp_status)
+        for name in ("web_search", "paper_search"):
+            research_capabilities[name] = DependencyStatus(status=mcp_status)
+    capabilities = {
+        "llm": DependencyStatus(status=llm_status),
+        "rag": DependencyStatus(
+            status="ok" if request.app.state.settings.rag_configured else "not_configured"
+        ),
+        "sandbox": DependencyStatus(status=sandbox_health.status),
+        "mnist_dataset": DependencyStatus(
+            status="ok" if sandbox_health.mnist_dataset else "not_configured"
+        ),
+        **research_capabilities,
+    }
+    filesystem_gateway = request.app.state.mcp_filesystem_gateway
+    if filesystem_gateway is not None:
+        capabilities["mcp_filesystem"] = DependencyStatus(
+            status="ok" if await filesystem_gateway.available() else "error"
+        )
+    git_gateway = request.app.state.mcp_git_gateway
+    if git_gateway is not None:
+        capabilities["mcp_git"] = DependencyStatus(
+            status="ok" if await git_gateway.available() else "error"
+        )
+    experiment_gateway = request.app.state.mcp_experiment_gateway
+    if experiment_gateway is not None:
+        capabilities["mcp_experiment"] = DependencyStatus(
+            status="ok" if await experiment_gateway.available() else "error"
+        )
+    is_ready = all(dependency.status == "ok" for dependency in dependencies.values())
+    response = ReadyResponse(
+        status="ready" if is_ready else "not_ready",
+        dependencies=dependencies,
+        capabilities=capabilities,
+    )
+    if is_ready:
+        return response
+    return JSONResponse(status_code=503, content=response.model_dump())

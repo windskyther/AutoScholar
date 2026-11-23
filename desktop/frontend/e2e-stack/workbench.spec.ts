@@ -1,0 +1,97 @@
+import { expect, test } from '@playwright/test';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+const token = process.env.PRODUCTION_TEST_TOKEN ?? 'public-phase9g-token';
+const headers = { Authorization: `Bearer ${token}` };
+const stackOrigin = process.env.PRODUCTION_URL ?? `http://127.0.0.1:${process.env.STACK_API_PORT ?? '18019'}`;
+const prefix = process.env.PRODUCTION_URL ? '/api' : '';
+const api = `${stackOrigin}${prefix}/workbench`;
+const expectedRuns = process.env.PHASE11_TEST_FAULT_ONCE === '1' ? 2 : 1;
+test.describe.configure({ mode: 'serial' });
+
+test('isolated PostgreSQL + Qdrant + workers + real Docker training from browser to report', async ({ page, request }) => {
+  const receipts: string[] = [];
+  page.on('response', (response) => {
+    if (response.url().endsWith('/agent/tasks') && response.request().method() === 'POST') receipts.push(response.url());
+  });
+  await page.goto('/projects');
+  await page.getByRole('button', { name: '新建项目' }).click();
+  await page.getByLabel('项目名称').fill('9G 独立整栈验收');
+  await page.getByRole('button', { name: '创建项目', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '9G 独立整栈验收', exact: true })).toBeVisible();
+  const projectId = new URL(page.url()).pathname.split('/')[2];
+  const pdf = await request.get(`${stackOrigin}${prefix}/__acceptance/public-pdf`, { headers });
+  expect(pdf.ok()).toBeTruthy();
+  await page.getByRole('button', { name: '上传 PDF' }).click();
+  await page.locator('input[type="file"]').setInputFiles({ name: 'public.pdf', mimeType: 'application/pdf', buffer: await pdf.body() });
+  await page.getByLabel('文档标题（可选）').fill('公开 MNIST 验收 PDF');
+  await page.getByRole('button', { name: '确认上传并索引' }).click();
+  await expect.poll(async () => {
+    const response = await request.get(`${api}/projects/${projectId}/documents`, { headers });
+    return (await response.json()).items[0]?.status;
+  }, { timeout: 30000 }).toBe('ready');
+  await expect(page.getByRole('row').filter({ hasText: '公开 MNIST 验收 PDF' }).getByText('已就绪', { exact: true })).toBeVisible({ timeout: 20000 });
+  await page.getByRole('button', { name: '创建研究任务' }).click();
+  await page.getByLabel('任务类型', { exact: true }).click();
+  await page.getByTitle('MNIST CPU 实验', { exact: true }).click();
+  await page.getByRole('dialog').getByLabel('研究目标', { exact: true }).fill('Public MNIST MLP CNN engineering acceptance; scripted coordinator and no external research.');
+  await page.getByRole('checkbox', { name: '我确认提交后自动执行研究任务，并接受可能产生的 API 费用。' }).check();
+  await page.getByRole('button', { name: '确认提交并自动执行', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '任务详情', exact: true })).toBeVisible();
+  const id = new URL(page.url()).pathname.split('/').at(-1)!;
+  await expect(page.getByTestId('task-status').getByText('等待审批', { exact: true })).toBeVisible({ timeout: 60000 });
+  const before = await request.get(`${api}/tasks/${id}/overview`, { headers });
+  expect((await before.json()).execution.budget_used.training_runs ?? 0).toBe(0);
+  await page.getByRole('button', { name: '审阅与决定', exact: true }).click();
+  await page.getByRole('button', { name: '确认批准并暂停', exact: true }).click();
+  await expect(page.getByTestId('task-status').getByText('已暂停', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '恢复任务', exact: true }).click();
+  await page.getByRole('button', { name: '确认恢复任务', exact: true }).click();
+  if (expectedRuns === 2) {
+    await expect(page.getByTestId('task-status').getByText('等待审批', { exact: true })).toBeVisible({ timeout: 90000 });
+    await page.getByRole('button', { name: '审阅与决定', exact: true }).click();
+    await page.getByRole('button', { name: '确认批准并暂停', exact: true }).click();
+    await expect(page.getByTestId('task-status').getByText('已暂停', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '恢复任务', exact: true }).click();
+    await page.getByRole('button', { name: '确认恢复任务', exact: true }).click();
+  }
+  await expect(page.getByTestId('task-status').getByText('已完成', { exact: true })).toBeVisible({ timeout: 90000 });
+  expect(receipts).toHaveLength(1);
+  const final = await request.get(`${api}/tasks/${id}/overview`, { headers });
+  const overview = await final.json(); expect(overview.execution.budget_used.training_runs).toBe(expectedRuns);
+  if (expectedRuns === 2) expect(overview.execution.budget_used.replans).toBe(1);
+  expect(overview.execution.budget_used.total_tokens ?? 0).toBe(0); expect(overview.monetary_cost).toBeNull();
+  const resources = page.getByRole('region', { name: '任务资源' });
+  await resources.getByRole('tab', { name: '实验对比' }).click();
+  const succeeded = resources.getByRole('row').filter({ has: page.getByRole('cell', { name: 'succeeded', exact: true }) });
+  await expect(succeeded).toHaveCount(1);
+  if (expectedRuns === 2) await expect(resources.getByRole('row').filter({ has: page.getByRole('cell', { name: 'failed', exact: true }) })).toHaveCount(1);
+  await succeeded.getByRole('button', { name: '展开实验' }).click();
+  await expect(resources.getByRole('columnheader', { name: '测试准确率', exact: true })).toBeVisible();
+  await expect(resources.getByRole('cell', { name: 'cnn', exact: true })).toBeVisible();
+  await resources.getByRole('tab', { name: '文件与报告' }).click();
+  const manifestResponse = await request.get(`${api}/tasks/${id}/resources/artifacts`, { headers });
+  const manifest = (await manifestResponse.json()).items;
+  const report = manifest.find((item: { type: string }) => item.type === 'report'); expect(report).toBeTruthy();
+  const row = resources.getByRole('row').filter({ hasText: 'reports/report.md' });
+  await row.getByRole('button', { name: '预览' }).click();
+  await expect(page.getByRole('dialog').getByText('# MNIST MLP 与 CNN 实验对比', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '关闭预览' }).click();
+  const plot = resources.getByRole('row').filter({ hasText: 'outputs/loss.png' });
+  await plot.getByRole('button', { name: '预览' }).click();
+  await expect(page.getByRole('dialog').getByRole('img', { name: '实验曲线' })).toBeVisible();
+  await expect.poll(async () => page.getByRole('dialog').getByRole('img', { name: '实验曲线' })
+    .evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await page.getByRole('button', { name: '关闭预览' }).click();
+  const downloading = page.waitForEvent('download'); await row.getByRole('button', { name: '导出报告' }).click();
+  const download = await downloading; const bytes = await readFile((await download.path())!);
+  expect(createHash('sha256').update(bytes).digest('hex')).toBe(report.sha256); expect(bytes.length).toBe(report.size_bytes);
+  expect((await request.get(`${api}/tasks/${id}/resources/artifacts/${report.id}/content`)).status()).toBe(401);
+  await page.screenshot({ path: 'test-results/phase9g-completed.png', fullPage: true });
+  await page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/overview') && response.ok(), { timeout: 20000 });
+  await expect(page.getByTestId('task-status').getByText('已完成', { exact: true })).toBeVisible();
+  const again = await request.get(`${api}/tasks/${id}/overview`, { headers });
+  expect((await again.json()).execution.budget_used.training_runs).toBe(expectedRuns);
+  console.log(JSON.stringify({ acceptance: 'browser_full_stack_passed', task_id: id, project_id: projectId,
+    registered_artifacts: manifest.length, real_training_runs: expectedRuns, external_api_calls: 0 }));
+});

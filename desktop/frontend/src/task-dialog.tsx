@@ -1,0 +1,204 @@
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Button, Checkbox, Collapse, Form, Input, Modal, Select, Space } from 'antd';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { ApiError, errorMessage, isWriteUncertain } from './api';
+import { useConnection } from './connection';
+import { QueryError } from './components';
+import { DocumentState } from './documents';
+import type { BudgetLimits, LinkedTask, PDFDocument, Project, TaskSubmission } from './types';
+import type { ContinuationDraft } from './task-submission';
+import NumberSlider from './number-slider';
+import { Link } from 'react-router-dom';
+import { researchLabels } from './research-entry';
+import type { ResearchKind } from './research-entry';
+import { documentRefreshInterval, SNAPSHOT_REFRESH_MS } from './snapshot-refresh';
+import WorkbenchTable from './workbench-table';
+import TaskReferencePicker from './task-reference-picker';
+
+interface Values {
+  objective: string; budget: BudgetLimits; sources: ('web' | 'paper')[];
+  workflowKind: ResearchKind;
+  model_profile_id: string;
+  research_depth: 'quick' | 'standard' | 'deep';
+  reuse_project_evidence: boolean;
+  reference_tasks: LinkedTask[];
+  documentMode: 'all' | 'none' | 'selected'; retrieval: TaskSubmission['retrieval_mode']; consent: boolean;
+}
+const fields: { key: keyof BudgetLimits; label: string; min: number; max: number }[] = [
+  { key: 'total_tokens', label: '总 Token 预算', min: 1, max: 1000000 },
+  { key: 'model_calls', label: '模型调用上限', min: 1, max: 300 },
+  { key: 'search_queries', label: '检索调用上限', min: 1, max: 100 },
+  { key: 'training_runs', label: '训练次数上限', min: 1, max: 20 },
+  { key: 'steps', label: '计划步骤上限', min: 1, max: 100 },
+  { key: 'replans', label: '重规划上限', min: 0, max: 10 },
+  { key: 'tool_calls', label: '工具调用上限', min: 1, max: 500 },
+  { key: 'code_repairs', label: '代码修复上限', min: 0, max: 10 },
+  { key: 'sandbox_runs', label: '沙箱次数上限', min: 1, max: 200 },
+  { key: 'wall_seconds', label: '活跃执行时间（秒）', min: 1, max: 7200 },
+];
+
+const objectiveHints: Partial<Record<ResearchKind, string>> = {
+  literature_review: '主题与时间范围', comparison: '比较对象与维度', research_proposal: '研究目标与约束',
+};
+
+export default function TaskDialog({ project, initialKind, continuation, open, close, complete, pendingChanged }: {
+  project: Pick<Project, 'id' | 'name'>; initialKind: ResearchKind; continuation?: ContinuationDraft; open: boolean;
+  close: () => void; complete: () => void; pendingChanged: (value: boolean) => void;
+}) {
+  const { api, session } = useConnection();
+  const cache = useQueryClient();
+  const navigate = useNavigate();
+  const [form] = Form.useForm<Values>();
+  const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [uncertain, setUncertain] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const draft = useRef<{ key: string; payload: TaskSubmission } | null>(null);
+  const inFlight = useRef(false);
+  const initialDocumentMode = initialKind === 'document_analysis' ? 'all' : 'none';
+  const documentMode = Form.useWatch('documentMode', form) ?? initialDocumentMode;
+  const workflowKind = Form.useWatch('workflowKind', form) ?? initialKind;
+  const ceiling = session?.capabilities.budget_limits;
+  const modelId = Form.useWatch('model_profile_id', form) ?? '';
+  const models = useQuery({ queryKey: ['models'], queryFn: ({ signal }) => api!.models(signal),
+    enabled: open, refetchInterval: SNAPSHOT_REFRESH_MS });
+  const chosenModel = modelId ? models.data?.items.find((item) => item.id === modelId && item.enabled) : null;
+  const modelReady = !!chosenModel;
+  useEffect(() => {
+    if (models.data && !form.getFieldValue('model_profile_id')) {
+      const enabled = models.data.items.filter(item => item.enabled);
+      const first = enabled.find(item => item.id === continuation?.modelProfileId) ?? enabled[0];
+      if (first) form.setFieldValue('model_profile_id', first.id);
+    }
+  }, [models.data, continuation?.modelProfileId, form]);
+  const docs = useQuery({ queryKey: ['documents', project.id, page], queryFn: ({ signal }) => api!.documents(project.id, page, signal),
+    enabled: open && documentMode === 'selected', refetchInterval: ({ state }) => documentRefreshInterval(state.data) });
+  useEffect(() => {
+    if (!busy && !uncertain) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [busy, uncertain]);
+  async function send() {
+    if (!api || !draft.current || inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError(null);
+    try {
+      const result = await api.submitTask(draft.current.payload, draft.current.key);
+      if (!api.connected) return;
+      void cache.invalidateQueries({ queryKey: ['tasks', project.id] });
+      if (continuation) void cache.invalidateQueries({ queryKey: ['task-links', continuation.previous.task_id] });
+      complete(); navigate(`/projects/${encodeURIComponent(project.id)}/tasks/${encodeURIComponent(result.task_id)}`);
+    } catch (failure) {
+      setError(failure);
+      const unknown = isWriteUncertain(failure);
+      setUncertain(unknown); pendingChanged(unknown);
+      if (!unknown) draft.current = null;
+    } finally { inFlight.current = false; setBusy(false); }
+  }
+  async function submit(values: Values) {
+    if (inFlight.current || uncertain || !values.consent || !ceiling || !modelReady
+      || (session?.capabilities.model_management && !models.isSuccess)) return;
+    if (values.documentMode === 'selected' && (selected.length === 0 || selected.length > 100)) {
+      setError(new ApiError('documents_selection_required', 422)); return;
+    }
+    draft.current = { key: crypto.randomUUID(), payload: structuredClone({
+      objective: values.objective.trim(), mode: 'autonomous', project_id: project.id,
+      workflow_kind: values.workflowKind,
+      model_profile_id: values.model_profile_id,
+      ...(session?.capabilities.research_quality ? { research_depth: values.research_depth } : {}),
+      ...(session?.capabilities.project_evidence ? { reuse_project_evidence: values.reuse_project_evidence } : {}),
+      ...(continuation ? { continuation_of_task_id: continuation.previous.task_id } : {}),
+      ...(values.reference_tasks?.length ? { reference_task_ids: values.reference_tasks.map(item => item.task_id) } : {}),
+      document_ids: values.documentMode === 'all' ? null : values.documentMode === 'none' ? [] : selected,
+      retrieval_mode: values.retrieval, research_sources: values.sources, budget: values.budget,
+    }) };
+    await send();
+  }
+  return <Modal title={`${continuation ? '追加研究任务' : '提交研究任务'} · ${project.name}`} open={open} width={820} mask={{ closable: false }}
+    keyboard={!busy} closable={!busy} onCancel={() => { if (!busy) close(); }} footer={null}>
+    <Form form={form} layout="vertical" disabled={busy || uncertain} onFinish={(values) => void submit(values)} initialValues={{
+      budget: ceiling, sources: initialKind === 'literature_review' || !session?.capabilities.web_search_configured ? ['paper'] : ['web'],
+      workflowKind: initialKind, documentMode: initialDocumentMode, retrieval: 'hybrid_rerank', consent: false,
+      model_profile_id: '',
+      research_depth: 'standard',
+      reuse_project_evidence: true,
+      reference_tasks: continuation?.references ?? [],
+    }}>
+      <>
+        <Form.Item name="model_profile_id" label="使用模型" extra={models.isPending ? '正在读取模型…' : undefined}
+          rules={[{ required: true, message: '请选择模型管理中的模型' }]}>
+          <Select aria-busy={models.isPending} placeholder="选择模型连接" options={[
+            ...(models.data?.items.filter((item) => item.enabled).map((item) => ({ value: item.id, label: `${item.name} · ${item.model}` })) ?? []),
+          ]} />
+        </Form.Item>
+        {models.isError && <QueryError error={models.error} retry={() => void models.refetch()} />}
+        {!modelReady && models.isSuccess && <Alert type="info" title="请先添加或选择一个可用模型" />}
+        <p><Link to="/models" onClick={close}>管理模型连接</Link></p>
+      </>
+      {session?.capabilities.research_quality && <Form.Item name="research_depth" label="研究深度">
+        <Select options={[
+          { value: 'quick', label: '快速 · 基础资料整理' },
+          { value: 'standard', label: '标准 · 独立复筛与审稿' },
+          { value: 'deep', label: '深入 · 加强阅读与修订' },
+        ]} />
+      </Form.Item>}
+      <Form.Item name="workflowKind" label="任务类型" rules={[{ required: true }]}>
+        <Select<ResearchKind> options={Object.entries(researchLabels).map(([value, label]) => ({ value: value as ResearchKind, label }))} onChange={(value) => {
+          form.setFieldValue('documentMode', value === 'document_analysis' ? 'all' : 'none');
+          if (value === 'literature_review') form.setFieldValue('sources', ['paper']);
+        }} />
+      </Form.Item>
+      {continuation && <p>上一轮：{continuation.previous.objective}</p>}
+      <Form.Item name="objective" label={continuation ? '追加指令' : '研究目标'} rules={[{ required: true, whitespace: true, max: 10000, message: '请填写 1–10000 字符' }]}>
+        <Input.TextArea rows={3} maxLength={10000} showCount placeholder={continuation ? '说明需要补充或调整的内容' : objectiveHints[workflowKind]} />
+      </Form.Item>
+      {session?.capabilities.task_links && <Form.Item name="reference_tasks" label="关联任务（可选）">
+        <TaskReferencePicker projectId={project.id} exclude={continuation ? [continuation.previous.task_id] : []} disabled={busy || uncertain} />
+      </Form.Item>}
+      {session?.capabilities.project_evidence && <Form.Item name="reuse_project_evidence" valuePropName="checked">
+        <Checkbox>复用本项目已有证据</Checkbox>
+      </Form.Item>}
+      {workflowKind !== 'document_analysis' && <><Form.Item name="sources" label="检索来源" rules={[{ required: true, type: 'array', min: 1, max: 2 }]}>
+        <Select mode="multiple" options={[{ value: 'web', label: 'Tavily Web', disabled: !session?.capabilities.web_search_configured },
+          { value: 'paper', label: 'Semantic Scholar 论文（无密钥时匿名）' }]} />
+      </Form.Item>
+      {!session?.capabilities.web_search_configured && <p>Tavily 未配置；匿名论文检索可能受到限流。</p>}</>}
+      <Space className="task-options" wrap>
+        <Form.Item name="documentMode" label="项目 PDF 范围"><Select style={{ width: 210 }} options={[
+          { value: 'all', label: '全部已就绪 PDF' }, { value: 'none', label: '不使用 PDF', disabled: workflowKind === 'document_analysis' }, { value: 'selected', label: '选择已就绪 PDF' },
+        ]} /></Form.Item>
+        <Form.Item name="retrieval" label="检索方式"><Select style={{ width: 210 }} options={[
+          { value: 'hybrid_rerank', label: '混合检索 + 重排' }, { value: 'hybrid', label: '混合检索' },
+          { value: 'dense', label: '向量检索' }, { value: 'sparse', label: '稀疏检索' },
+        ]} /></Form.Item>
+      </Space>
+      {documentMode === 'selected' && <>
+        <p>已选 {selected.length} 项 / 最多 100 项</p>
+        {docs.isPending ? null : !docs.data ? <QueryError error={docs.error} retry={() => void docs.refetch()} />
+          : <WorkbenchTable<PDFDocument> rowKey="id" size="small" dataSource={docs.data.items} scroll={{ x: 400 }} emptyMessage="暂无 PDF 文档。" columns={[
+            { title: '文档', dataIndex: 'title' }, { title: '状态', dataIndex: 'status', render: (value) => <DocumentState value={value} /> },
+          ]} rowSelection={{ selectedRowKeys: selected, preserveSelectedRowKeys: true,
+            getCheckboxProps: (item) => ({ disabled: busy || uncertain || item.status !== 'ready' || (selected.length >= 100 && !selected.includes(item.id)) }),
+            onChange: (keys) => setSelected(keys.map(String)) }}
+            pagination={{ current: page, pageSize: 20, total: docs.data.total, onChange: setPage }} />}
+      </>}
+      <Collapse className="budget-settings" defaultActiveKey={['budget']} items={[{ key: 'budget', label: '预算上限（不超过服务端配置）', children:
+        <div className="budget-grid">{fields.filter((field) => !['training_runs', 'sandbox_runs', 'code_repairs'].includes(field.key)).map((field) => <Form.Item key={field.key} name={['budget', field.key]} label={field.label}
+          rules={[{ required: true, type: 'integer', min: field.min, max: Math.min(ceiling?.[field.key] ?? field.max, field.max) }]}>
+          <NumberSlider label={field.label} min={field.min} max={Math.min(ceiling?.[field.key] ?? field.max, field.max)} />
+        </Form.Item>)}</div> }]} />
+      <Form.Item name="consent" valuePropName="checked" rules={[{ validator: (_, value) => value ? Promise.resolve() : Promise.reject(new Error('请确认自动执行及可能产生费用')) }]}>
+        <Checkbox>我确认提交后自动执行研究任务，并接受可能产生的 API 费用。</Checkbox>
+      </Form.Item>
+      {error !== null && <Alert type="error" showIcon title={errorMessage(error)}
+        description={uncertain ? '请求内容已锁定，请先核查项目任务，或确认并重试原提交。关闭窗口会保留请求；刷新页面会丢失本地记录，请勿直接新建另一轮。' : '请检查输入和文档状态，修改后再手动提交。'} />}
+      <Space wrap>
+        {!uncertain && <Button type="primary" htmlType="submit" loading={busy} disabled={!ceiling || !modelReady || (!!session?.capabilities.model_management && !models.isSuccess)}>确认提交并自动执行</Button>}
+        {uncertain && <Button type="primary" loading={busy} disabled={busy} onClick={() => void send()}>确认 / 重试原提交</Button>}
+        <Button className="pill-action" disabled={busy} onClick={close}>{uncertain ? '保留请求并关闭' : '取消'}</Button>
+      </Space>
+    </Form>
+  </Modal>;
+}

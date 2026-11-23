@@ -1,0 +1,88 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "autoscholar"
+version = "0.1.0"
+description = "Autonomous AI/ML research and experiment agent platform"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "aiosqlite>=0.21,<1",
+    "alembic>=1.16,<2",
+    "anyio>=4.5,<5",
+    "asyncpg>=0.30,<1",
+    "cryptography>=46,<51",
+    "fastapi>=0.116,<1",
+    "httpx>=0.28,<1",
+    "httpx2>=2.12,<3",
+    "langgraph>=0.6,<2",
+    "mcp==2.2.0",
+    "jsonschema>=4.25,<5",
+    "openai>=1.100,<3",
+    "pypdf>=6.21.4,<7",
+    "pydantic-settings>=2.10,<3",
+    "python-multipart>=0.0.20,<1",
+    "qdrant-client[fastembed]>=1.19,<2",
+    "redis>=6,<8",
+    "referencing>=0.37,<1",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "structlog>=25,<26",
+    "uvicorn[standard]>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.17,<2",
+    "pytest>=8.4,<10",
+    "pytest-asyncio>=1.1,<2",
+    "pytest-cov>=6.2,<8",
+    "ruff>=0.12,<1",
+    "types-jsonschema>=4.25,<5",
+]
+security = [
+    "pip-audit==2.10.1",
+]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src", "migrations", "alembic.ini", "uv.lock"]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src/autoscholar"]
+sources = ["src"]
+dev-mode-dirs = ["src"]
+
+# Minimum fixed versions from the Phase 11F runtime dependency audit.
+[tool.uv]
+constraint-dependencies = [
+    "certifi>=2026.10.18",
+    "filelock>=4.2.1",
+    "langgraph-sdk>=0.4.6",
+    "opentelemetry-api>=1.45.1",
+    "pillow>=13.0.0",
+    "urllib3>=2.8.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers -ra -p no:cacheprovider"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: tests that require the running Docker Compose stack",
+]
+
+[tool.ruff]
+src = [".", "src"]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+explicit_package_bases = true
+mypy_path = ["src"]

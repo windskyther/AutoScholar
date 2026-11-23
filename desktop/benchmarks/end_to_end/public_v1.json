@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "public-workflow-v1",
+  "category": "end_to_end",
+  "description": "Five real durable-workflow engineering cases with scripted public decisions, real isolated CPU MNIST training and an independent checkpoint oracle. Contract checks and actual task completion are separate.",
+  "provenance": "Self-authored public engineering fixtures, no private design content or credentials. Scripted search/coordinator outputs do not measure vendor, semantic retrieval or real LLM ability. Restart means committed-unit database/service reconstruction, not full-process disaster recovery. Fixed transport faults follow real training, not fabricated execution.",
+  "cases": [
+    {"id":"workflow-normal","prompt":"Research the public scope, validate seeded code, train MLP and CNN on the fixed MNIST subset, and report only saved measured results.","inputs":{"query_id":"normal"},"expected":{"workflow_status":"succeeded","task_success":true,"verification":"accepted","step_runs":{"research":1,"code":1,"train":1},"replans":0,"training_runs":1,"restarts":0}},
+    {"id":"workflow-restart","prompt":"Run the public MNIST comparison with seed 7; reopen the local workflow database and services after coding, retaining validated work and budget counters.","inputs":{"query_id":"restart"},"expected":{"workflow_status":"succeeded","task_success":true,"verification":"accepted","step_runs":{"research":1,"code":1,"train":1},"replans":0,"training_runs":1,"restarts":1}},
+    {"id":"workflow-recover","prompt":"Recover once from an invalid collected metrics artifact in the public MNIST comparison; rerun only the experiment and report the latest reviewed result.","inputs":{"query_id":"recover"},"expected":{"workflow_status":"succeeded","task_success":true,"verification":"accepted","step_runs":{"research":1,"code":1,"train":2},"replans":1,"training_runs":2,"restarts":0}},
+    {"id":"workflow-budget","prompt":"Attempt the public MNIST comparison under a one-script-call budget; stop without training or publishing a final report when it is exhausted.","inputs":{"query_id":"budget"},"expected":{"workflow_status":"budget_exceeded","error_code":"autonomous_budget_exceeded","task_success":false,"verification":"not_run","step_runs":{"research":1,"code":0,"train":0},"replans":0,"training_runs":0,"restarts":0}},
+    {"id":"workflow-deception","prompt":"Independently evaluate a public workflow that reports fabricated but schema-valid accuracies; successful workflow status alone must not earn task-success credit.","inputs":{"query_id":"deception"},"expected":{"workflow_status":"succeeded","task_success":false,"verification":"rejected","step_runs":{"research":1,"code":1,"train":1},"replans":0,"training_runs":1,"restarts":0}}
+  ]
+}

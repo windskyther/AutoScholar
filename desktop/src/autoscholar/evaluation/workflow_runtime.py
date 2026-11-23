@@ -1,0 +1,132 @@
+"""Per-case file-backed workflow state; never connect to the application database."""
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from uuid import uuid4
+
+from sqlalchemy import URL
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+
+from autoscholar.agent.database_models import Base
+from autoscholar.agent.repository import AgentTaskRepository
+from autoscholar.agent.runner import AgentRunner, ResearchSearch
+from autoscholar.coding.agent import CodingAgent, CodingLimits
+from autoscholar.coding.sandbox import SandboxExecutor
+from autoscholar.coding.workspace import WorkspaceManager
+from autoscholar.core.budget import BudgetedLLM, BudgetLimits
+from autoscholar.evaluation.workflow_ablation import (
+    AblationAutonomousService,
+    ObservedWorkflowMemory,
+    WorkflowVariant,
+)
+from autoscholar.evaluation.workflow_fixture import (
+    WorkflowScript,
+    workflow_plan,
+)
+from autoscholar.experiment.artifacts import ArtifactManager
+from autoscholar.experiment.service import ExperimentService
+from autoscholar.llm.base import LLMProvider
+from autoscholar.orchestration.durable import DurableService
+from autoscholar.orchestration.repository import WorkflowRepository
+from autoscholar.orchestration.sandbox import BudgetedSandbox
+from autoscholar.orchestration.service import AutonomousService
+from autoscholar.rag.service import RAGQueryServiceProtocol
+
+
+@dataclass
+class LocalWorkflow:
+    database: Path
+    engine: AsyncEngine
+    tasks: AgentTaskRepository
+    workspace: WorkspaceManager
+
+    async def reopen(self) -> None:
+        # Called only BETWEEN committed units: no call or worker is replayed implicitly.
+        await self.engine.dispose()
+        self.engine = create_async_engine(
+            URL.create("sqlite+aiosqlite", database=str(self.database))
+        )
+        self.tasks = AgentTaskRepository(async_sessionmaker(self.engine, expire_on_commit=False))
+
+
+@asynccontextmanager
+async def local_workflow(root: Path) -> AsyncIterator[LocalWorkflow]:
+    destination = root / ("evale-" + uuid4().hex)
+    destination.mkdir(parents=True, exist_ok=False)
+    database = destination / "workflow.sqlite"
+    engine = create_async_engine(URL.create("sqlite+aiosqlite", database=str(database)))
+    state = LocalWorkflow(
+        database=database,
+        engine=engine,
+        tasks=AgentTaskRepository(async_sessionmaker(engine, expire_on_commit=False)),
+        workspace=WorkspaceManager(destination / "workspaces"),
+    )
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        yield state
+    finally:
+        await state.engine.dispose()
+
+
+def workflow_service(
+    state: LocalWorkflow,
+    provider: LLMProvider,
+    search: ResearchSearch,
+    sandbox: SandboxExecutor,
+    script: WorkflowScript,
+    *,
+    variant: WorkflowVariant = "baseline",
+    observe_memory: bool = False,
+    knowledge: RAGQueryServiceProtocol | None = None,
+    limits: BudgetLimits | None = None,
+) -> DurableService:
+    metered = BudgetedLLM(provider)
+    isolated = BudgetedSandbox(sandbox)
+    artifacts = ArtifactManager(state.workspace, state.tasks)
+    coding = CodingAgent(
+        provider=metered,
+        repository=state.tasks,
+        workspaces=state.workspace,
+        sandbox=isolated,
+        limits=CodingLimits(timeout_seconds=30, max_repairs=0),
+    )
+    runner = AgentRunner(
+        provider=metered,
+        repository=state.tasks,
+        tools=[],
+        coding_service=coding,
+        research_services=[search],
+        knowledge_service=knowledge,
+    )
+    service_class = AblationAutonomousService if observe_memory else AutonomousService
+    if variant != "baseline" and not observe_memory:
+        raise ValueError("Ablation must be explicitly enabled")
+    service = service_class(
+        provider=metered,
+        tasks=state.tasks,
+        workflows=WorkflowRepository(state.tasks.session_factory),
+        runner=runner,
+        coding=coding,
+        workspace=state.workspace,
+        artifacts=artifacts,
+        experiments=ExperimentService(
+            repository=state.tasks,
+            workspace=state.workspace,
+            sandbox=isolated,
+            artifacts=artifacts,
+            timeout_seconds=60,
+            max_repairs=0,
+        ),
+        limits=limits or script.limits,
+    )
+    durable = DurableService(service)
+    if isinstance(service, AblationAutonomousService):
+        service.variant = variant
+        service.static_plan = workflow_plan(script)
+        memory = ObservedWorkflowMemory(durable.repository)
+        memory.enabled = variant != "no_memory"
+        durable.memory = memory
+    return durable

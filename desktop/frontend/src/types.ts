@@ -1,0 +1,137 @@
+export type TaskStatus = 'running' | 'succeeded' | 'partial' | 'failed' | 'budget_exceeded'
+  | 'queued' | 'pause_requested' | 'paused' | 'awaiting_approval' | 'cancel_requested'
+  | 'cancelled' | 'recovery_required';
+
+export interface Page<T> { items: T[]; total: number; limit: number; offset: number }
+export interface Project {
+  id: string; name: string; description: string | null; created_at: string; updated_at: string;
+}
+export interface BudgetLimits {
+  steps: number; replans: number; model_calls: number; tool_calls: number; search_queries: number;
+  code_repairs: number; training_runs: number; sandbox_runs: number; total_tokens: number; wall_seconds: number;
+}
+export type DocumentStatus = 'queued' | 'processing' | 'ready' | 'failed' | 'deleting';
+export interface PDFDocument {
+  id: string; project_id: string; original_filename: string; title: string; content_type: string;
+  sha256: string; size_bytes: number; status: DocumentStatus; page_count: number | null; chunk_count: number;
+  embedding_model: string | null; index_version: number; error_code: string | null;
+  error_message: string | null; created_at: string; updated_at: string;
+}
+export interface TaskSubmission {
+  objective: string; mode: 'autonomous'; project_id: string; document_ids: string[] | null;
+  retrieval_mode: 'dense' | 'sparse' | 'hybrid' | 'hybrid_rerank'; research_sources: ('web' | 'paper')[];
+  budget: BudgetLimits;
+  workflow_kind?: 'research' | 'literature_review' | 'comparison' | 'research_proposal' | 'document_analysis';
+  model_profile_id?: string | null;
+  research_depth?: 'quick' | 'standard' | 'deep';
+  reuse_project_evidence?: boolean;
+  continuation_of_task_id?: string;
+  reference_task_ids?: string[];
+}
+
+export type LinkedTask = Pick<Task, 'task_id' | 'objective' | 'status'>;
+export interface TaskLinks {
+  project_name: string;
+  previous: LinkedTask | null;
+  references: LinkedTask[];
+  followups: Page<LinkedTask>;
+  can_append: boolean;
+  model_profile_id: string | null;
+  workflow_kind: NonNullable<TaskSubmission['workflow_kind']> | null;
+}
+export interface SubmissionReceipt { task_id: string; status: TaskStatus; created: boolean; status_url: string }
+export interface Session {
+  status: 'connected'; authentication: 'local'; api_version: string;
+  capabilities: {
+    llm_configured: boolean; web_search_configured: boolean; research_backend: string;
+    filesystem_backend: string; experiment_backend: string; task_streaming: boolean; task_controls?: boolean; resource_browser?: boolean;
+    document_max_bytes?: number; document_max_pages?: number; budget_limits?: BudgetLimits; project_deletion?: boolean;
+    research_workflows?: boolean; task_deletion?: boolean; markdown_export?: boolean;
+    model_management?: boolean;
+    task_types?: { id: string; label: string }[];
+    model_usage?: boolean;
+    research_quality?: boolean;
+    project_evidence?: boolean;
+    model_pricing?: boolean;
+    task_links?: boolean;
+  };
+}
+export interface Task {
+  task_id: string; project_id: string | null; parent_task_id: string | null;
+  objective: string; mode: string; status: TaskStatus; metrics: Record<string, number>;
+  error_code: string | null; created_at: string; updated_at: string;
+}
+export interface PlanStep {
+  id: string; type: string; description: string; dependencies: string[]; expected_output: string;
+}
+export interface Overview {
+  task: Task; children: Page<Task>;
+  current_plan: { version: number; plan: { goal: string; steps: PlanStep[] } } | null;
+  execution: {
+    status: TaskStatus; stage: string | null; plan_version: number | null;
+    checkpoint_sequence: number; budget_used: Record<string, number>;
+    budget_limits: Record<string, number> | null; active_seconds: number;
+    pending_call_count: number; error_code: string | null; cause_error_code?: string | null;
+    model_profile_name?: string | null; model_name?: string | null;
+    research_depth?: 'quick' | 'standard' | 'deep'; quality_phase?: string | null;
+    quality_sources?: number; quality_reads?: number; quality_rounds?: number; quality_accepted?: boolean;
+  } | null;
+  resources: { evidence: number; experiments: number; artifacts: number };
+  answer: string | null; answer_truncated: boolean; usage_scope: 'root_task_only'; monetary_cost: null;
+}
+
+export interface WorkflowEvent {
+  task_id: string; sequence: number; kind: string; created_at: string;
+  payload: Record<string, string | number | boolean>;
+}
+export interface EventPage {
+  task_id: string; status: TaskStatus; durable: boolean; items: WorkflowEvent[];
+  next_cursor: number; has_more: boolean; has_older: boolean;
+}
+export type StreamMessage =
+  | { type: 'workflow'; event: WorkflowEvent }
+  | { type: 'ready'; status: TaskStatus; durable: boolean }
+  | { type: 'end'; status: TaskStatus; reason: 'terminal' | 'unsupported' | 'rotate' };
+
+export type ControlAction = 'pause' | 'resume' | 'cancel';
+export type ApprovalAction = 'approve' | 'reject' | 'modify';
+export interface ExpectedState { status: TaskStatus; checkpoint_sequence: number; event_sequence: number }
+export interface ControlState { task_id: string; status: TaskStatus; expected: ExpectedState | null; actions: ControlAction[] }
+export interface ControlReceipt { task_id: string; status: TaskStatus }
+export interface ExperimentSpecification {
+  schema_version: 1; name: string; dataset: 'mnist'; models: ['mlp', 'cnn']; seed: number;
+  epochs: number; batch_size: number; learning_rate: number; train_samples: number; test_samples: number;
+  primary_metric: 'test_accuracy'; device: 'cpu';
+}
+export interface Approval {
+  id: string; operation_sha256: string;
+  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'superseded' | 'consumed';
+  plan_version: number; step_id: string; specification: ExperimentSpecification; budget_limits: BudgetLimits;
+  cost_units: number; risk_level: 3; reason: string; expires_at: string; actions: ApprovalAction[];
+}
+export interface ApprovalPage extends Page<Approval> { task_id: string }
+export interface ApprovalDecision {
+  action: ApprovalAction; operation_sha256: string; reason: string;
+  specification?: ExperimentSpecification; expected: ExpectedState;
+}
+
+export interface EvidenceResource {
+  id: string; task_id: string; citation_key: string; source_type: string; title: string; url: string | null;
+  authors: string[]; year: number | null; claim: string; excerpt: string; text_truncated: boolean;
+  document_id: string | null; page: number | null; section: string | null;
+}
+export interface ModelRun {
+  model: 'mlp' | 'cnn'; train_loss: number[]; train_accuracy: number[]; test_accuracy: number;
+  parameters: number; duration_seconds: number;
+}
+export interface ExperimentResource {
+  id: string; task_id: string; name: string; status: string; specification: ExperimentSpecification | null;
+  runs: ModelRun[]; winner: 'mlp' | 'cnn' | 'tie' | null; accuracy_delta: number | null; error_code: string | null;
+  created_at: string; started_at: string | null; finished_at: string | null;
+}
+export interface ArtifactResource {
+  id: string; task_id: string; experiment_id: string; type: string; path: string; media_type: string;
+  size_bytes: number; sha256: string; created_at: string; previewable: boolean;
+}
+export interface ResourcePage<T> extends Page<T> { task_id: string }
+export interface ArtifactPreview { task_id: string; artifact_id: string; sha256: string; text: string; truncated: boolean }

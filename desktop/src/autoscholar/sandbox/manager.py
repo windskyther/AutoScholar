@@ -1,0 +1,110 @@
+import asyncio
+import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
+
+from autoscholar.coding.sandbox import (
+    DockerLimits,
+    DockerSandboxExecutor,
+    SandboxError,
+    SandboxExecutor,
+    SandboxHealth,
+    SandboxRunRequest,
+    SandboxRunResult,
+)
+from autoscholar.core.errors import AppError, register_exception_handlers
+from autoscholar.core.logging import configure_logging
+from autoscholar.core.redaction import redact_text
+from autoscholar.core.responses import UTF8JSONResponse
+from autoscholar.sandbox.access import ManagerBoundary, ManagerSettings
+
+
+def create_manager_app(
+    executor: SandboxExecutor | None = None, *, settings: ManagerSettings | None = None
+) -> FastAPI:
+    settings = settings or ManagerSettings()
+    configure_logging("INFO", settings=settings)
+    resolved = executor or DockerSandboxExecutor(
+        image=os.getenv("SANDBOX_IMAGE", "autoscholar-python-sandbox:phase4"),
+        dataset_volume=os.getenv("SANDBOX_DATASET_VOLUME", "autoscholar_mnist_data"),
+        dataset_ready_file=os.getenv(
+            "SANDBOX_DATASET_READY_FILE", "/datasets/mnist/.autoscholar-ready"
+        ),
+        limits=DockerLimits(
+            memory_bytes=int(os.getenv("SANDBOX_MEMORY_BYTES", str(4 * 1024**3))),
+            nano_cpus=int(os.getenv("SANDBOX_NANO_CPUS", "2000000000")),
+            pids_limit=int(os.getenv("SANDBOX_PIDS_LIMIT", "256")),
+            max_output_bytes=int(os.getenv("SANDBOX_MAX_OUTPUT_BYTES", "65536")),
+            max_artifact_file_bytes=int(os.getenv("SANDBOX_MAX_ARTIFACT_FILE_BYTES", "16777216")),
+            max_artifact_bytes=int(os.getenv("SANDBOX_MAX_ARTIFACT_BYTES", "67108864")),
+        ),
+    )
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            await resolved.close()
+
+    app = FastAPI(
+        title="AutoScholar Sandbox Manager",
+        default_response_class=UTF8JSONResponse,
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+    app.add_middleware(ManagerBoundary, settings=settings)
+    register_exception_handlers(app)
+
+    @app.api_route("/health/live", methods=["GET", "HEAD"])
+    async def live() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.exception_handler(SandboxError)
+    async def sandbox_error(_: object, exc: SandboxError) -> UTF8JSONResponse:
+        return UTF8JSONResponse(
+            status_code=503,
+            content={"error": {"code": exc.code, "message": redact_text(exc.message)}},
+        )
+
+    @app.get("/internal/health", response_model=SandboxHealth)
+    async def health() -> SandboxHealth:
+        return await resolved.health()
+
+    @app.post("/internal/v1/run", response_model=SandboxRunResult)
+    async def run(payload: SandboxRunRequest, request: Request) -> SandboxRunResult:
+        if payload.action not in settings.sandbox_allowed_actions:
+            raise AppError(
+                status_code=403, code="sandbox_action_forbidden", message="Action forbidden"
+            )
+
+        async def disconnected() -> None:
+            # FastAPI has already consumed the validated JSON body.
+            while (await request.receive())["type"] != "http.disconnect":
+                pass
+
+        execution = asyncio.create_task(resolved.run(payload))
+        disconnect = asyncio.create_task(disconnected())
+        try:
+            done, _ = await asyncio.wait(
+                {execution, disconnect}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if execution in done:
+                return await execution
+            # Propagate unexpected receive errors too, but still join the sandbox cleanup.
+            await disconnect
+            raise HTTPException(status_code=499, detail="Sandbox caller disconnected")
+        finally:
+            for pending in (execution, disconnect):
+                if not pending.done():
+                    pending.cancel()
+            await asyncio.gather(execution, disconnect, return_exceptions=True)
+
+    return app
+
+
+app = create_manager_app()

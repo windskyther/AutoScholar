@@ -1,0 +1,16 @@
+{
+  "schema_version":1,
+  "suite_id":"public-coding-v1",
+  "cases":{
+    "sum":{"prompt":"实现 sum_values(values)，返回数值列表之和并编写测试。","function":"sum_values","checks":[{"args":[[]],"expected":0},{"args":[[1,2,3]],"expected":6},{"args":[[-5,2]],"expected":-3},{"args":[[0.5,1.25]],"expected":1.75}]},
+    "mean":{"prompt":"实现 mean(values)，空列表抛出 ValueError。","function":"mean","checks":[{"args":[[]],"raises":"ValueError"},{"args":[[2,4]],"expected":3.0},{"args":[[-4,2]],"expected":-1.0},{"args":[[0.5,1.5]],"expected":1.0}]},
+    "clamp":{"prompt":"实现 clamp(value, low, high)，并拒绝倒置边界。","function":"clamp","checks":[{"args":[-3,0,10],"expected":0},{"args":[5,0,10],"expected":5},{"args":[13,0,10],"expected":10},{"args":[5,10,0],"raises":"ValueError"}]},
+    "dot":{"prompt":"实现 dot(left, right)，长度不一致抛出 ValueError。","function":"dot","checks":[{"args":[[],[]],"expected":0},{"args":[[1,2],[3,4]],"expected":11},{"args":[[-1,2],[3,-4]],"expected":-11},{"args":[[1],[1,2]],"raises":"ValueError"}]},
+    "factorial":{"prompt":"实现 factorial(n)，拒绝负数和非整数。","function":"factorial","checks":[{"args":[0],"expected":1},{"args":[6],"expected":720},{"args":[-1],"raises":"ValueError"},{"args":[1.5],"raises":"ValueError"},{"args":[true],"raises":"ValueError"}]},
+    "whitespace":{"prompt":"实现 normalize(text)，压缩多余空白字符。","function":"normalize","checks":[{"args":[""],"expected":""},{"args":[" a  b "],"expected":"a b"},{"args":["甲\t乙\n丙"],"expected":"甲 乙 丙"}]},
+    "syntax-repair":{"prompt":"修复 sum_values 的语法错误并通过独立检查。","function":"sum_values","checks":[{"args":[[]],"expected":0},{"args":[[1,2,3]],"expected":6},{"args":[[-5,2]],"expected":-3},{"args":[[0.5,1.25]],"expected":1.75}]},
+    "logic-repair":{"prompt":"修复 sum_values 的错误结果并通过独立检查。","function":"sum_values","checks":[{"args":[[]],"expected":0},{"args":[[1,2,3]],"expected":6},{"args":[[-5,2]],"expected":-3},{"args":[[0.5,1.25]],"expected":1.75}]},
+    "repair-exhausted":{"prompt":"验证无法修复的语法错误不会被宣告成功。","function":"sum_values","checks":[{"args":[[]],"expected":0},{"args":[[1,2]],"expected":3},{"args":[[-5,2]],"expected":-3}]},
+    "deceptive-tests":{"prompt":"验证恒定返回零却只测试零的 sum_values 不通过独立验收。","function":"sum_values","checks":[{"args":[[]],"expected":0},{"args":[[1,2,3]],"expected":6},{"args":[[-5,2]],"expected":-3},{"args":[[0.5,1.25]],"expected":1.75}]}
+  }
+}

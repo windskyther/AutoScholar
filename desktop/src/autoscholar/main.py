@@ -1,0 +1,590 @@
+import asyncio
+import hashlib
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from uuid import uuid4
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from autoscholar import __version__
+from autoscholar.agent.repository import AgentTaskRepository
+from autoscholar.agent.runner import (
+    AgentRunner,
+    AgentService,
+    ExperimentAgentService,
+    ResearchSearch,
+    TaskStore,
+)
+from autoscholar.agent.tools import CalculatorTool, RestrictedPythonTool
+from autoscholar.api.access import APIBoundaryMiddleware
+from autoscholar.api.governance import RequestGovernance, RequestGovernanceMiddleware
+from autoscholar.api.routes.agent import router as agent_router
+from autoscholar.api.routes.chat import router as chat_router
+from autoscholar.api.routes.health import router as health_router
+from autoscholar.api.routes.memory import router as memory_router
+from autoscholar.api.routes.projects import router as projects_router
+from autoscholar.api.routes.rag import router as rag_router
+from autoscholar.api.routes.workbench import router as workbench_router
+from autoscholar.api.routes.workflows import router as workflows_router
+from autoscholar.coding import (
+    CodingAgent,
+    CodingLimits,
+    SandboxClient,
+    SandboxExecutor,
+    WorkspaceManager,
+)
+from autoscholar.core.admission import UnavailableAdmissionStore
+from autoscholar.core.audit import AuditEvent, DatabaseAuditSink, UnavailableAuditSink
+from autoscholar.core.budget import BudgetedLLM
+from autoscholar.core.config import Settings, get_settings
+from autoscholar.core.errors import register_exception_handlers
+from autoscholar.core.logging import configure_logging
+from autoscholar.core.middleware import request_context_middleware
+from autoscholar.core.responses import UTF8JSONResponse
+from autoscholar.evidence.index import EvidenceIndex
+from autoscholar.evidence.library import EvidenceLibrary
+from autoscholar.experiment.artifacts import ArtifactManager
+from autoscholar.experiment.service import ExperimentService
+from autoscholar.infrastructure import Database, Qdrant, RedisClient
+from autoscholar.infrastructure.admission import RedisAdmissionStore
+from autoscholar.infrastructure.base import ManagedDependency
+from autoscholar.llm import LLMProvider
+from autoscholar.llm.factory import UnconfiguredLLMProvider
+from autoscholar.llm.profiles import ModelProfiles, RoutedLLM
+from autoscholar.orchestration.durable import DurableService
+from autoscholar.orchestration.repository import WorkflowRepository
+from autoscholar.orchestration.sandbox import BudgetedSandbox
+from autoscholar.orchestration.service import AutonomousService
+from autoscholar.rag import (
+    ChunkIndex,
+    DocumentStorage,
+    EmbeddingProvider,
+    FastEmbedReranker,
+    FastEmbedSparseProvider,
+    KnowledgeRepository,
+    KnowledgeStore,
+    LocalDocumentStorage,
+    QdrantChunkIndex,
+    RAGQueryService,
+    RAGQueryServiceProtocol,
+    Reranker,
+    SparseEmbeddingProvider,
+)
+from autoscholar.rag.embeddings import FastEmbedProvider
+from autoscholar.rag.worker import create_embedding_provider
+from autoscholar.research import (
+    RedisResearchCache,
+    ResearchSearchService,
+    SemanticScholarSearchProvider,
+    TavilySearchProvider,
+)
+from autoscholar.research.materials import MaterialReader
+from autoscholar.research.quality import ResearchQuality
+from autoscholar.research.service import JSONCache
+from autoscholar.tool_platform.artifact_spool import ArtifactSpool
+from autoscholar.tool_platform.experiment_adapter import MCPExperimentSandbox
+from autoscholar.tool_platform.experiment_contracts import EXPERIMENT_CONTRACTS
+from autoscholar.tool_platform.filesystem import file_contracts
+from autoscholar.tool_platform.gateway import ToolGateway
+from autoscholar.tool_platform.git_tools import GIT_CONTRACTS
+from autoscholar.tool_platform.registry import InvocationRegistry
+from autoscholar.tool_platform.research import RESEARCH_CONTRACTS, MCPResearchSearch
+from autoscholar.tool_platform.transport import MCPBackend
+
+
+def create_app(
+    settings: Settings | None = None,
+    *,
+    database: ManagedDependency | None = None,
+    redis: ManagedDependency | None = None,
+    qdrant: ManagedDependency | None = None,
+    llm_provider: LLMProvider | None = None,
+    agent_repository: TaskStore | None = None,
+    agent_runner: AgentService | None = None,
+    research_services: list[ResearchSearch] | None = None,
+    knowledge_repository: KnowledgeStore | None = None,
+    document_storage: DocumentStorage | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
+    sparse_embedding_provider: SparseEmbeddingProvider | None = None,
+    reranker: Reranker | None = None,
+    chunk_index: ChunkIndex | None = None,
+    rag_query_service: RAGQueryServiceProtocol | None = None,
+    workspace_manager: WorkspaceManager | None = None,
+    sandbox_executor: SandboxExecutor | None = None,
+    coding_agent: CodingAgent | None = None,
+    artifact_manager: ArtifactManager | None = None,
+    experiment_service: ExperimentAgentService | None = None,
+    governance: RequestGovernance | None = None,
+    research_cache: JSONCache | None = None,
+    query_factory: Callable[[LLMProvider, AgentTaskRepository], RAGQueryServiceProtocol]
+    | None = None,
+) -> FastAPI:
+    resolved_settings = settings or get_settings()
+    configure_logging(resolved_settings.log_level, settings=resolved_settings)
+    resolved_database = database or Database(resolved_settings.database_url)
+    resolved_redis = redis or RedisClient(resolved_settings.redis_url)
+    resolved_governance = governance or RequestGovernance(
+        RedisAdmissionStore(resolved_redis.client)
+        if isinstance(resolved_redis, RedisClient)
+        else UnavailableAdmissionStore(),
+        DatabaseAuditSink(resolved_database.session_factory)
+        if isinstance(resolved_database, Database)
+        else UnavailableAuditSink(),
+    )
+    qdrant_key = (
+        resolved_settings.qdrant_api_key.get_secret_value()
+        if resolved_settings.qdrant_api_key
+        else None
+    )
+    resolved_qdrant = qdrant or Qdrant(resolved_settings.qdrant_url, api_key=qdrant_key)
+    resolved_llm_provider = BudgetedLLM(llm_provider or UnconfiguredLLMProvider())
+    resolved_agent_repository = agent_repository
+    resolved_knowledge_repository = knowledge_repository
+    if resolved_agent_repository is None and isinstance(resolved_database, Database):
+        resolved_agent_repository = AgentTaskRepository(resolved_database.session_factory)
+    resolved_model_profiles = None
+    if isinstance(resolved_agent_repository, AgentTaskRepository):
+        resolved_model_profiles = ModelProfiles(
+            resolved_agent_repository.session_factory,
+            resolved_settings,
+        )
+        resolved_llm_provider = BudgetedLLM(
+            RoutedLLM(
+                resolved_llm_provider.provider,
+                resolved_model_profiles,
+            )
+        )
+    if resolved_knowledge_repository is None and isinstance(resolved_database, Database):
+        resolved_knowledge_repository = KnowledgeRepository(resolved_database.session_factory)
+    resolved_document_storage = document_storage or LocalDocumentStorage(
+        resolved_settings.document_storage_path
+    )
+    resolved_workspace_manager = workspace_manager or WorkspaceManager(
+        resolved_settings.workspace_root,
+        max_files=resolved_settings.workspace_max_files,
+        max_file_bytes=resolved_settings.workspace_max_file_bytes,
+        max_source_bytes=resolved_settings.workspace_max_source_bytes,
+        max_artifact_files=resolved_settings.workspace_max_artifact_files,
+        max_artifact_file_bytes=resolved_settings.workspace_max_artifact_file_bytes,
+        max_artifact_bytes=resolved_settings.workspace_max_artifact_bytes,
+    )
+    invocation_registry = (
+        InvocationRegistry(resolved_database.session_factory)
+        if isinstance(resolved_database, Database)
+        else None
+    )
+    experiment_gateway = None
+    if sandbox_executor is None and resolved_settings.experiment_tool_backend == "mcp":
+        if invocation_registry is None or resolved_settings.mcp_service_token is None:
+            raise ValueError("Experiment MCP requires a persistent Core database and service token")
+        experiment_gateway = ToolGateway(
+            MCPBackend(
+                resolved_settings.mcp_experiment_url,
+                resolved_settings.mcp_service_token.get_secret_value(),
+                timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            ),
+            EXPERIMENT_CONTRACTS,
+            timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            service_name="experiment",
+        )
+        sandbox_executor = MCPExperimentSandbox(
+            experiment_gateway,
+            resolved_workspace_manager,
+            ArtifactSpool(resolved_settings.mcp_artifact_root),
+            invocation_registry,
+        )
+    resolved_sandbox_executor = BudgetedSandbox(
+        sandbox_executor
+        or SandboxClient(
+            resolved_settings.sandbox_manager_url,
+            token=resolved_settings.sandbox_manager_token,
+            timeout_seconds=max(
+                resolved_settings.sandbox_timeout_seconds,
+                resolved_settings.experiment_timeout_seconds,
+            )
+            + 10,
+        )
+    )
+    resolved_embedding_provider = embedding_provider
+    resolved_sparse_embedding_provider = sparse_embedding_provider
+    resolved_reranker = reranker
+    resolved_chunk_index = chunk_index
+    if resolved_embedding_provider is None and isinstance(resolved_qdrant, Qdrant):
+        resolved_embedding_provider = create_embedding_provider(resolved_settings)
+    if resolved_sparse_embedding_provider is None and isinstance(resolved_qdrant, Qdrant):
+        resolved_sparse_embedding_provider = FastEmbedSparseProvider(
+            model=resolved_settings.sparse_model,
+            cache_dir=resolved_settings.model_cache_path,
+        )
+    if resolved_reranker is None and isinstance(resolved_qdrant, Qdrant):
+        resolved_reranker = FastEmbedReranker(
+            model=resolved_settings.reranker_model,
+            cache_dir=resolved_settings.model_cache_path,
+        )
+    if (
+        resolved_chunk_index is None
+        and isinstance(resolved_qdrant, Qdrant)
+        and resolved_embedding_provider is not None
+    ):
+        resolved_chunk_index = QdrantChunkIndex(
+            resolved_qdrant.client,
+            collection=resolved_settings.qdrant_collection,
+            dense_dimensions=resolved_embedding_provider.dimensions,
+        )
+    if research_cache is None and isinstance(resolved_redis, RedisClient):
+        research_cache = resolved_redis
+    resolved_research_services = research_services
+    mcp_gateway = None
+    if resolved_research_services is None and resolved_settings.research_tool_backend == "mcp":
+        assert resolved_settings.mcp_service_token is not None
+        mcp_gateway = ToolGateway(
+            MCPBackend(
+                resolved_settings.mcp_research_url,
+                resolved_settings.mcp_service_token.get_secret_value(),
+                timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            ),
+            RESEARCH_CONTRACTS,
+            timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            registry=invocation_registry,
+            service_name="research",
+        )
+        resolved_research_services = [
+            MCPResearchSearch(mcp_gateway, "web"),
+            MCPResearchSearch(mcp_gateway, "paper"),
+        ]
+    if resolved_research_services is None:
+        cache = (
+            RedisResearchCache(
+                research_cache,
+                ttl_seconds=resolved_settings.research_cache_ttl_seconds,
+            )
+            if research_cache is not None
+            else None
+        )
+        tavily_key = (
+            resolved_settings.tavily_api_key.get_secret_value()
+            if resolved_settings.tavily_api_key
+            else None
+        )
+        semantic_scholar_key = (
+            resolved_settings.semantic_scholar_api_key.get_secret_value()
+            if resolved_settings.semantic_scholar_api_key
+            else None
+        )
+        resolved_research_services = [
+            ResearchSearchService(
+                provider=TavilySearchProvider(
+                    api_key=tavily_key,
+                    timeout_seconds=resolved_settings.research_timeout_seconds,
+                ),
+                cache=cache,
+            ),
+            ResearchSearchService(
+                provider=SemanticScholarSearchProvider(
+                    api_key=semantic_scholar_key,
+                    timeout_seconds=resolved_settings.research_timeout_seconds,
+                ),
+                cache=cache,
+            ),
+        ]
+    resolved_rag_query_service = rag_query_service
+    if query_factory is not None and isinstance(resolved_agent_repository, AgentTaskRepository):
+        resolved_rag_query_service = query_factory(resolved_llm_provider, resolved_agent_repository)
+    if (
+        resolved_rag_query_service is None
+        and resolved_embedding_provider is not None
+        and resolved_chunk_index is not None
+        and resolved_knowledge_repository is not None
+        and resolved_agent_repository is not None
+    ):
+        resolved_rag_query_service = RAGQueryService(
+            provider=resolved_llm_provider,
+            embeddings=resolved_embedding_provider,
+            index=resolved_chunk_index,
+            knowledge=resolved_knowledge_repository,
+            tasks=resolved_agent_repository,
+            default_top_k=resolved_settings.rag_top_k,
+            sparse_embeddings=resolved_sparse_embedding_provider,
+            reranker=resolved_reranker,
+            candidate_limit=resolved_settings.rag_candidate_limit,
+        )
+    resolved_coding_agent = coding_agent
+    git_gateway = None
+    if resolved_settings.git_tool_backend == "mcp":
+        assert resolved_settings.mcp_service_token is not None
+        git_gateway = ToolGateway(
+            MCPBackend(
+                resolved_settings.mcp_git_url,
+                resolved_settings.mcp_service_token.get_secret_value(),
+            ),
+            GIT_CONTRACTS,
+            timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            registry=invocation_registry,
+            service_name="git",
+        )
+    filesystem_gateway = None
+    if resolved_settings.filesystem_tool_backend == "mcp":
+        assert resolved_settings.mcp_service_token is not None
+        filesystem_gateway = ToolGateway(
+            MCPBackend(
+                resolved_settings.mcp_filesystem_url,
+                resolved_settings.mcp_service_token.get_secret_value(),
+                timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            ),
+            file_contracts(resolved_workspace_manager),
+            timeout_seconds=resolved_settings.mcp_timeout_seconds,
+            registry=invocation_registry,
+            service_name="filesystem",
+        )
+    if resolved_coding_agent is None and resolved_agent_repository is not None:
+        resolved_coding_agent = CodingAgent(
+            provider=resolved_llm_provider,
+            repository=resolved_agent_repository,
+            workspaces=resolved_workspace_manager,
+            sandbox=resolved_sandbox_executor,
+            filesystem_gateway=filesystem_gateway,
+            git_gateway=git_gateway,
+            limits=CodingLimits(
+                max_repairs=resolved_settings.sandbox_max_repairs,
+                timeout_seconds=resolved_settings.sandbox_timeout_seconds,
+            ),
+        )
+    resolved_artifact_manager = artifact_manager
+    if resolved_artifact_manager is None and isinstance(
+        resolved_agent_repository, AgentTaskRepository
+    ):
+        resolved_artifact_manager = ArtifactManager(
+            resolved_workspace_manager, resolved_agent_repository
+        )
+    resolved_experiment_service = experiment_service
+    if (
+        resolved_experiment_service is None
+        and isinstance(resolved_agent_repository, AgentTaskRepository)
+        and resolved_artifact_manager is not None
+    ):
+        resolved_experiment_service = ExperimentService(
+            repository=resolved_agent_repository,
+            workspace=resolved_workspace_manager,
+            sandbox=resolved_sandbox_executor,
+            artifacts=resolved_artifact_manager,
+            repair=resolved_coding_agent,
+            timeout_seconds=resolved_settings.experiment_timeout_seconds,
+            max_repairs=resolved_settings.sandbox_max_repairs,
+        )
+    resolved_agent_runner = agent_runner
+    if resolved_agent_runner is None and resolved_agent_repository is not None:
+        resolved_agent_runner = AgentRunner(
+            provider=resolved_llm_provider,
+            repository=resolved_agent_repository,
+            tools=[CalculatorTool(), RestrictedPythonTool()],
+            research_services=resolved_research_services,
+            knowledge_service=resolved_rag_query_service,
+            coding_service=resolved_coding_agent,
+            experiment_service=resolved_experiment_service,
+        )
+
+    resolved_autonomous_service = None
+    material_reader = (
+        MaterialReader(
+            api_key=resolved_settings.tavily_api_key.get_secret_value(),
+            cache=research_cache,
+            ttl_seconds=resolved_settings.research_cache_ttl_seconds,
+        )
+        if resolved_settings.tavily_api_key and resolved_settings.research_tool_backend == "native"
+        else None
+    )
+    if (
+        isinstance(resolved_agent_repository, AgentTaskRepository)
+        and resolved_agent_runner is not None
+        and resolved_coding_agent is not None
+        and resolved_artifact_manager is not None
+    ):
+        # Autonomous repairs must go through a new coding step, never mutate handed-off code.
+        workflow_experiments = ExperimentService(
+            repository=resolved_agent_repository,
+            workspace=resolved_workspace_manager,
+            sandbox=resolved_sandbox_executor,
+            artifacts=resolved_artifact_manager,
+            timeout_seconds=resolved_settings.experiment_timeout_seconds,
+            max_repairs=0,
+        )
+        resolved_autonomous_service = AutonomousService(
+            provider=resolved_llm_provider,
+            tasks=resolved_agent_repository,
+            workflows=WorkflowRepository(resolved_agent_repository.session_factory),
+            runner=resolved_agent_runner,
+            coding=resolved_coding_agent,
+            experiments=workflow_experiments,
+            workspace=resolved_workspace_manager,
+            artifacts=resolved_artifact_manager,
+            limits=resolved_settings.autonomous_budget,
+            quality=ResearchQuality(
+                resolved_llm_provider,
+                resolved_agent_repository,
+                reader=material_reader,
+                searches=resolved_research_services,
+            ),
+        )
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        application.state.database = resolved_database
+        application.state.redis = resolved_redis
+        application.state.qdrant = resolved_qdrant
+        application.state.llm_provider = resolved_llm_provider
+        application.state.agent_repository = resolved_agent_repository
+        application.state.agent_runner = resolved_agent_runner
+        application.state.knowledge_repository = resolved_knowledge_repository
+        application.state.document_storage = resolved_document_storage
+        application.state.research_services = resolved_research_services
+        application.state.embedding_provider = resolved_embedding_provider
+        application.state.sparse_embedding_provider = resolved_sparse_embedding_provider
+        application.state.reranker = resolved_reranker
+        application.state.chunk_index = resolved_chunk_index
+        application.state.rag_query_service = resolved_rag_query_service
+        application.state.workspace_manager = resolved_workspace_manager
+        application.state.artifact_manager = resolved_artifact_manager
+        application.state.sandbox_executor = resolved_sandbox_executor
+        try:
+            async with asyncio.timeout(resolved_settings.api_control_timeout_seconds):
+                await resolved_governance.audit.write(
+                    AuditEvent(
+                        id=str(uuid4()),
+                        request_id=str(uuid4()),
+                        actor="service",
+                        category="config",
+                        method="START",
+                        phase="configured",
+                        outcome="policy_loaded",
+                        action="startup",
+                        operation_id=hashlib.sha256(
+                            resolved_settings.model_dump_json(
+                                include={
+                                    name
+                                    for name in Settings.model_fields
+                                    if name.startswith("api_")
+                                }
+                            ).encode()
+                        ).hexdigest(),
+                    )
+                )
+            yield
+        finally:
+            if material_reader is not None:
+                await material_reader.close()
+            for service in resolved_research_services:
+                await service.close()
+            await resolved_llm_provider.close()
+            if resolved_embedding_provider is not None:
+                await resolved_embedding_provider.close()
+            if resolved_sparse_embedding_provider is not None:
+                await resolved_sparse_embedding_provider.close()
+            if resolved_reranker is not None:
+                await resolved_reranker.close()
+            await resolved_sandbox_executor.close()
+            await resolved_redis.close()
+            await resolved_qdrant.close()
+            await resolved_database.close()
+
+    application = FastAPI(
+        title="AutoScholar API",
+        description="Autonomous AI/ML research and experiment agent platform",
+        version=__version__,
+        lifespan=lifespan,
+        default_response_class=UTF8JSONResponse,
+        docs_url=None if resolved_settings.app_env == "production" else "/docs",
+        redoc_url=None if resolved_settings.app_env == "production" else "/redoc",
+        openapi_url=None if resolved_settings.app_env == "production" else "/openapi.json",
+    )
+    application.state.settings = resolved_settings
+    application.state.model_profiles = resolved_model_profiles
+    application.state.evidence_library = (
+        EvidenceLibrary(resolved_agent_repository.session_factory)
+        if isinstance(resolved_agent_repository, AgentTaskRepository)
+        else None
+    )
+    application.state.governance = resolved_governance
+    application.state.mcp_research_gateway = mcp_gateway
+    application.state.mcp_filesystem_gateway = filesystem_gateway
+    application.state.mcp_git_gateway = git_gateway
+    application.state.mcp_experiment_gateway = experiment_gateway
+    application.state.autonomous_service = resolved_autonomous_service
+    application.state.durable_service = (
+        DurableService(
+            resolved_autonomous_service,
+            lease_seconds=resolved_settings.workflow_job_lease_seconds,
+            approval_threshold=resolved_settings.workflow_approval_threshold,
+            audit=resolved_governance.audit,
+        )
+        if resolved_autonomous_service is not None
+        else None
+    )
+    if application.state.evidence_library is not None:
+        library = application.state.evidence_library
+        if isinstance(resolved_qdrant, Qdrant) and isinstance(
+            resolved_embedding_provider, FastEmbedProvider
+        ):
+            library.semantic = EvidenceIndex(
+                library,
+                resolved_qdrant.client,
+                resolved_embedding_provider,
+                resolved_settings.qdrant_collection,
+            )
+        if application.state.durable_service is not None:
+            application.state.durable_service.evidence = library
+    application.state.database = resolved_database
+    application.state.redis = resolved_redis
+    application.state.qdrant = resolved_qdrant
+    application.state.llm_provider = resolved_llm_provider
+    application.state.agent_repository = resolved_agent_repository
+    application.state.agent_runner = resolved_agent_runner
+    application.state.knowledge_repository = resolved_knowledge_repository
+    application.state.document_storage = resolved_document_storage
+    application.state.research_services = resolved_research_services
+    application.state.embedding_provider = resolved_embedding_provider
+    application.state.sparse_embedding_provider = resolved_sparse_embedding_provider
+    application.state.reranker = resolved_reranker
+    application.state.chunk_index = resolved_chunk_index
+    application.state.rag_query_service = resolved_rag_query_service
+    application.state.workspace_manager = resolved_workspace_manager
+    application.state.artifact_manager = resolved_artifact_manager
+    application.state.sandbox_executor = resolved_sandbox_executor
+    application.add_middleware(
+        RequestGovernanceMiddleware, settings=resolved_settings, governance=resolved_governance
+    )
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=resolved_settings.api_allowed_origins,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Request-ID",
+            "Idempotency-Key",
+            "Last-Event-ID",
+        ],
+        allow_credentials=False,
+        expose_headers=["X-Request-ID", "Retry-After", "Location"],
+    )
+    application.add_middleware(APIBoundaryMiddleware, settings=resolved_settings)
+    application.middleware("http")(request_context_middleware)
+    register_exception_handlers(application)
+    application.include_router(health_router)
+    application.include_router(chat_router)
+    application.include_router(agent_router)
+    application.include_router(projects_router)
+    application.include_router(rag_router)
+    application.include_router(workflows_router)
+    application.include_router(memory_router)
+    application.include_router(workbench_router)
+    return application
+
+
+def __getattr__(name: str) -> FastAPI:
+    # ASGI servers import main:app. Factory callers supply their own configuration.
+    if name != "app":
+        raise AttributeError(name)
+    application = create_app()
+    globals()["app"] = application
+    return application

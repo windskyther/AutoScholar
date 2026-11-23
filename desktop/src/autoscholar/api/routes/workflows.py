@@ -1,0 +1,156 @@
+"""Durable autonomous task submission and lifecycle controls."""
+
+from typing import Annotated, Any, Literal
+
+from fastapi import APIRouter, Header, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
+
+from autoscholar.api.routes.agent import AgentRunRequest
+from autoscholar.core.errors import AppError
+from autoscholar.orchestration.approvals import ApprovalDecision
+from autoscholar.orchestration.durable import DurableService
+from autoscholar.orchestration.task_links import ReferenceIds, TaskId
+
+router = APIRouter(prefix="/agent/tasks", tags=["workflows"])
+
+
+class RecoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    checkpoint_sequence: int = Field(ge=1)
+
+
+class DurableTaskRequest(AgentRunRequest):
+    continuation_of_task_id: TaskId | None = None
+    reference_task_ids: ReferenceIds = Field(default_factory=list)
+
+
+def service(request: Request) -> DurableService:
+
+    result: DurableService | None = request.app.state.durable_service
+    if result is None:
+        raise AppError(status_code=503, code="workflow_unavailable", message="Workflow unavailable")
+    return result
+
+
+@router.post("", status_code=202)
+async def submit(
+    payload: DurableTaskRequest,
+    request: Request,
+    idempotency_key: Annotated[
+        str, Header(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    ],
+) -> dict[str, Any]:
+    durable = service(request)
+    if payload.mode != "autonomous":
+        raise AppError(
+            status_code=422,
+            code="autonomous_mode_required",
+            message="Durable submission requires explicit autonomous mode",
+        )
+    task_id, created = await durable.submit(
+        payload.model_dump(mode="json"), idempotency_key, require_managed=True
+    )
+    _, job = await durable.repository.snapshot(task_id)
+    return {
+        "task_id": task_id,
+        "status": job.status,
+        "created": created,
+        "status_url": ("/workbench" if request.url.path.startswith("/workbench/") else "")
+        + f"/agent/tasks/{task_id}",
+    }
+
+
+@router.post("/{task_id}/{action}")
+async def control(
+    task_id: str,
+    action: Literal["pause", "resume", "cancel"],
+    request: Request,
+) -> dict[str, str]:
+    durable = service(request)
+    return {"task_id": task_id, "status": await durable.repository.control(task_id, action)}
+
+
+@router.get("/{task_id}/execution")
+async def execution(task_id: str, request: Request) -> dict[str, Any]:
+    snapshot, job = await service(request).repository.snapshot(task_id)
+    return {
+        "task_id": task_id,
+        "status": job.status,
+        "stage": snapshot.stage,
+        "plan_version": snapshot.version,
+        "checkpoint_sequence": job.checkpoint_sequence,
+        "budget_used": job.usage,
+        "active_seconds": job.active_seconds,
+        "budget_limits": snapshot.limits.model_dump(),
+        "active": job.active,
+        "pending_calls": job.pending_calls,
+        "error_code": job.error_code,
+    }
+
+
+@router.get("/{task_id}/approvals")
+async def approvals(task_id: str, request: Request) -> dict[str, Any]:
+    return {"task_id": task_id, "items": await service(request).approvals.list(task_id)}
+
+
+@router.get("/{task_id}/operations")
+async def operations(
+    task_id: str, request: Request, limit: int = Query(default=50, ge=1, le=200)
+) -> dict[str, Any]:
+    from autoscholar.tool_platform.registry import InvocationRegistry
+
+    durable = service(request)
+    await durable.repository.snapshot(task_id)
+    return {
+        "task_id": task_id,
+        "items": await InvocationRegistry(durable.repository.sessions).inspect(task_id, limit),
+    }
+
+
+@router.post("/{task_id}/reconcile")
+async def reconcile(task_id: str, payload: RecoveryRequest, request: Request) -> dict[str, Any]:
+    return await service(request).reconcile(task_id, payload.checkpoint_sequence)
+
+
+@router.get("/{task_id}/memory")
+async def task_memory(task_id: str, request: Request) -> dict[str, Any]:
+    snapshot, job = await service(request).repository.snapshot(task_id)
+    return {
+        "task_id": task_id,
+        "status": job.status,
+        "objective": snapshot.objective,
+        "plan_version": snapshot.version,
+        "budget_used": job.usage,
+        "steps": {
+            key: {
+                name: value
+                for name, value in result.items()
+                if name in {"child_task_id", "status", "experiment_id", "error_code"}
+            }
+            for key, result in snapshot.results.items()
+        },
+        "review": snapshot.review.model_dump() if snapshot.review else None,
+        "retrieved_memory": snapshot.memory_context,
+    }
+
+
+@router.post("/{task_id}/approvals/{approval_id}/decision")
+async def decide(
+    task_id: str,
+    approval_id: str,
+    payload: ApprovalDecision,
+    request: Request,
+) -> dict[str, str]:
+    result = await service(request).approvals.decide(task_id, approval_id, payload)
+    return {"task_id": task_id, "status": result}
+
+
+@router.get("/{task_id}/durable/{kind}")
+async def history(
+    task_id: str,
+    kind: Literal["checkpoints", "events"],
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    items = await service(request).repository.history(task_id, kind, limit)
+    return {"task_id": task_id, "items": items}

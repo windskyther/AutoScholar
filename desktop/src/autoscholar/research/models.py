@@ -1,0 +1,87 @@
+from dataclasses import asdict, dataclass
+from typing import Any, Literal, cast
+
+SourceType = Literal["web", "paper", "document"]
+
+
+@dataclass(frozen=True, slots=True)
+class SearchResult:
+    source_type: SourceType
+    provider: str
+    title: str
+    url: str
+    content: str
+    authors: tuple[str, ...] = ()
+    year: int | None = None
+    external_id: str | None = None
+    relevance: float | None = None
+    document_id: str | None = None
+    chunk_id: str | None = None
+    page: int | None = None
+    section: str | None = None
+    published_at: str | None = None
+    fulltext_url: str | None = None
+    fetched_at: str | None = None
+    bank_claim_ids: tuple[str, ...] = ()
+    bank_version_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["authors"] = list(self.authors)
+        for name in ("published_at", "fulltext_url", "fetched_at", "bank_version_id"):
+            if payload[name] is None:
+                payload.pop(name)
+        if not self.bank_claim_ids:
+            payload.pop("bank_claim_ids", None)
+        else:
+            payload["bank_claim_ids"] = list(self.bank_claim_ids)
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "SearchResult":
+        return cls(
+            source_type=cast(SourceType, payload["source_type"]),
+            provider=str(payload["provider"]),
+            title=str(payload["title"]),
+            url=str(payload["url"]),
+            content=str(payload["content"]),
+            authors=tuple(str(item) for item in payload.get("authors", [])),
+            year=int(payload["year"]) if payload.get("year") is not None else None,
+            external_id=(
+                str(payload["external_id"]) if payload.get("external_id") is not None else None
+            ),
+            relevance=(
+                float(payload["relevance"]) if payload.get("relevance") is not None else None
+            ),
+            document_id=(
+                str(payload["document_id"]) if payload.get("document_id") is not None else None
+            ),
+            chunk_id=(str(payload["chunk_id"]) if payload.get("chunk_id") is not None else None),
+            page=int(payload["page"]) if payload.get("page") is not None else None,
+            section=(str(payload["section"]) if payload.get("section") is not None else None),
+            published_at=str(payload["published_at"]) if payload.get("published_at") else None,
+            fulltext_url=str(payload["fulltext_url"]) if payload.get("fulltext_url") else None,
+            fetched_at=str(payload["fetched_at"]) if payload.get("fetched_at") else None,
+            bank_claim_ids=tuple(str(item) for item in payload.get("bank_claim_ids", [])),
+            bank_version_id=str(payload["bank_version_id"])
+            if payload.get("bank_version_id")
+            else None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SearchResponse:
+    provider: str
+    source_type: SourceType
+    query: str
+    results: tuple[SearchResult, ...]
+    cache_hit: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "source_type": self.source_type,
+            "query": self.query,
+            "cache_hit": self.cache_hit,
+            "results": [item.to_dict() for item in self.results],
+        }
