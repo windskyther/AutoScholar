@@ -10,6 +10,8 @@ Windows 11 x64 用户可以运行 `AutoScholar-Setup-x64.exe`，然后从开始�
 
 有任务运行时关窗会转入托盘。点击 AutoScholar 托盘图标可回到工作台。任务完成或进入等待人工处理的状态后，已关闭窗口的客户端会退出。PDF 首次使用需要下载公开模型，处理期间的内存占用高于浏览工作台时。
 
+需要释放磁盘空间时，可在“桌面设置”中点击“清除模型缓存”。已有项目、PDF、索引和报告会保留，下次使用 PDF 检索时会按需重新下载模型。
+
 Windows 源码构建需要 Rust/C++ 工具链、uv、Node.js 24 和 PowerShell。运行 `scripts/Build-Desktop.ps1`，生成的安装包位于 `desktop/target/AutoScholar-Setup-x64.exe`。
 
 ### 从 Docker 版导入

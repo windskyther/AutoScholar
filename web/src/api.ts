@@ -28,6 +28,15 @@ export class ApiError extends Error {
   }
 }
 
+export async function desktopModelCache(method: 'GET' | 'DELETE', signal?: AbortSignal): Promise<number> {
+  const response = await workbenchFetch('/api/desktop/model-cache', { method, signal });
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new ApiError(error?.detail === 'model_cache_busy' ? 'model_cache_busy' : 'model_cache_unavailable', response.status);
+  }
+  return (await response.json()).bytes;
+}
+
 const messages: Record<string, string> = {
   model_profile_not_found: '模型配置不存在，请刷新模型列表。',
   model_profile_unavailable: '所选模型已停用或不存在，请重新选择。',

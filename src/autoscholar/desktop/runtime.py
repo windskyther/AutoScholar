@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
@@ -208,6 +208,7 @@ def desktop_app(
                 or publications
                 or any(state.values())
                 or retrieval.pending
+                or not retrieval.cache_available.is_set()
                 or getattr(app.state, "importing", False)
             ):
                 idle()
@@ -225,6 +226,7 @@ def desktop_app(
                         task.cancel()
                     await asyncio.gather(*tasks, return_exceptions=True)
         finally:
+            await retrieval.cache_available.wait()
             retrieval.close()
             await db.close()
 
@@ -239,13 +241,29 @@ def desktop_app(
     @app.get("/api/desktop/model-cache")
     def model_cache() -> dict[str, int]:
         size = 0
-        for file in settings.model_cache_path.rglob("*"):
-            try:
-                if file.is_file() and not file.is_symlink():
-                    size += file.stat().st_size
-            except FileNotFoundError:
-                continue  # Downloads are renamed when they complete.
+        cache = settings.model_cache_path
+        if cache.is_symlink() or cache.is_junction():
+            raise HTTPException(409, "Model cache is a filesystem link")
+        for folder_path, dirs, files in cache.walk():
+            dirs[:] = [name for name in dirs if not (folder_path / name).is_junction()]
+            for name in files:
+                file = folder_path / name
+                try:
+                    if not file.is_symlink() and file.is_file():
+                        size += file.stat().st_size
+                except FileNotFoundError:
+                    continue  # Downloads are renamed when they complete.
         return {"bytes": size}
+
+    @app.delete("/api/desktop/model-cache")
+    async def clear_model_cache() -> dict[str, int]:
+        try:
+            cleared = await retrieval.clear_model_cache()
+        except OSError as exc:
+            raise HTTPException(409, "model_cache_locked") from exc
+        if not cleared:
+            raise HTTPException(409, "model_cache_busy")
+        return {"bytes": 0}
 
     install_settings(app, folder)
     app.mount("/api", backend)

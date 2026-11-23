@@ -4,6 +4,7 @@ import asyncio
 import multiprocessing
 import os
 import secrets
+import shutil
 import socket
 import subprocess
 import time
@@ -170,8 +171,12 @@ class Retrieval:
         self.pool: ProcessPoolExecutor | None = None
         self.pending = 0
         self.last_used = 0.0
+        self.cache_available = asyncio.Event()
+        self.cache_available.set()
 
     async def call(self, method: str, **params: Any) -> Any:
+        while not self.cache_available.is_set():
+            await self.cache_available.wait()
         if self.pool is None:
             self.pool = ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn"))
         future = asyncio.get_running_loop().run_in_executor(
@@ -203,8 +208,30 @@ class Retrieval:
             self.pool = None
 
     def reap(self) -> None:
-        if not self.pending and time.monotonic() - self.last_used >= 60:
+        idle = not self.pending and time.monotonic() - self.last_used >= 60
+        if idle and self.cache_available.is_set():
             self.close()
+
+    async def clear_model_cache(self) -> bool:
+        if self.pending or not self.cache_available.is_set():
+            return False
+
+        def remove() -> None:
+            cache = self.folder / "models"
+            if cache.is_symlink() or cache.is_junction():
+                raise OSError("Model cache is a filesystem link")
+            if cache.resolve() != self.folder.resolve() / "models":
+                raise OSError("Model cache points outside its designated directory")
+            self.close()  # Release mapped model files before removing them on Windows.
+            if cache.exists():
+                shutil.rmtree(cache)
+
+        self.cache_available.clear()
+        removal = asyncio.create_task(asyncio.to_thread(remove))
+        # A disconnected client must not allow a new download while removal is in progress.
+        removal.add_done_callback(lambda _: self.cache_available.set())
+        await asyncio.shield(removal)
+        return True
 
 
 class DesktopQuery(RAGAnswerService):

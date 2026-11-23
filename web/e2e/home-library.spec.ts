@@ -14,6 +14,33 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+test('desktop settings clears the model cache only after confirmation', async ({ page }) => {
+  await page.addInitScript(() => { window.__autoscholarSession = 'desktop-fixture'; });
+  let bytes = 1048576;
+  let deletions = 0;
+  await page.route('**/api/desktop/**', route => {
+    const request = route.request();
+    expect(request.headers()['x-autoscholar-session']).toBe('desktop-fixture');
+    if (request.url().endsWith('/settings')) {
+      return route.fulfill({ json: { directory: 'fixture', profiles: [] } });
+    }
+    if (request.method() === 'DELETE') { bytes = 0; deletions++; }
+    return route.fulfill({ json: { bytes } });
+  });
+  await page.goto('/');
+  await page.getByRole('link', { name: '桌面设置' }).click();
+  const clear = page.getByRole('button', { name: '清除模型缓存' });
+  await expect(page.getByText('已占用 1 MiB')).toBeVisible();
+  await clear.click();
+  await page.getByRole('button', { name: /取\s*消/ }).click();
+  expect(deletions).toBe(0);
+  await clear.click();
+  await page.getByRole('button', { name: /^清\s*除$/ }).click();
+  await expect(page.getByText('已占用 0 MiB')).toBeVisible();
+  await expect(clear).toBeDisabled();
+  expect(deletions).toBe(1);
+});
+
 test('mode cards retain distinct choices when opened with the keyboard or restored after reload', async ({ page }) => {
   await page.goto('/');
   const trigger = page.getByRole('link', { name: '论文综述', exact: true });

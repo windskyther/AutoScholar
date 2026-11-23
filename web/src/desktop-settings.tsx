@@ -1,13 +1,29 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Form, Input, Select, Typography } from 'antd';
+import { Alert, Button, Form, Input, Popconfirm, Select, Typography } from 'antd';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ApiError, desktopModelCache } from './api';
+import { usePageReady } from './page-transition';
 
 declare global { interface Window { __autoscholarSession?: string } }
 
 export default function DesktopSettings() {
+  usePageReady(true);
   const [current, setCurrent] = useState('');
   const [missing, setMissing] = useState<{ id: string; name: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const queryClient = useQueryClient();
+  const cacheKey = ['desktop-model-cache'];
+  const cache = useQuery({ queryKey: cacheKey, refetchInterval: 10000,
+    queryFn: ({ signal }) => desktopModelCache('GET', signal) });
+  const clearCache = useMutation({
+    mutationFn: () => desktopModelCache('DELETE'),
+    onSuccess: async bytes => {
+      await queryClient.cancelQueries({ queryKey: cacheKey });
+      queryClient.setQueryData(cacheKey, bytes);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: cacheKey }),
+  });
   const headers = { 'X-AutoScholar-Session': window.__autoscholarSession ?? '' };
   useEffect(() => {
     const controller = new AbortController();
@@ -43,5 +59,19 @@ export default function DesktopSettings() {
       <Button htmlType="submit" type="primary" loading={busy}>保存设置</Button>
     </Form>
     {message && <Alert role="status" message={message} />}
+    <Typography.Title level={3}>本地检索模型缓存</Typography.Title>
+    <Typography.Paragraph>{cache.data !== undefined
+      ? `已占用 ${(cache.data / 1048576).toLocaleString('zh-CN', { maximumFractionDigits: 2 })} MiB`
+      : cache.isError ? '无法读取缓存大小。' : '正在读取缓存大小…'}</Typography.Paragraph>
+    <Popconfirm title="清除当前资料库的模型缓存？"
+      description="下次使用 PDF 检索时需要联网重新下载模型。项目、文档和报告会保留。"
+      okText="清除" cancelText="取消" onConfirm={() => clearCache.mutate()}>
+      <Button loading={clearCache.isPending} disabled={cache.data === 0}>清除模型缓存</Button>
+    </Popconfirm>
+    {clearCache.isSuccess && <Alert role="status" type="success" message="模型缓存已清除。" />}
+    {clearCache.isError && <Alert role="alert" type="warning" message={
+      clearCache.error instanceof ApiError && clearCache.error.code === 'model_cache_busy'
+        ? '模型缓存正在使用，请稍后再试。' : '清除失败，请检查缓存目录的权限或文件占用后重试。'
+    } />}
   </section>;
 }

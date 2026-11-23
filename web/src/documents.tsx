@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { DeleteOutlined, EllipsisOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Alert, Button, Dropdown, Form, Input, Modal, Space } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { errorMessage, isWriteUncertain } from './api';
+import { desktopModelCache, errorMessage, isWriteUncertain } from './api';
 import { useConnection } from './connection';
 import { dateLabel, QueryError, StatusBadge } from './components';
 import type { DocumentStatus, PDFDocument } from './types';
@@ -59,12 +59,8 @@ export default function Documents({ projectId, analysisAction, analysisNotice }:
   const processingLocally = Boolean(window.__autoscholarSession && query.data?.items.some(
     doc => doc.status === 'queued' || doc.status === 'processing'));
   const modelCache = useQuery({ queryKey: ['desktop-model-cache'], enabled: processingLocally,
-    refetchInterval: processingLocally ? 5000 : false, queryFn: async ({ signal }) => {
-      const result = await fetch('/api/desktop/model-cache', { signal,
-        headers: { 'X-AutoScholar-Session': window.__autoscholarSession ?? '' } });
-      if (!result.ok) throw new Error('model_cache_unavailable');
-      return (await result.json()).bytes as number;
-    } });
+    refetchInterval: processingLocally ? 5000 : false,
+    queryFn: ({ signal }) => desktopModelCache('GET', signal) });
   function refresh() { void cache.invalidateQueries({ queryKey: ['documents', projectId] }); }
   async function upload(values: { title?: string }) {
     if (!api || inFlight.current || isWriteUncertain(error)) return;

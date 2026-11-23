@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from pathlib import Path
 
 import httpx
@@ -6,12 +7,49 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy import select, text
 
+from autoscholar.desktop.retrieval import Retrieval
 from autoscholar.desktop.runtime import desktop_app
 from autoscholar.desktop.storage import DesktopDatabase
 from autoscholar.desktop.transfer import export, import_library
 from autoscholar.rag.database_models import ProjectRow
 
 TOKEN = "2" * 64
+
+
+async def test_cache_clear_waits_for_idle_and_excludes_new_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    retrieval = Retrieval(tmp_path, tmp_path / "unused.exe")
+    cache = tmp_path / "models"
+    cache.mkdir()
+    weights = cache / "weights"
+    weights.write_bytes(b"fixture")
+    retrieval.pending = 1
+    assert not await retrieval.clear_model_cache()
+    assert weights.exists()
+    retrieval.pending = 0
+    started = threading.Event()
+    finish = threading.Event()
+
+    def close_idle_worker() -> None:
+        started.set()
+        assert finish.wait(5)
+
+    monkeypatch.setattr(retrieval, "close", close_idle_worker)
+    clear = asyncio.create_task(retrieval.clear_model_cache())
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        assert not await retrieval.clear_model_cache()
+        queued = asyncio.create_task(retrieval.call("document"))
+        await asyncio.sleep(0)
+        assert not queued.done() and retrieval.pool is None
+        queued.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await queued
+    finally:
+        finish.set()
+        assert await clear
+    assert not cache.exists() and retrieval.cache_available.is_set()
 
 
 async def test_desktop_lock_serializes_competing_writers(tmp_path: Path) -> None:
@@ -59,6 +97,13 @@ async def test_real_desktop_session_persists_and_imports(
         ) as client,
     ):
         assert (await client.get("/api/workbench/session")).status_code == 403
+        models = root / "models"
+        for directory in ("documents", "vectors"):
+            sibling = root / directory
+            sibling.mkdir(exist_ok=True)
+            (sibling / "fixture").write_bytes(b"keep")
+        cache_url = "/api/desktop/model-cache"
+        assert (await client.delete(cache_url)).status_code == 403
         client.headers["X-AutoScholar-Session"] = TOKEN
         assert (await client.get("/api/workbench/session")).status_code == 200
         assert (await client.post("/api/workbench/agent/run")).status_code == 404
@@ -113,6 +158,15 @@ async def test_real_desktop_session_persists_and_imports(
                     break
                 await asyncio.sleep(0.15)
         assert job.status == "succeeded", (job.status, job.error_code)
+        models.mkdir()
+        (models / "weights").write_bytes(b"model")
+        assert (await client.get(cache_url)).json() == {"bytes": 5}
+        for _ in range(2):
+            assert (await client.delete(cache_url)).json() == {"bytes": 0}
+        assert (await client.get(cache_url)).json() == {"bytes": 0}
+        assert not models.exists()
+        for directory in ("documents", "vectors"):
+            assert (root / directory / "fixture").read_bytes() == b"keep"
         report = await client.get(f"/api/workbench/tasks/{task_id}/output/markdown")
         assert report.status_code == 200 and "LoRA" in report.text
 
