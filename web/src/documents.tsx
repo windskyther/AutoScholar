@@ -56,6 +56,15 @@ export default function Documents({ projectId, analysisAction, analysisNotice }:
   const maxBytes = Math.min(session?.capabilities.document_max_bytes ?? 52428800, 52428800);
   const query = useQuery({ queryKey: ['documents', projectId, page], queryFn: ({ signal }) => api!.documents(projectId, page, signal),
     refetchInterval: ({ state }) => documentRefreshInterval(state.data) });
+  const processingLocally = Boolean(window.__autoscholarSession && query.data?.items.some(
+    doc => doc.status === 'queued' || doc.status === 'processing'));
+  const modelCache = useQuery({ queryKey: ['desktop-model-cache'], enabled: processingLocally,
+    refetchInterval: processingLocally ? 5000 : false, queryFn: async ({ signal }) => {
+      const result = await fetch('/api/desktop/model-cache', { signal,
+        headers: { 'X-AutoScholar-Session': window.__autoscholarSession ?? '' } });
+      if (!result.ok) throw new Error('model_cache_unavailable');
+      return (await result.json()).bytes as number;
+    } });
   function refresh() { void cache.invalidateQueries({ queryKey: ['documents', projectId] }); }
   async function upload(values: { title?: string }) {
     if (!api || inFlight.current || isWriteUncertain(error)) return;
@@ -92,6 +101,9 @@ export default function Documents({ projectId, analysisAction, analysisNotice }:
       {analysisAction}
     </Space></div>
     {analysisNotice}
+    {processingLocally && modelCache.data !== undefined && <p role="status">
+      正在本机处理 PDF。首次索引会下载检索模型，模型缓存已占用 {(modelCache.data / 1048576).toFixed(0)} MiB。
+    </p>}
     {notice && <Alert type="success" showIcon title={notice} />}
     {error !== null && !open && <Alert type="error" showIcon title={errorMessage(error)}
       description={isWriteUncertain(error) ? '结果未确认，请等待文档列表更新后核查。' : undefined} />}

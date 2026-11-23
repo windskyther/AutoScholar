@@ -1,6 +1,6 @@
 import asyncio
 import hashlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
@@ -81,6 +81,7 @@ from autoscholar.research import (
 )
 from autoscholar.research.materials import MaterialReader
 from autoscholar.research.quality import ResearchQuality
+from autoscholar.research.service import JSONCache
 from autoscholar.tool_platform.artifact_spool import ArtifactSpool
 from autoscholar.tool_platform.experiment_adapter import MCPExperimentSandbox
 from autoscholar.tool_platform.experiment_contracts import EXPERIMENT_CONTRACTS
@@ -115,6 +116,9 @@ def create_app(
     artifact_manager: ArtifactManager | None = None,
     experiment_service: ExperimentAgentService | None = None,
     governance: RequestGovernance | None = None,
+    research_cache: JSONCache | None = None,
+    query_factory: Callable[[LLMProvider, AgentTaskRepository], RAGQueryServiceProtocol]
+    | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings.log_level, settings=resolved_settings)
@@ -228,6 +232,8 @@ def create_app(
             collection=resolved_settings.qdrant_collection,
             dense_dimensions=resolved_embedding_provider.dimensions,
         )
+    if research_cache is None and isinstance(resolved_redis, RedisClient):
+        research_cache = resolved_redis
     resolved_research_services = research_services
     mcp_gateway = None
     if resolved_research_services is None and resolved_settings.research_tool_backend == "mcp":
@@ -250,10 +256,10 @@ def create_app(
     if resolved_research_services is None:
         cache = (
             RedisResearchCache(
-                resolved_redis,
+                research_cache,
                 ttl_seconds=resolved_settings.research_cache_ttl_seconds,
             )
-            if isinstance(resolved_redis, RedisClient)
+            if research_cache is not None
             else None
         )
         tavily_key = (
@@ -283,6 +289,8 @@ def create_app(
             ),
         ]
     resolved_rag_query_service = rag_query_service
+    if query_factory is not None and isinstance(resolved_agent_repository, AgentTaskRepository):
+        resolved_rag_query_service = query_factory(resolved_llm_provider, resolved_agent_repository)
     if (
         resolved_rag_query_service is None
         and resolved_embedding_provider is not None
@@ -380,7 +388,7 @@ def create_app(
     material_reader = (
         MaterialReader(
             api_key=resolved_settings.tavily_api_key.get_secret_value(),
-            cache=resolved_redis if isinstance(resolved_redis, RedisClient) else None,
+            cache=research_cache,
             ttl_seconds=resolved_settings.research_cache_ttl_seconds,
         )
         if resolved_settings.tavily_api_key and resolved_settings.research_tool_backend == "native"
@@ -573,4 +581,10 @@ def create_app(
     return application
 
 
-app = create_app()
+def __getattr__(name: str) -> FastAPI:
+    # ASGI servers import main:app. Factory callers supply their own configuration.
+    if name != "app":
+        raise AttributeError(name)
+    application = create_app()
+    globals()["app"] = application
+    return application

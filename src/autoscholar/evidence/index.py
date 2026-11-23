@@ -1,10 +1,14 @@
 """Rebuildable semantic index using the existing local embedding provider only."""
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import time
+from typing import TYPE_CHECKING
 
-from qdrant_client import AsyncQdrantClient, models
+if TYPE_CHECKING:
+    from qdrant_client import AsyncQdrantClient
 from sqlalchemy import select
 
 from autoscholar.evidence.database import ProjectClaimRow
@@ -33,6 +37,8 @@ class EvidenceIndex:
         self.index_version = 1
 
     async def ensure(self) -> None:
+        from qdrant_client import models
+
         if await self.client.collection_exists(self.collection):
             return
         await self.client.create_collection(
@@ -46,6 +52,8 @@ class EvidenceIndex:
         )
 
     async def search(self, project_id: str, query: str, *, limit: int) -> dict[str, float]:
+        from qdrant_client import models
+
         if time.monotonic() < self.retry_after:
             return {}
         try:
@@ -88,6 +96,8 @@ class EvidenceIndex:
             return False
 
     async def _run_once(self) -> bool:
+        from qdrant_client import models
+
         if time.monotonic() < self.retry_after:
             return False
         async with self.store.sessions() as session:

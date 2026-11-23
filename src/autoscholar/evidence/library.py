@@ -91,7 +91,7 @@ class EvidenceLibrary(EvidenceStore):
                 )
             )
             dense: dict[str, float] = {}
-            if self.semantic is not None:
+            if rows and self.semantic is not None:
                 try:
                     dense = await self.semantic.search(project_id, objective, limit=40)
                     if dense:

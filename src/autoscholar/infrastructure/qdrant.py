@@ -1,10 +1,11 @@
-from qdrant_client import AsyncQdrantClient
 
 
 class Qdrant:
     """Async Qdrant connection manager."""
 
     def __init__(self, url: str, *, api_key: str | None = None) -> None:
+        from qdrant_client import AsyncQdrantClient
+
         self.client = AsyncQdrantClient(
             url=url,
             api_key=api_key,

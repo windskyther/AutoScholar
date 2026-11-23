@@ -4,7 +4,27 @@ AutoScholar 是运行在本机的 AI 研究工作台。创建项目，添加模�
 
 打开工作台后，点击“开始研究”浏览项目。也可以点击首页的研究方式卡片，选好项目后进入对应任务表单或项目证据库。顶部 Dock 可切换“项目与任务”“模型管理”“用量统计”，点击 AutoScholar 返回首页。
 
-## 启动
+## Windows 桌面版
+
+Windows 11 x64 用户可以运行 `AutoScholar-Setup-x64.exe`，然后从开始菜单打开 AutoScholar。安装包包含 Python、前端和本地检索引擎，使用系统 WebView2。默认资料库位于当前用户目录。在“桌面设置”中可选择 D 盘资料库、填写检索密钥或导入旧库，再在“模型管理”中添加语言模型。
+
+有任务运行时关窗会转入托盘。点击 AutoScholar 托盘图标可回到工作台。任务完成或进入等待人工处理的状态后，已关闭窗口的客户端会退出。PDF 首次使用需要下载公开模型，处理期间的内存占用高于浏览工作台时。
+
+Windows 源码构建需要 Rust/C++ 工具链、uv、Node.js 24 和 PowerShell。运行 `scripts/Build-Desktop.ps1`，生成的安装包位于 `desktop/target/AutoScholar-Setup-x64.exe`。
+
+### 从 Docker 版导入
+
+先暂停研究任务并等待 PDF 处理完成。使用包含桌面导出工具的当前版本镜像，从项目目录运行以下命令。导出期间保持旧库静止。
+
+```powershell
+docker compose exec -T api python -m autoscholar.desktop.transfer /tmp/autoscholar-export.zip
+New-Item -ItemType Directory -Force data/backups | Out-Null
+docker compose cp api:/tmp/autoscholar-export.zip ./data/backups/autoscholar-export.zip
+```
+
+把 ZIP 的完整路径填入桌面设置中的“导入旧版迁移包”。导入成功后重启，在桌面设置中为导入的模型重新填写 API Key。PDF 将在本机重新建立索引。原资料库会保留。
+
+## Docker 版启动
 
 安装 Docker Desktop 和 Node.js 24.x。Docker Desktop 及其数据保留在 D 盘。
 

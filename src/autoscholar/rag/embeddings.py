@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from fastembed import SparseTextEmbedding, TextEmbedding
-from fastembed.rerank.cross_encoder import TextCrossEncoder
+if TYPE_CHECKING:
+    from fastembed import SparseTextEmbedding, TextEmbedding
+    from fastembed.rerank.cross_encoder import TextCrossEncoder
 from openai import AsyncOpenAI
 
 from autoscholar.rag.models import RetrievedChunk
@@ -108,7 +111,7 @@ class FastEmbedProvider:
     async def close(self) -> None:
         return None
 
-    def cached_copy(self) -> "FastEmbedProvider":
+    def cached_copy(self) -> FastEmbedProvider:
         """Independent local-only loader, without changing document indexing policy."""
         return FastEmbedProvider(
             model=self._model_name,
@@ -129,7 +132,7 @@ class FastEmbedProvider:
         async with self._load_lock:
             if self._embedding is None:
                 self._embedding = await asyncio.to_thread(
-                    TextEmbedding,
+                    _constructor("TextEmbedding"),
                     model_name=self._model_name,
                     cache_dir=str(self._cache_dir),
                     lazy_load=True,
@@ -251,7 +254,7 @@ class FastEmbedSparseProvider:
         async with self._load_lock:
             if self._embedding is None:
                 self._embedding = await asyncio.to_thread(
-                    SparseTextEmbedding,
+                    _constructor("SparseTextEmbedding"),
                     model_name=self._model_name,
                     cache_dir=str(self._cache_dir),
                     lazy_load=True,
@@ -315,7 +318,7 @@ class FastEmbedReranker:
         async with self._load_lock:
             if self._reranker is None:
                 self._reranker = await asyncio.to_thread(
-                    TextCrossEncoder,
+                    _constructor("TextCrossEncoder"),
                     model_name=self._model_name,
                     cache_dir=str(self._cache_dir),
                     lazy_load=True,
@@ -325,3 +328,18 @@ class FastEmbedReranker:
                 )
         assert self._reranker is not None
         return self._reranker
+
+def _constructor(name: str) -> Any:
+    return globals().get(name) or __getattr__(name)
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"TextEmbedding", "SparseTextEmbedding"}:
+        import fastembed
+
+        return getattr(fastembed, name)
+    if name == "TextCrossEncoder":
+        from fastembed.rerank.cross_encoder import TextCrossEncoder
+
+        return TextCrossEncoder
+    raise AttributeError(name)

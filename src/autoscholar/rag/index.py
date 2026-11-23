@@ -1,7 +1,10 @@
-from collections.abc import Sequence
-from typing import Any, Protocol, cast
+from __future__ import annotations
 
-from qdrant_client import AsyncQdrantClient, models
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+if TYPE_CHECKING:
+    from qdrant_client import AsyncQdrantClient, models
 
 from autoscholar.rag.embeddings import SparseVectorData
 from autoscholar.rag.models import DocumentChunkRecord, DocumentRecord, RetrievedChunk
@@ -62,6 +65,8 @@ class QdrantChunkIndex:
         self._dense_dimensions = dense_dimensions
 
     async def ensure_collection(self) -> None:
+        from qdrant_client import models
+
         if await self._client.collection_exists(self._collection):
             return
         await self._client.create_collection(
@@ -96,6 +101,8 @@ class QdrantChunkIndex:
         vectors: Sequence[Sequence[float]],
         sparse_vectors: Sequence[SparseVectorData] | None = None,
     ) -> None:
+        from qdrant_client import models
+
         if len(chunks) != len(vectors):
             raise ValueError("Chunk and embedding counts do not match")
         if sparse_vectors is not None and len(chunks) != len(sparse_vectors):
@@ -135,6 +142,8 @@ class QdrantChunkIndex:
             )
 
     async def delete_document(self, project_id: str, document_id: str) -> None:
+        from qdrant_client import models
+
         if not await self._client.collection_exists(self._collection):
             return
         await self._client.delete(
@@ -182,6 +191,8 @@ class QdrantChunkIndex:
         document_ids: Sequence[str] | None = None,
         limit: int = 8,
     ) -> list[RetrievedChunk]:
+        from qdrant_client import models
+
         query_filter = self._scope_filter(project_id, document_ids)
         if query_filter is None or not await self._client.collection_exists(self._collection):
             return []
@@ -205,6 +216,8 @@ class QdrantChunkIndex:
         document_ids: Sequence[str] | None = None,
         limit: int = 30,
     ) -> list[RetrievedChunk]:
+        from qdrant_client import models
+
         query_filter = self._scope_filter(project_id, document_ids)
         if query_filter is None or not await self._client.collection_exists(self._collection):
             return []
@@ -238,6 +251,8 @@ class QdrantChunkIndex:
     def _scope_filter(
         project_id: str, document_ids: Sequence[str] | None
     ) -> models.Filter | None:
+        from qdrant_client import models
+
         must: list[models.Condition] = [
             models.FieldCondition(
                 key="project_id", match=models.MatchValue(value=project_id)

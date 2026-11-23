@@ -8,6 +8,7 @@ import { TaskSubmissionProvider, useSubmission } from './task-submission';
 import WorkspaceDock from './workspace-dock';
 import { ThemeToggle } from './appearance';
 
+const DesktopSettings = lazy(() => import('./desktop-settings'));
 const HomePage = lazy(() => import('./home-page'));
 const ProjectsPage = lazy(() => import('./projects-page'));
 const ProjectPage = lazy(() => import('./pages').then((module) => ({ default: module.ProjectPage })));
@@ -33,7 +34,7 @@ function WorkspaceLayout() {
   return <div className={showPageScrollbar ? 'workbench-shell with-page-scrollbar' : 'workbench-shell'}>
     <a className="skip-link" href="#workspace-content">跳至内容</a>
     <header className="workspace-header">
-      <Link to="/" className="wordmark workspace-brand">AutoScholar</Link><WorkspaceDock /><ThemeToggle />
+      <Link to="/" className="wordmark workspace-brand">AutoScholar</Link><WorkspaceDock />{window.__autoscholarSession && <Link to="/settings">桌面设置</Link>}<ThemeToggle />
     </header>
       <main className="app-content" id="workspace-content" tabIndex={-1}>
         {submission.pending && <Alert type="warning" title="有一笔任务提交结果未确认，不要直接新建另一轮。"
@@ -48,6 +49,7 @@ export default function App() {
     <Route element={<Shell />}>
       <Route index element={<HomePage />} />
       <Route path="/projects" element={<ProjectsPage />} />
+      {window.__autoscholarSession && <Route path="/settings" element={<DesktopSettings />} />}
       <Route path="/models" element={<ModelsPage />} />
       <Route path="/usage" element={<UsagePage />} />
       <Route path="/projects/:projectId" element={<ProjectPage />} />

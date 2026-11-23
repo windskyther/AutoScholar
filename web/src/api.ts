@@ -12,6 +12,15 @@ import type { BankPage, EvidencePolicy, HistoryImport, ReuseSummary } from './ev
 import { isQualityAudit } from './quality-types';
 import type { QualityAudit } from './quality-types';
 
+function workbenchFetch(path: string, options: RequestInit): Promise<Response> {
+  const token = typeof window === 'undefined' ? undefined :
+    (window as Window & { __autoscholarSession?: string }).__autoscholarSession;
+  if (!token) return fetch(path, options);
+  const headers = new Headers(options.headers);
+  headers.set('X-AutoScholar-Session', token);
+  return fetch(path, { ...options, headers });
+}
+
 export class ApiError extends Error {
   constructor(public code: string, public status = 0, public requestId: string | null = null) {
     super(code);
@@ -137,7 +146,7 @@ export class ApiClient {
       const multipart = body instanceof FormData;
       if (body && !multipart) headers['Content-Type'] = 'application/json';
       if (key) headers['Idempotency-Key'] = key;
-      response = await fetch('/api/workbench' + path, {
+      response = await workbenchFetch('/api/workbench' + path, {
         method, headers, body: body ? (multipart ? body : JSON.stringify(body)) : undefined,
         cache: 'no-store', credentials: 'omit', redirect: 'error',
         signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
@@ -218,7 +227,7 @@ export class ApiClient {
     const combined = AbortSignal.any([controller.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]);
     let response: Response | undefined;
     try {
-      response = await fetch(`/api/workbench/tasks/${id}/output/markdown`, {
+      response = await workbenchFetch(`/api/workbench/tasks/${id}/output/markdown`, {
         headers: {}, signal: combined,
         credentials: 'omit', cache: 'no-store', redirect: 'error',
       });
@@ -369,7 +378,7 @@ export class ApiClient {
     const combined = AbortSignal.any([controller.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]);
     let response: Response | undefined;
     try {
-      response = await fetch(`/api/workbench/tasks/${id}/resources/artifacts/${artifact.id}/content`, {
+      response = await workbenchFetch(`/api/workbench/tasks/${id}/resources/artifacts/${artifact.id}/content`, {
         headers: {}, signal: combined,
         credentials: 'omit', cache: 'no-store', redirect: 'error',
       });
@@ -448,7 +457,7 @@ export class ApiClient {
     if (signal.aborted) controller.abort();
     let timer = setTimeout(abort, 15000);
     try {
-      const response = await fetch(`/api/workbench/tasks/${encodeURIComponent(id)}/stream`, {
+      const response = await workbenchFetch(`/api/workbench/tasks/${encodeURIComponent(id)}/stream`, {
         headers: { Accept: 'text/event-stream', 'Last-Event-ID': String(after) },
         credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
       });

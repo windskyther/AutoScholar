@@ -106,29 +106,10 @@ class RAGProtocolError(Exception):
     pass
 
 
-class RAGQueryService:
-    def __init__(
-        self,
-        *,
-        provider: LLMProvider,
-        embeddings: EmbeddingProvider,
-        index: ChunkIndex,
-        knowledge: KnowledgeStore,
-        tasks: RAGTaskStore,
-        default_top_k: int = 8,
-        sparse_embeddings: SparseEmbeddingProvider | None = None,
-        reranker: Reranker | None = None,
-        candidate_limit: int = 30,
-    ) -> None:
+class RAGAnswerService:
+    def __init__(self, provider: LLMProvider, tasks: RAGTaskStore) -> None:
         self._provider = provider
-        self._embeddings = embeddings
-        self._index = index
-        self._knowledge = knowledge
         self._tasks = tasks
-        self._default_top_k = default_top_k
-        self._sparse_embeddings = sparse_embeddings
-        self._reranker = reranker
-        self._candidate_limit = candidate_limit
 
     async def retrieve(
         self,
@@ -139,58 +120,7 @@ class RAGQueryService:
         retrieval_mode: RetrievalMode = "hybrid_rerank",
         top_k: int | None = None,
     ) -> list[RetrievedChunk]:
-        documents = await self._validate_scope(project_id, document_ids)
-        selected_ids = [document.id for document in documents]
-        resolved_top_k = top_k or self._default_top_k
-        if retrieval_mode == "dense":
-            vector = await self._embeddings.embed_query(question)
-            return await self._index.search_dense(
-                project_id=project_id,
-                vector=vector,
-                document_ids=selected_ids,
-                limit=resolved_top_k,
-            )
-        if self._sparse_embeddings is None:
-            raise AppError(
-                status_code=503,
-                code="sparse_retrieval_not_available",
-                message="Sparse retrieval is unavailable",
-            )
-        if retrieval_mode == "sparse":
-            sparse_vector = await self._sparse_embeddings.embed_query(question)
-            return await self._index.search_sparse(
-                project_id=project_id,
-                vector=sparse_vector,
-                document_ids=selected_ids,
-                limit=resolved_top_k,
-            )
-        dense_vector, sparse_vector = await asyncio.gather(
-            self._embeddings.embed_query(question),
-            self._sparse_embeddings.embed_query(question),
-        )
-        candidate_limit = (
-            max(resolved_top_k, self._candidate_limit)
-            if retrieval_mode == "hybrid_rerank"
-            else resolved_top_k
-        )
-        candidates = await self._index.search_hybrid(
-            project_id=project_id,
-            dense_vector=dense_vector,
-            sparse_vector=sparse_vector,
-            document_ids=selected_ids,
-            limit=candidate_limit,
-        )
-        if retrieval_mode == "hybrid":
-            return candidates[:resolved_top_k]
-        if self._reranker is None:
-            raise AppError(
-                status_code=503,
-                code="reranker_not_available",
-                message="RAG reranking is unavailable",
-            )
-        return await self._reranker.rerank(
-            question, candidates, limit=resolved_top_k
-        )
+        raise NotImplementedError
 
     async def query(
         self,
@@ -283,38 +213,6 @@ class RAGQueryService:
             if isinstance(exc, AppError):
                 raise
             raise AppError(status_code=502, code=str(code), message=str(message)) from exc
-
-    async def _validate_scope(
-        self, project_id: str, document_ids: list[str] | None
-    ) -> list[DocumentRecord]:
-        if await self._knowledge.get_project(project_id) is None:
-            raise AppError(
-                status_code=404, code="project_not_found", message="Project was not found"
-            )
-        requested = list(dict.fromkeys(document_ids)) if document_ids is not None else None
-        if requested is not None:
-            for document_id in requested:
-                document = await self._knowledge.get_document(project_id, document_id)
-                if document is None:
-                    raise AppError(
-                        status_code=404,
-                        code="document_not_found",
-                        message="A selected document was not found in this project",
-                    )
-                if document.status != "ready":
-                    raise AppError(
-                        status_code=409,
-                        code="document_not_ready",
-                        message="All selected documents must be ready before querying",
-                    )
-        documents = await self._knowledge.get_ready_documents(project_id, requested)
-        if not documents:
-            raise AppError(
-                status_code=409,
-                code="knowledge_base_not_ready",
-                message="The project has no ready documents to query",
-            )
-        return documents
 
     async def _write_answer(
         self, question: str, evidence: list[EvidenceRecord]
@@ -453,3 +351,119 @@ class RAGQueryService:
                 metrics["input_tokens"] += result.usage.input_tokens
                 metrics["output_tokens"] += result.usage.output_tokens
                 metrics["total_tokens"] += result.usage.total_tokens
+
+
+class RAGQueryService(RAGAnswerService):
+    def __init__(
+        self,
+        *,
+        provider: LLMProvider,
+        embeddings: EmbeddingProvider,
+        index: ChunkIndex,
+        knowledge: KnowledgeStore,
+        tasks: RAGTaskStore,
+        default_top_k: int = 8,
+        sparse_embeddings: SparseEmbeddingProvider | None = None,
+        reranker: Reranker | None = None,
+        candidate_limit: int = 30,
+    ) -> None:
+        super().__init__(provider, tasks)
+        self._embeddings = embeddings
+        self._index = index
+        self._knowledge = knowledge
+        self._default_top_k = default_top_k
+        self._sparse_embeddings = sparse_embeddings
+        self._reranker = reranker
+        self._candidate_limit = candidate_limit
+
+    async def retrieve(
+        self,
+        question: str,
+        *,
+        project_id: str,
+        document_ids: list[str] | None = None,
+        retrieval_mode: RetrievalMode = "hybrid_rerank",
+        top_k: int | None = None,
+    ) -> list[RetrievedChunk]:
+        documents = await self._validate_scope(project_id, document_ids)
+        selected_ids = [document.id for document in documents]
+        resolved_top_k = top_k or self._default_top_k
+        if retrieval_mode == "dense":
+            vector = await self._embeddings.embed_query(question)
+            return await self._index.search_dense(
+                project_id=project_id,
+                vector=vector,
+                document_ids=selected_ids,
+                limit=resolved_top_k,
+            )
+        if self._sparse_embeddings is None:
+            raise AppError(
+                status_code=503,
+                code="sparse_retrieval_not_available",
+                message="Sparse retrieval is unavailable",
+            )
+        if retrieval_mode == "sparse":
+            sparse_vector = await self._sparse_embeddings.embed_query(question)
+            return await self._index.search_sparse(
+                project_id=project_id,
+                vector=sparse_vector,
+                document_ids=selected_ids,
+                limit=resolved_top_k,
+            )
+        dense_vector, sparse_vector = await asyncio.gather(
+            self._embeddings.embed_query(question),
+            self._sparse_embeddings.embed_query(question),
+        )
+        candidate_limit = (
+            max(resolved_top_k, self._candidate_limit)
+            if retrieval_mode == "hybrid_rerank"
+            else resolved_top_k
+        )
+        candidates = await self._index.search_hybrid(
+            project_id=project_id,
+            dense_vector=dense_vector,
+            sparse_vector=sparse_vector,
+            document_ids=selected_ids,
+            limit=candidate_limit,
+        )
+        if retrieval_mode == "hybrid":
+            return candidates[:resolved_top_k]
+        if self._reranker is None:
+            raise AppError(
+                status_code=503,
+                code="reranker_not_available",
+                message="RAG reranking is unavailable",
+            )
+        return await self._reranker.rerank(question, candidates, limit=resolved_top_k)
+
+    async def _validate_scope(
+        self, project_id: str, document_ids: list[str] | None
+    ) -> list[DocumentRecord]:
+        if await self._knowledge.get_project(project_id) is None:
+            raise AppError(
+                status_code=404, code="project_not_found", message="Project was not found"
+            )
+        requested = list(dict.fromkeys(document_ids)) if document_ids is not None else None
+        if requested is not None:
+            for document_id in requested:
+                document = await self._knowledge.get_document(project_id, document_id)
+                if document is None:
+                    raise AppError(
+                        status_code=404,
+                        code="document_not_found",
+                        message="A selected document was not found in this project",
+                    )
+                if document.status != "ready":
+                    raise AppError(
+                        status_code=409,
+                        code="document_not_ready",
+                        message="All selected documents must be ready before querying",
+                    )
+        documents = await self._knowledge.get_ready_documents(project_id, requested)
+        if not documents:
+            raise AppError(
+                status_code=409,
+                code="knowledge_base_not_ready",
+                message="The project has no ready documents to query",
+            )
+        return documents
