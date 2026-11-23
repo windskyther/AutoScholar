@@ -3,7 +3,7 @@
   "productName": "AutoScholar",
   "version": "0.1.0",
   "identifier": "local.autoscholar.workbench",
-  "build": { "frontendDist": "../web/dist" },
+  "build": { "frontendDist": "../browser/dist" },
   "app": { "windows": [] },
   "bundle": { "active": true, "targets": ["nsis"], "resources": ["runtime/**/*"], "windows": { "nsis": { "installMode": "currentUser" } } }
 }

@@ -21,10 +21,13 @@ AutoScholar_总体设计文档_V1.0.md
 node_modules
 **/node_modules
 **/__pycache__
-web/dist
-web/test-results
-web/playwright-report
-web/coverage
+browser/dist
+browser/test-results
+browser/playwright-report
+browser/coverage
+desktop/target
+desktop/runtime
+desktop/gen
 **/.npmrc
 **/.env
 **/.env.*

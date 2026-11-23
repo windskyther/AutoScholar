@@ -26,6 +26,7 @@ COPY README.md ./
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY src ./src
+COPY desktop/python ./desktop/python
 RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"

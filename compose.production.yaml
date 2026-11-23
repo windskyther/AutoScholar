@@ -59,7 +59,7 @@ services:
     image: ${AUTOSCHOLAR_WEB_IMAGE:-autoscholar-web:prod-local}
     build:
       context: .
-      dockerfile: docker/web/Dockerfile
+      dockerfile: browser/docker/Dockerfile
       args:
         SOURCE_REVISION: ${AUTOSCHOLAR_REVISION:-working-tree}
         NODE_BUILD_IMAGE: ${NODE_BUILD_IMAGE:-node:24-alpine}

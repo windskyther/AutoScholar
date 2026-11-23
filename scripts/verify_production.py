@@ -232,7 +232,7 @@ def main() -> None:
                 if args.workflow
                 else "playwright.production.config.ts",
             ],
-            directory=root / "web",
+            directory=root / "browser",
         )
         browser = json.loads((output / "browser.json").read_text(encoding="utf-8"))
         expected = 1 if args.workflow else 6

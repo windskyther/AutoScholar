@@ -113,8 +113,8 @@ docker compose --env-file .env.production -f compose.production.yaml -f compose.
 先安装本地前端依赖与 Chromium，构建生产镜像后运行：
 
 ```powershell
-npm.cmd --prefix web ci
-node web/scripts/browser.mjs install chromium
+npm.cmd --prefix browser ci
+node browser/scripts/browser.mjs install chromium
 .venv\Scripts\python.exe scripts/verify_production.py
 .venv\Scripts\python.exe scripts/verify_production.py --tls
 ```

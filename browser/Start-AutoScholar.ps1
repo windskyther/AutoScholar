@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$webRoot = Join-Path $repoRoot 'web'
+$webRoot = Join-Path $repoRoot 'browser'
 $runtimeRoot = Join-Path $repoRoot 'data\launcher'
 $webUrl = 'http://127.0.0.1:5173'
 $apiUrl = 'http://127.0.0.1:8000'

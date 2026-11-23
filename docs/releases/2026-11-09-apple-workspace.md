@@ -29,4 +29,4 @@ change using the existing dependencies. All browser checks used mocked API respo
 no paid API calls or deployment were performed.
 
 The displacement technique draws on shuding/liquid-glass. Attribution and its MIT
-license ship in `web/public/THIRD_PARTY_NOTICES.txt` and are included in the built site.
+license ship in `browser/public/THIRD_PARTY_NOTICES.txt` and are included in the built site.

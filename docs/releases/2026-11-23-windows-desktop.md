@@ -16,7 +16,7 @@
 ## 回归与复测
 
 - 后端定向回归 70 项通过，前端 113 项通过，完成前端类型检查和生产构建。全量非集成后端测试有 1601 项通过、17 项失败、9 项跳过、1 项未选中。在改动前的 `ba2ca5b` 上复跑失败用例，得到相同的 17 项失败，分布在 `test_paired_v8.py` 和 `test_repair_validation.py`。
-- 资源测量使用 `scripts/verify_desktop_memory.py`。每轮启动安装后的程序，等待 WebView2 工作台可交互，再静置 120 秒。统计主进程和所有子进程的私有工作集，关窗后检查进程退出。活动任务与 PDF 的复测入口为 `scripts/verify_desktop_activity.py` 和 `scripts/verify_desktop_pdf.py`。
+- 资源测量使用 `desktop/scripts/verify_desktop_memory.py`。每轮启动安装后的程序，等待 WebView2 工作台可交互，再静置 120 秒。统计主进程和所有子进程的私有工作集，关窗后检查进程退出。活动任务与 PDF 的复测入口为 `desktop/scripts/verify_desktop_activity.py` 和 `desktop/scripts/verify_desktop_pdf.py`。
 - 在 PATH 仅包含 Windows 系统目录且已移除 Python 开发环境变量的情况下，安装版仍可打开工作台并正常退出。卸载 QA 副本后，已核对应用、快捷方式和卸载注册均被清理，独立测试资料库仍在。
 - 本次覆盖当前主机上的安装、升级和卸载。全新 Windows 虚拟机尚未验证。按用户选定的 500 MiB 绝对上限验收，全程保持 Docker 关闭。
 

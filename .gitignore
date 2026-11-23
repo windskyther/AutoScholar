@@ -18,10 +18,10 @@ __pycache__/
 
 # Frontend dependencies, builds and browser test output
 node_modules/
-web/dist/
-web/coverage/
-web/test-results/
-web/playwright-report/
+browser/dist/
+browser/coverage/
+browser/test-results/
+browser/playwright-report/
 *.tsbuildinfo
 
 # Tests and tooling

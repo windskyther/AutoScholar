@@ -39,9 +39,9 @@ jobs:
           package-manager-cache: false
       - run: uv sync --frozen --python $PYTHON_VERSION
       - run: npm ci
-        working-directory: web
+        working-directory: browser
       - run: node scripts/browser.mjs install --with-deps chromium
-        working-directory: web
+        working-directory: browser
       - run: uv run --no-sync python scripts/build_production.py --sandbox --pull --refresh-system
       - run: uv run --no-sync python scripts/verify_stack.py --download-dataset
       - run: uv run --no-sync python scripts/verify_production.py
@@ -107,7 +107,7 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
       - run: uv sync --frozen --python $PYTHON_VERSION
-      - run: uv run --no-sync ruff check src tests scripts migrations
+      - run: uv run --no-sync ruff check src tests scripts migrations desktop/python desktop/scripts
       - run: uv run --no-sync mypy --no-incremental
       - run: uv run --no-sync pytest -q --tb=short --show-capture=no --basetemp=data/ci-tmp
 
@@ -142,7 +142,7 @@ jobs:
     timeout-minutes: 20
     defaults:
       run:
-        working-directory: web
+        working-directory: browser
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:

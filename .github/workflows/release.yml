@@ -37,9 +37,9 @@ jobs:
           node-version: '24'
           package-manager-cache: false
       - run: npm ci
-        working-directory: web
+        working-directory: browser
       - run: node scripts/browser.mjs install --with-deps chromium
-        working-directory: web
+        working-directory: browser
       - run: uv run --no-sync python scripts/install_security_tools.py gitleaks
       - run: uv run --no-sync python scripts/check_repository.py --gitleaks data/tooling/gitleaks/8.30.1/gitleaks
       - run: uv run --no-sync python scripts/audit_dependencies.py

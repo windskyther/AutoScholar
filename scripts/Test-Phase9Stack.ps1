@@ -46,7 +46,7 @@ try {
         Start-Sleep -Milliseconds 250
     }
     if (-not $ready) { Invoke-TestCompose logs --tail 40 api workflow-worker document-worker; throw "Isolated API not ready: $lastHealthProblem" }
-    Set-Location (Join-Path $repoRoot 'web')
+    Set-Location (Join-Path $repoRoot 'browser')
     & npm run build
     if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed' }
     & node scripts/browser.mjs test --config playwright.stack.config.ts

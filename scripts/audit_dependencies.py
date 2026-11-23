@@ -64,7 +64,7 @@ def main() -> None:
             "--json",
             "--registry=https://registry.npmjs.org",
         ],
-        cwd=root / "web",
+        cwd=root / "browser",
         env=environment,
         capture_output=True,
         text=True,

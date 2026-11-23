@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param([string]$Toolchain = '')
 $ErrorActionPreference = 'Stop'
-$root = Split-Path $PSScriptRoot -Parent
+$root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $desktop = Join-Path $root 'desktop'
 $target = Join-Path $desktop 'target'
 $runtime = Join-Path $desktop 'runtime'
@@ -21,15 +21,15 @@ Push-Location $root
 try {
     uv sync --locked --all-groups
     if ($LASTEXITCODE) { throw 'Python dependency build failed' }
-    npm.cmd --prefix web ci
+    npm.cmd --prefix browser ci
     if ($LASTEXITCODE) { throw 'Frontend dependency build failed' }
-    npm.cmd --prefix web run build
+    npm.cmd --prefix browser run build
     if ($LASTEXITCODE) { throw 'Frontend build failed' }
     $toolArgs = @()
     if ($Toolchain) { $toolArgs += "+$Toolchain" }
     cargo @toolArgs build --manifest-path desktop/Cargo.toml --release --locked
     if ($LASTEXITCODE) { throw 'Desktop shell build failed' }
     $cargoTarget = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { $target }
-    & .venv/Scripts/python.exe scripts/build_desktop.py --shell (Join-Path $cargoTarget 'release/autoscholar-desktop.exe') --makensis (Join-Path $target 'tools/nsis-3.11/makensis.exe')
+    & .venv/Scripts/python.exe desktop/scripts/build_desktop.py --shell (Join-Path $cargoTarget 'release/autoscholar-desktop.exe') --makensis (Join-Path $target 'tools/nsis-3.11/makensis.exe')
     if ($LASTEXITCODE) { throw 'Desktop installer build failed' }
 } finally { Pop-Location }

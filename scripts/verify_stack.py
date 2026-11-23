@@ -170,10 +170,10 @@ def main() -> None:
             raise TimeoutError("Isolated stack readiness timed out")
 
         ready()
-        run(["npm.cmd" if sys.platform == "win32" else "npm", "run", "build"], root / "web")
+        run(["npm.cmd" if sys.platform == "win32" else "npm", "run", "build"], root / "browser")
         run(
             ["node", "scripts/browser.mjs", "test", "--config", "playwright.stack.config.ts"],
-            root / "web",
+            root / "browser",
         )
         run([*command, "restart", "api", "workflow-worker", "document-worker"])
         ready()

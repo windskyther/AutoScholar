@@ -12,7 +12,7 @@ from pathlib import Path
 
 from packaging.requirements import Requirement
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DESKTOP = ROOT / "desktop"
 
 
@@ -66,7 +66,11 @@ def copy_runtime(destination: Path) -> None:
         target / "autoscholar",
         ignore=shutil.ignore_patterns("__pycache__"),
     )
-    shutil.copytree(ROOT / "web/dist", destination / "web")
+    shutil.copytree(
+        DESKTOP / "python/autoscholar/desktop", target / "autoscholar/desktop",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    shutil.copytree(ROOT / "browser/dist", destination / "web")
 
 
 def main() -> None:

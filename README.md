@@ -2,6 +2,13 @@
 
 AutoScholar 是运行在本机的 AI 研究工作台。创建项目，添加模型连接，再围绕你的目标检索论文、阅读网页或分析项目 PDF，获得带引用的报告。
 
+| 版本 | 代码和入口 |
+| --- | --- |
+| [浏览器版](browser/) | 浏览器启动器、React 工作台、前端测试与 Nginx 配置。双击 `browser/Start-AutoScholar.cmd` 启动。 |
+| [Windows 桌面版](desktop/) | Tauri 窗口、Windows 本地后端、安装程序与打包脚本。运行 `desktop/scripts/Build-Desktop.ps1` 构建。 |
+
+两个版本共用 [Python 研究核心](src/autoscholar/) 和 [React 工作台](browser/src/)。Compose 配置和 Python 依赖锁位于仓库根目录。
+
 打开工作台后，点击“开始研究”浏览项目。也可以点击首页的研究方式卡片，选好项目后进入对应任务表单或项目证据库。顶部 Dock 可切换“项目与任务”“模型管理”“用量统计”，点击 AutoScholar 返回首页。
 
 ## Windows 桌面版
@@ -12,7 +19,7 @@ Windows 11 x64 用户可以运行 `AutoScholar-Setup-x64.exe`，然后从开始�
 
 需要释放磁盘空间时，可在“桌面设置”中点击“清除模型缓存”。已有项目、PDF、索引和报告会保留，下次使用 PDF 检索时会按需重新下载模型。
 
-Windows 源码构建需要 Rust/C++ 工具链、uv、Node.js 24 和 PowerShell。运行 `scripts/Build-Desktop.ps1`，生成的安装包位于 `desktop/target/AutoScholar-Setup-x64.exe`。
+Windows 源码构建需要 Rust/C++ 工具链、uv、Node.js 24 和 PowerShell。运行 `desktop/scripts/Build-Desktop.ps1`，生成的安装包位于 `desktop/target/AutoScholar-Setup-x64.exe`。
 
 ### 从 Docker 版导入
 
@@ -64,7 +71,7 @@ docker compose up -d
 另开窗口：
 
 ```powershell
-cd web
+cd browser
 npm ci
 npm run dev
 ```
