@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy import select
 
 from autoscholar.desktop.secrets import protect
@@ -35,12 +35,13 @@ def search_keys(folder: Path) -> tuple[SecretStr | None, SecretStr | None]:
 
 
 class Preferences(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     web: SecretStr | None = None
     paper: SecretStr | None = None
     profile: str | None = None
     profile_key: SecretStr | None = None
     directory: str = Field(default="", max_length=2048)
-    package: str = Field(default="", max_length=2048)
 
 
 def install_settings(app: FastAPI, folder: Path) -> None:
@@ -67,21 +68,14 @@ def install_settings(app: FastAPI, folder: Path) -> None:
 
     @app.post("/api/desktop/settings")
     async def save(payload: Preferences, request: Request) -> dict[str, bool]:
-        from autoscholar.desktop.transfer import import_library
-
         if lock.locked():
             raise HTTPException(409, "Settings operation in progress")
         async with lock:
-            request.app.state.importing = True
+            request.app.state.saving_settings = True
             try:
                 if payload.profile or payload.profile_key:
-                    if (
-                        not payload.profile
-                        or not payload.profile_key
-                        or payload.directory
-                        or payload.package
-                    ):
-                        raise ValueError("Select one imported profile to reconnect")
+                    if not payload.profile or not payload.profile_key or payload.directory:
+                        raise ValueError("Select one profile to reconnect")
                     profiles: ModelProfiles = app.state.backend.state.model_profiles
                     async with profiles.lock, profiles.sessions.begin() as session:
                         row = await session.get(ModelProfileRow, payload.profile)
@@ -95,18 +89,15 @@ def install_settings(app: FastAPI, folder: Path) -> None:
                         row.enabled = True
                 preferences = request.app.state.preferences
                 destination = folder
-                if payload.directory or payload.package:
-                    base = Path(payload.directory) if payload.directory else folder.parent
+                if payload.directory:
+                    base = Path(payload.directory)
                     if not base.is_absolute() or str(base).startswith("\\\\"):
                         raise ValueError("Select a local absolute directory")
                     base.mkdir(exist_ok=True, parents=True)
-                    if payload.package:
-                        destination = await import_library(Path(payload.package), base)
-                    else:
-                        destination = base / "AutoScholarLibrary"
-                        destination.mkdir(exist_ok=True)
-                        if any(destination.iterdir()):
-                            raise ValueError("Select an empty library destination")
+                    destination = base / "AutoScholarLibrary"
+                    destination.mkdir(exist_ok=True)
+                    if any(destination.iterdir()):
+                        raise ValueError("Select an empty library destination")
                 web, paper = search_keys(destination)
                 keys = {
                     name: key.get_secret_value()
@@ -124,6 +115,6 @@ def install_settings(app: FastAPI, folder: Path) -> None:
                     )
                 return {"restart": True}
             except Exception as exc:
-                raise HTTPException(422, "Settings or import verification failed") from exc
+                raise HTTPException(422, "Settings verification failed") from exc
             finally:
-                request.app.state.importing = False
+                request.app.state.saving_settings = False

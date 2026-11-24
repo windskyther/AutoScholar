@@ -209,7 +209,7 @@ def desktop_app(
                 or any(state.values())
                 or retrieval.pending
                 or not retrieval.cache_available.is_set()
-                or getattr(app.state, "importing", False)
+                or getattr(app.state, "saving_settings", False)
             ):
                 idle()
 

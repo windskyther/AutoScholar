@@ -10,7 +10,6 @@ from sqlalchemy import select, text
 from autoscholar.desktop.retrieval import Retrieval
 from autoscholar.desktop.runtime import desktop_app
 from autoscholar.desktop.storage import DesktopDatabase
-from autoscholar.desktop.transfer import export, import_library
 from autoscholar.rag.database_models import ProjectRow
 
 TOKEN = "2" * 64
@@ -81,7 +80,7 @@ async def test_desktop_lock_serializes_competing_writers(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_real_desktop_session_persists_and_imports(
+async def test_real_desktop_session_persists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assets = tmp_path / "web"
@@ -158,6 +157,9 @@ async def test_real_desktop_session_persists_and_imports(
                     break
                 await asyncio.sleep(0.15)
         assert job.status == "succeeded", (job.status, job.error_code)
+        assert (
+            await client.post("/api/desktop/settings", json={"package": "old.zip"})
+        ).status_code == 422
         models.mkdir()
         (models / "weights").write_bytes(b"model")
         assert (await client.get(cache_url)).json() == {"bytes": 5}
@@ -171,7 +173,6 @@ async def test_real_desktop_session_persists_and_imports(
         assert report.status_code == 200 and "LoRA" in report.text
 
     source = DesktopDatabase(root / "library.sqlite3")
-    package = tmp_path / "research.zip"
     try:
         async with source.session_factory() as session:
             usage_query = text(
@@ -179,17 +180,6 @@ async def test_real_desktop_session_persists_and_imports(
             )
             usage_before = (await session.execute(usage_query)).all()
             assert any(row.estimated_cost is not None for row in usage_before)
-            await export(
-                await session.connection(), package, root / "documents", root / "workspaces"
-            )
+            assert await session.scalar(text("SELECT id FROM projects")) == project
     finally:
         await source.close()
-    destination = await import_library(package, tmp_path)
-    migrated = DesktopDatabase(destination / "library.sqlite3")
-    try:
-        async with migrated.session_factory() as session:
-            assert await session.scalar(text("SELECT id FROM projects")) == project
-            assert (await session.execute(usage_query)).all() == usage_before
-            assert not (await session.execute(text("PRAGMA foreign_key_check"))).all()
-    finally:
-        await migrated.close()

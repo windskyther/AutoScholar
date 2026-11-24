@@ -10,18 +10,6 @@ AutoScholar 是运行在本机的 AI 研究工作台。创建项目，添加模�
 
 在本目录运行 `.\desktop\scripts\Build-Desktop.ps1`。构建需要 Rust/C++、Node.js 24、uv 和 PowerShell，输出为 `desktop/target/AutoScholar-Setup-x64.exe`。
 
-### 从 Docker 版导入
-
-先暂停研究任务并等待 PDF 处理完成。使用包含桌面导出工具的当前版本镜像，从旧浏览器版的项目目录运行以下命令。导出期间保持旧库静止。
-
-```powershell
-docker compose exec -T api python -m autoscholar.desktop.transfer /tmp/autoscholar-export.zip
-New-Item -ItemType Directory -Force data/backups | Out-Null
-docker compose cp api:/tmp/autoscholar-export.zip ./data/backups/autoscholar-export.zip
-```
-
-把 ZIP 的完整路径填入桌面设置中的“导入旧版迁移包”。导入成功后重启，在桌面设置中为导入的模型重新填写 API Key。PDF 将在本机重新建立索引。原资料库会保留。
-
 ## 添加模型
 
 所有语言模型都必须在顶部 Dock 的“模型管理”中添加。填写：

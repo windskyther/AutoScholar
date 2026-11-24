@@ -1,4 +1,5 @@
 import { lazy, Suspense, useLayoutEffect } from 'react';
+import { SettingOutlined } from '@ant-design/icons';
 import { Alert, Button } from 'antd';
 import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { useConnection } from './connection';
@@ -8,7 +9,7 @@ import { TaskSubmissionProvider, useSubmission } from './task-submission';
 import WorkspaceDock from './workspace-dock';
 import { ThemeToggle } from './appearance';
 
-const DesktopSettings = lazy(() => import('./desktop-settings'));
+const Settings = lazy(() => import('./settings'));
 const HomePage = lazy(() => import('./home-page'));
 const ProjectsPage = lazy(() => import('./projects-page'));
 const ProjectPage = lazy(() => import('./pages').then((module) => ({ default: module.ProjectPage })));
@@ -34,7 +35,14 @@ function WorkspaceLayout() {
   return <div className={showPageScrollbar ? 'workbench-shell with-page-scrollbar' : 'workbench-shell'}>
     <a className="skip-link" href="#workspace-content">跳至内容</a>
     <header className="workspace-header">
-      <Link to="/" className="wordmark workspace-brand">AutoScholar</Link><WorkspaceDock />{window.__autoscholarSession && <Link to="/settings">桌面设置</Link>}<ThemeToggle />
+      <Link to="/" className="wordmark workspace-brand">AutoScholar</Link>
+      <WorkspaceDock />
+      <div className="header-actions">
+        <Link to="/settings" className="header-icon" aria-label="工作台设置" title="工作台设置">
+          <SettingOutlined aria-hidden="true" />
+        </Link>
+        <ThemeToggle />
+      </div>
     </header>
       <main className="app-content" id="workspace-content" tabIndex={-1}>
         {submission.pending && <Alert type="warning" title="有一笔任务提交结果未确认，不要直接新建另一轮。"
@@ -49,7 +57,7 @@ export default function App() {
     <Route element={<Shell />}>
       <Route index element={<HomePage />} />
       <Route path="/projects" element={<ProjectsPage />} />
-      {window.__autoscholarSession && <Route path="/settings" element={<DesktopSettings />} />}
+      <Route path="/settings" element={<Settings />} />
       <Route path="/models" element={<ModelsPage />} />
       <Route path="/usage" element={<UsagePage />} />
       <Route path="/projects/:projectId" element={<ProjectPage />} />

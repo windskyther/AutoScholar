@@ -21,6 +21,8 @@ function workbenchFetch(path: string, options: RequestInit): Promise<Response> {
   return fetch(path, { ...options, headers });
 }
 
+declare global { interface Window { __autoscholarSession?: string } }
+
 export class ApiError extends Error {
   constructor(public code: string, public status = 0, public requestId: string | null = null) {
     super(code);

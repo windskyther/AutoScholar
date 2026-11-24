@@ -40,7 +40,7 @@ export default function DesktopSettings() {
         body: JSON.stringify(Object.fromEntries(Object.entries(values).filter(([, v]) => v))),
       });
       setMessage(response.ok ? '已保存。退出并重新启动 AutoScholar 后生效。' :
-        '保存失败。请检查目录权限、迁移包及可用空间。');
+        '保存失败。请检查目录权限及可用空间。');
     } catch { setMessage('与本地服务的连接中断，请检查后再试。'); }
     finally { setBusy(false); }
   }
@@ -49,11 +49,10 @@ export default function DesktopSettings() {
     <Typography.Paragraph>当前资料库　{current}</Typography.Paragraph>
     <Form layout="vertical" onFinish={save}>
       <Form.Item name="directory" label="新资料库的父目录" extra="留空以继续使用当前资料库。填写目录将创建新的资料库，原资料库保留。"><Input placeholder="D:\AutoScholar" /></Form.Item>
-      <Form.Item name="package" label="导入旧版迁移包" extra="填写导出的 ZIP 完整路径。导入完成并重启后可查看历史项目。"><Input /></Form.Item>
       <Form.Item name="web" label="Tavily API Key"><Input.Password autoComplete="new-password" /></Form.Item>
       <Form.Item name="paper" label="Semantic Scholar API Key"><Input.Password autoComplete="new-password" /></Form.Item>
       {missing.length > 0 && <>
-        <Form.Item name="profile" label="导入的模型"><Select allowClear options={missing.map(p => ({ value: p.id, label: p.name }))} /></Form.Item>
+        <Form.Item name="profile" label="缺少密钥的模型"><Select allowClear options={missing.map(p => ({ value: p.id, label: p.name }))} /></Form.Item>
         <Form.Item name="profile_key" label="重新填写模型 API Key"><Input.Password autoComplete="new-password" /></Form.Item>
       </>}
       <Button htmlType="submit" type="primary" loading={busy}>保存设置</Button>

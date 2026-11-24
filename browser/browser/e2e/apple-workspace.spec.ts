@@ -99,7 +99,10 @@ for (const width of [320, 390]) {
     const main = await page.getByRole('main').boundingBox(); const nav = await dock.boundingBox();
     const toggle = await page.getByRole('button', { name: '切换到夜间模式' }).boundingBox();
     const brand = await page.getByRole('banner').getByRole('link', { name: 'AutoScholar' }).boundingBox();
-    expect(toggle!.x).toBeGreaterThan(brand!.x + brand!.width);
+    const settings = await page.getByRole('link', { name: '工作台设置' }).boundingBox();
+    expect(settings!.x).toBeGreaterThan(brand!.x + brand!.width);
+    expect(settings!.y).toBe(toggle!.y);
+    expect(settings!.x + settings!.width).toBeLessThan(toggle!.x);
     expect(toggle!.x + toggle!.width).toBeLessThanOrEqual(width);
     expect(toggle!.y + toggle!.height).toBeLessThanOrEqual(nav!.y);
     expect(main!.y).toBeGreaterThan(nav!.y + nav!.height);

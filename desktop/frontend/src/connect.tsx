@@ -10,7 +10,7 @@ export default function ConnectPage() {
   if (api) {
     const destination = (location.state as { from?: string } | null)?.from;
     const path = destination?.split('?')[0];
-    const isWorkspacePath = path === '/projects' || path?.startsWith('/projects/') || path === '/models' || path === '/usage';
+    const isWorkspacePath = path === '/projects' || path?.startsWith('/projects/') || path === '/models' || path === '/usage' || path === '/settings';
     return <Navigate to={isWorkspacePath && destination ? destination : '/'} replace />;
   }
   if (checking) return null;

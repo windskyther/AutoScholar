@@ -1,6 +1,6 @@
 # Windows 原生研究工作台验收记录
 
-2026-11-23 在 Windows 11 x64 实机上，通过当前用户安装包运行工作台。安装包 `AutoScholar-Setup-x64.exe` 共 93,684,789 字节，SHA-256 为 `C3C1E846505C1A6D6B60F813DAB3AEEB13FB8646CC5A75988A5ADFB6A5331059`。安装和迁移步骤见仓库根目录的 README。
+2026-11-23 在 Windows 11 x64 实机上，通过当前用户安装包运行工作台。安装包 `AutoScholar-Setup-x64.exe` 共 93,684,789 字节，SHA-256 为 `C3C1E846505C1A6D6B60F813DAB3AEEB13FB8646CC5A75988A5ADFB6A5331059`。安装步骤见仓库根目录的 README。
 
 ## 功能范围
 
