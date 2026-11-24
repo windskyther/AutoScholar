@@ -2,13 +2,15 @@
 
 AutoScholar 是运行在本机的 AI 研究工作台。创建项目，添加模型连接，再围绕你的目标检索论文、阅读网页或分析项目 PDF，获得带引用的报告。
 
-从源码构建后，双击生成的 `AutoScholar-Setup-x64.exe` 安装。
+双击 `AutoScholar-Setup-x64.exe`，先选择程序安装目录，再选择数据目录。请使用两个独立的文件夹，例如 `D:\Apps\AutoScholar` 和 `D:\Data\AutoScholar`。数据目录保存资料库、密钥和缓存。升级时安装器会记住上次的选择，卸载后保留数据目录。切换到空数据目录会打开新的工作台。要继续使用已有数据，请选择原数据目录。
 
 ## 源码与构建
 
 编辑 `frontend/src/` 中的 React 工作台，或 `src/autoscholar/` 中的 Python 研究核心。Windows 本地后端位于 `src/autoscholar/desktop/`，Tauri 外壳位于 `desktop/src/`。
 
 在本目录运行 `.\desktop\scripts\Build-Desktop.ps1`。构建需要 Rust/C++、Node.js 24、uv 和 PowerShell，输出为 `desktop/target/AutoScholar-Setup-x64.exe`。
+
+开发时可带 `-DefaultRoot 'D:\Dev'` 构建安装包，将首次安装建议目录设为该位置下的 `AutoScholar` 和 `AutoScholarData`。也可以用用户环境变量 `AUTOSCHOLAR_INSTALL_ROOT` 为本机以后的构建指定默认位置。安装时仍可分别更改。自动安装可传入 `/S /DATADIR="D:\Data\AutoScholar" /D=D:\Apps\AutoScholar`，其中 `/D=` 参数放在最后。
 
 ## 添加模型
 

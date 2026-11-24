@@ -181,6 +181,19 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           package-manager-cache: false
       - run: ./desktop/scripts/Build-Desktop.ps1
+      - name: Verify custom installation and data folders
+        run: |
+          $base = Join-Path $env:RUNNER_TEMP 'AutoScholar 安装测试'
+          $program = Join-Path $base 'Program Files'
+          $profile = Join-Path $base '工作台 Data'
+          $setup = (Resolve-Path desktop/target/AutoScholar-Setup-x64.exe).Path
+          $argsLine = '/S /DATADIR="{0}" /D={1}' -f $profile, $program
+          $result = Start-Process -FilePath $setup -ArgumentList $argsLine -WindowStyle Hidden -Wait -PassThru
+          if ($result.ExitCode -ne 0) { throw "Installer exited with $($result.ExitCode)" }
+          if (!(Test-Path -LiteralPath "$program/app/AutoScholar.exe")) { throw 'Missing application' }
+          if (!(Test-Path -LiteralPath $profile -PathType Container)) { throw 'Missing data directory' }
+          $configured = [IO.File]::ReadAllText("$program/app/profile-path.txt", [Text.Encoding]::Unicode)
+          if ($configured -ne $profile) { throw 'Unexpected configured data directory' }
       - run: npm --prefix frontend test
       - run: uv run --no-sync ruff check src tests desktop/scripts migrations
       - run: uv run --no-sync mypy --no-incremental

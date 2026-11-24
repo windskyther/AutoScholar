@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$Toolchain = '')
+param([string]$Toolchain = '', [string]$DefaultRoot = $env:AUTOSCHOLAR_INSTALL_ROOT)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $desktop = Join-Path $root 'desktop'
@@ -27,9 +27,17 @@ try {
     if ($LASTEXITCODE) { throw 'Frontend build failed' }
     $toolArgs = @()
     if ($Toolchain) { $toolArgs += "+$Toolchain" }
-    cargo @toolArgs build --manifest-path desktop/Cargo.toml --release --locked
+    $linkArgs = @()
+    $targetTriple = $env:CARGO_BUILD_TARGET
+    if (!$targetTriple) { $targetTriple = (rustc @toolArgs -vV | Select-String '^host: (.+)$').Matches.Groups[1].Value }
+    if ($targetTriple -like '*-windows-gnu') {
+        # Use Rust's matching import libraries even if PATH contains an older MinGW.
+        $linkArgs = @('--', '-C', 'link-self-contained=yes')
+    }
+    cargo @toolArgs rustc --manifest-path desktop/Cargo.toml --release --locked @linkArgs
     if ($LASTEXITCODE) { throw 'Desktop shell build failed' }
     $cargoTarget = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { $target }
-    & .venv/Scripts/python.exe desktop/scripts/build_desktop.py --shell (Join-Path $cargoTarget 'release/autoscholar-desktop.exe') --makensis (Join-Path $target 'tools/nsis-3.11/makensis.exe')
+    $installDefaults = if ($DefaultRoot) { @('--default-root', $DefaultRoot) } else { @() }
+    & .venv/Scripts/python.exe desktop/scripts/build_desktop.py --shell (Join-Path $cargoTarget 'release/autoscholar-desktop.exe') --makensis (Join-Path $target 'tools/nsis-3.11/makensis.exe') @installDefaults
     if ($LASTEXITCODE) { throw 'Desktop installer build failed' }
 } finally { Pop-Location }

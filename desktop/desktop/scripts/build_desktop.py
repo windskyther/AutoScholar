@@ -73,7 +73,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shell", required=True, type=Path)
     parser.add_argument("--makensis", required=True, type=Path)
+    parser.add_argument(
+        "--default-root", type=Path, help="Parent for suggested program and data folders"
+    )
     args = parser.parse_args()
+    if args.default_root and not args.default_root.is_absolute():
+        parser.error("--default-root requires an absolute path")
     if sys.platform != "win32" or sys.version_info[:2] != (3, 12):
         parser.error("Run with the locked Windows x64 Python 3.12 environment")
     output = DESKTOP / "target"
@@ -107,6 +112,9 @@ def main() -> None:
             [
                 args.makensis.resolve(),
                 "/V2",
+                "/INPUTCHARSET",
+                "UTF8",
+                *([f"/DDEFAULT_ROOT={args.default_root}"] if args.default_root else []),
                 f"/DSTAGE={stage}",
                 f"/DOUTPUT={candidate}",
                 DESKTOP / "installer.nsi",
@@ -116,7 +124,6 @@ def main() -> None:
         candidate.replace(installer)
         with installer.open("rb") as built:
             print(f"{installer}  SHA256 {hashlib.file_digest(built, 'sha256').hexdigest()}")
-
 
 
 if __name__ == "__main__":

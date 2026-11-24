@@ -79,7 +79,28 @@ fn main() {
             supervise_process_tree()?;
             let data = match std::env::var_os("AUTOSCHOLAR_DESKTOP_PROFILE") {
                 Some(path) => std::path::absolute(path)?,
-                None => app.path().app_local_data_dir()?,
+                None => {
+                    let config = app.path().resource_dir()?.join("profile-path.txt");
+                    match fs::read(config) {
+                        Ok(bytes) => {
+                            use std::os::windows::ffi::OsStringExt;
+                            let mut pairs = bytes.chunks_exact(2);
+                            let units: Vec<_> = pairs
+                                .by_ref()
+                                .map(|p| u16::from_le_bytes([p[0], p[1]]))
+                                .collect();
+                            let path = PathBuf::from(std::ffi::OsString::from_wide(&units));
+                            if !pairs.remainder().is_empty() || !path.is_absolute() {
+                                return Err("Invalid installed data directory".into());
+                            }
+                            path
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                            app.path().app_local_data_dir()?
+                        }
+                        Err(e) => return Err(e.into()),
+                    }
+                }
             };
             fs::create_dir_all(&data)?;
             let instance = match OpenOptions::new()
