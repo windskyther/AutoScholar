@@ -65,3 +65,17 @@ test('larger reading text reflows the home and keeps direct links usable', async
   await expect(page).toHaveURL(/\/projects\?research=document_analysis$/);
   await expect(page.getByRole('heading', { name: '项目文档分析 · 选择项目', exact: true })).toBeVisible();
 });
+
+test('maximized workspace uses the available width as the viewport grows', async ({ page }) => {
+  await page.goto('/');
+  const library = page.locator('.research-library');
+  for (const width of [1440, 1920, 2560]) {
+    await page.setViewportSize({ width, height: 1080 });
+    const bounds = await library.boundingBox();
+    expect(bounds!.width).toBeGreaterThan(width * 0.9);
+    const cards = page.locator('.research-card');
+    const rows = await cards.evaluateAll(items => new Set(items.map(item => item.getBoundingClientRect().top)).size);
+    expect(rows).toBe(width >= 1920 ? 1 : 2);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  }
+});

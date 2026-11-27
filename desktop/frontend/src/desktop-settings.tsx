@@ -44,33 +44,39 @@ export default function DesktopSettings() {
     } catch { setMessage('与本地服务的连接中断，请检查后再试。'); }
     finally { setBusy(false); }
   }
-  return <section style={{ maxWidth: 720, margin: '2rem auto' }}>
+  return <section>
     <Typography.Title level={2}>桌面设置</Typography.Title>
-    <Typography.Paragraph>当前资料库　{current}</Typography.Paragraph>
-    <Form layout="vertical" onFinish={save}>
-      <Form.Item name="directory" label="新资料库的父目录" extra="留空以继续使用当前资料库。填写目录将创建新的资料库，原资料库保留。"><Input placeholder="D:\AutoScholar" /></Form.Item>
-      <Form.Item name="web" label="Tavily API Key"><Input.Password autoComplete="new-password" /></Form.Item>
-      <Form.Item name="paper" label="Semantic Scholar API Key"><Input.Password autoComplete="new-password" /></Form.Item>
-      {missing.length > 0 && <>
-        <Form.Item name="profile" label="缺少密钥的模型"><Select allowClear options={missing.map(p => ({ value: p.id, label: p.name }))} /></Form.Item>
-        <Form.Item name="profile_key" label="重新填写模型 API Key"><Input.Password autoComplete="new-password" /></Form.Item>
-      </>}
-      <Button htmlType="submit" type="primary" loading={busy}>保存设置</Button>
-    </Form>
-    {message && <Alert role="status" message={message} />}
-    <Typography.Title level={3}>本地检索模型缓存</Typography.Title>
-    <Typography.Paragraph>{cache.data !== undefined
-      ? `已占用 ${(cache.data / 1048576).toLocaleString('zh-CN', { maximumFractionDigits: 2 })} MiB`
-      : cache.isError ? '无法读取缓存大小。' : '正在读取缓存大小…'}</Typography.Paragraph>
-    <Popconfirm title="清除当前资料库的模型缓存？"
-      description="下次使用 PDF 检索时需要联网重新下载模型。项目、文档和报告会保留。"
-      okText="清除" cancelText="取消" onConfirm={() => clearCache.mutate()}>
-      <Button loading={clearCache.isPending} disabled={cache.data === 0}>清除模型缓存</Button>
-    </Popconfirm>
-    {clearCache.isSuccess && <Alert role="status" type="success" message="模型缓存已清除。" />}
-    {clearCache.isError && <Alert role="alert" type="warning" message={
-      clearCache.error instanceof ApiError && clearCache.error.code === 'model_cache_busy'
-        ? '模型缓存正在使用，请稍后再试。' : '清除失败，请检查缓存目录的权限或文件占用后重试。'
-    } />}
+    <div className="settings-columns">
+      <div>
+        <Typography.Paragraph>当前资料库　{current}</Typography.Paragraph>
+        <Form layout="vertical" onFinish={save}>
+          <Form.Item name="directory" label="新资料库的父目录" extra="留空以继续使用当前资料库。填写目录将创建新的资料库，原资料库保留。"><Input placeholder="D:\AutoScholar" /></Form.Item>
+          <Form.Item name="web" label="Tavily API Key"><Input.Password autoComplete="new-password" /></Form.Item>
+          <Form.Item name="paper" label="Semantic Scholar API Key"><Input.Password autoComplete="new-password" /></Form.Item>
+          {missing.length > 0 && <>
+            <Form.Item name="profile" label="缺少密钥的模型"><Select allowClear options={missing.map(p => ({ value: p.id, label: p.name }))} /></Form.Item>
+            <Form.Item name="profile_key" label="重新填写模型 API Key"><Input.Password autoComplete="new-password" /></Form.Item>
+          </>}
+          <Button htmlType="submit" type="primary" loading={busy}>保存设置</Button>
+        </Form>
+        {message && <Alert role="status" message={message} />}
+      </div>
+      <div>
+        <Typography.Title level={3}>本地检索模型缓存</Typography.Title>
+        <Typography.Paragraph>{cache.data !== undefined
+          ? `已占用 ${(cache.data / 1048576).toLocaleString('zh-CN', { maximumFractionDigits: 2 })} MiB`
+          : cache.isError ? '无法读取缓存大小。' : '正在读取缓存大小…'}</Typography.Paragraph>
+        <Popconfirm title="清除当前资料库的模型缓存？"
+          description="下次使用 PDF 检索时需要联网重新下载模型。项目、文档和报告会保留。"
+          okText="清除" cancelText="取消" onConfirm={() => clearCache.mutate()}>
+          <Button loading={clearCache.isPending} disabled={cache.data === 0}>清除模型缓存</Button>
+        </Popconfirm>
+        {clearCache.isSuccess && <Alert role="status" type="success" message="模型缓存已清除。" />}
+        {clearCache.isError && <Alert role="alert" type="warning" message={
+          clearCache.error instanceof ApiError && clearCache.error.code === 'model_cache_busy'
+            ? '模型缓存正在使用，请稍后再试。' : '清除失败，请检查缓存目录的权限或文件占用后重试。'
+        } />}
+      </div>
+    </div>
   </section>;
 }
